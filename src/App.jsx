@@ -1,11 +1,5 @@
 import React, { useMemo, useState } from "react";
 
-/*
- * Click book -> details panel
- * Favorites (toggle) + Favorites shelf (clickable)
- * Reading status stored PER BOOK ID (fixed)
- */
-
 const PARCHMENT_URL =
   "https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg";
 
@@ -124,7 +118,7 @@ export default function App() {
   // Favorites stored as book IDs
   const [favorites, setFavorites] = useState([]);
 
-  // Reading status stored per bookId: { "fan-1": "Reading", ... }
+  // Reading status stored per bookId
   const [readingStatus, setReadingStatus] = useState({});
 
   // Toggle for favorites-only view
@@ -138,7 +132,6 @@ export default function App() {
     );
   }
 
-  // ✅ FIX: store per book ID
   function updateStatus(bookId, status) {
     setReadingStatus((prev) => ({
       ...prev,
@@ -160,7 +153,8 @@ export default function App() {
 
     return list.filter(
       (b) =>
-        b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q)
+        b.title.toLowerCase().includes(q) ||
+        b.author.toLowerCase().includes(q)
     );
   }, [genre, query, favorites, showFavoritesOnly]);
 
@@ -180,7 +174,6 @@ export default function App() {
       };
     }
 
-    // Placeholder cover that varies per title/author
     const seed = (book.title.length * 23 + book.author.length * 41) % 360;
     return {
       ...styles.cover,
@@ -279,158 +272,206 @@ export default function App() {
 
         <div style={styles.shelf} />
 
-        {/* ⭐ Favorites Shelf (clickable) */}
-        {favoriteBooksInGenre.length > 0 && !showFavoritesOnly && (
-          <div style={{ marginTop: 16 }}>
-            <div style={styles.favShelfTitle}>⭐ Favorites Shelf</div>
-            <div style={styles.favRow}>
-              {favoriteBooksInGenre.map((b) => (
-                <div
-                  key={b.id}
-                  style={styles.favMiniCard}
-                  onClick={() => setSelectedBook(b)}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div style={styles.favMiniCoverWrap}>
-                    <div style={makeCoverStyle(b)}>
-                      <div style={styles.coverGloss} />
-                      <div style={styles.favMiniOverlay}>
-                        <div style={styles.favMiniText}>{b.title}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* FAVORITES SHELF */}
+        {!showFavoritesOnly && favoriteBooksInGenre.length > 0 && (
+          <FavoritesShelf
+            books={favoriteBooksInGenre}
+            onSelectBook={setSelectedBook}
+            makeCoverStyle={makeCoverStyle}
+          />
         )}
 
         {/* DETAILS PANEL */}
         {selectedBook && (
-          <div style={styles.detailPanel}>
-            <div style={styles.detailHeader}>
-              <div>
-                <div style={styles.detailTitle}>{selectedBook.title}</div>
-                <div style={styles.detailSub}>
-                  {selectedBook.author} • {selectedBook.year}
-                </div>
-              </div>
-
-              <button
-                style={styles.detailClose}
-                onClick={() => setSelectedBook(null)}
-                type="button"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={styles.detailBody}>
-              <div style={styles.detailCoverWrap}>
-                <div style={makeCoverStyle(selectedBook)}>
-                  <div style={styles.coverGloss} />
-                </div>
-              </div>
-
-              <div style={styles.detailText}>
-                <div style={styles.detailLabel}>Description</div>
-                <div style={styles.detailNotes}>
-                  {selectedBook.description || "No description yet."}
-                </div>
-
-                <button
-                  onClick={() => toggleFavorite(selectedBook.id)}
-                  style={styles.favoriteBtn}
-                  type="button"
-                >
-                  {favorites.includes(selectedBook.id)
-                    ? "⭐ Remove Favorite"
-                    : "☆ Add to Favorites"}
-                </button>
-
-                <div style={{ marginTop: 12 }}>
-                  <div style={styles.detailLabel}>Reading Status</div>
-
-                  <div style={styles.statusRow}>
-                    {["Want to Read", "Reading", "Finished"].map((status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        onClick={() => updateStatus(selectedBook.id, status)}
-                        style={{
-                          ...styles.statusBtn,
-                          background:
-                            readingStatus[selectedBook.id] === status
-                              ? "rgba(210,180,140,0.55)"
-                              : "rgba(255,255,255,0.65)",
-                        }}
-                      >
-                        {status}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={styles.smallLine}>
-                    Current: <b>{readingStatus[selectedBook.id] || "—"}</b>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <BookDetails
+            selectedBook={selectedBook}
+            onClose={() => setSelectedBook(null)}
+            favorites={favorites}
+            toggleFavorite={toggleFavorite}
+            readingStatus={readingStatus}
+            updateStatus={updateStatus}
+            makeCoverStyle={makeCoverStyle}
+          />
         )}
 
         {/* BOOK GRID */}
-        {books.length === 0 ? (
-          <div style={styles.empty}>No matches. Try another search.</div>
-        ) : (
-          <div style={styles.grid}>
-            {books.map((b) => (
-              <div
-                key={b.id}
-                style={{
-                  ...styles.card,
-                  outline: favorites.includes(b.id)
-                    ? "2px solid rgba(201,165,90,0.65)"
-                    : "none",
-                }}
-                onClick={() => setSelectedBook(b)}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = "translateY(-8px) scale(1.03)";
-                  e.currentTarget.style.boxShadow =
-                    "0 18px 40px rgba(0,0,0,0.22)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = "translateY(0) scale(1)";
-                  e.currentTarget.style.boxShadow =
-                    "0 10px 26px rgba(0,0,0,0.10)";
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <div style={styles.coverWrap}>
-                  <div style={makeCoverStyle(b)}>
-                    <div style={styles.coverGloss} />
-                    <div style={styles.coverOverlay}>
-                      <div style={styles.coverTitle}>
-                        {favorites.includes(b.id) ? "⭐ " : ""}
-                        {b.title}
-                      </div>
-                      <div style={styles.coverAuthor}>{b.author}</div>
-                    </div>
-                  </div>
-                </div>
+        <BookGrid
+          books={books}
+          favorites={favorites}
+          readingStatus={readingStatus}
+          genre={genre}
+          onSelectBook={setSelectedBook}
+          makeCoverStyle={makeCoverStyle}
+        />
+      </main>
+    </div>
+  );
+}
 
-                <div style={styles.metaRow}>
-                  <span style={styles.chip}>{b.year}</span>
-                  <span style={styles.chip}>{genre}</span>
-                  <span style={styles.chip}>{readingStatus[b.id] || "—"}</span>
+function FavoritesShelf({ books, onSelectBook, makeCoverStyle }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={styles.favShelfTitle}>⭐ Favorites Shelf</div>
+      <div style={styles.favRow}>
+        {books.map((b) => (
+          <div
+            key={b.id}
+            style={styles.favMiniCard}
+            onClick={() => onSelectBook(b)}
+            role="button"
+            tabIndex={0}
+          >
+            <div style={styles.favMiniCoverWrap}>
+              <div style={makeCoverStyle(b)}>
+                <div style={styles.coverGloss} />
+                <div style={styles.favMiniOverlay}>
+                  <div style={styles.favMiniText}>{b.title}</div>
                 </div>
               </div>
-            ))}
+            </div>
           </div>
-        )}
-      </main>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BookDetails({
+  selectedBook,
+  onClose,
+  favorites,
+  toggleFavorite,
+  readingStatus,
+  updateStatus,
+  makeCoverStyle,
+}) {
+  return (
+    <div style={styles.detailPanel}>
+      <div style={styles.detailHeader}>
+        <div>
+          <div style={styles.detailTitle}>{selectedBook.title}</div>
+          <div style={styles.detailSub}>
+            {selectedBook.author} • {selectedBook.year}
+          </div>
+        </div>
+
+        <button style={styles.detailClose} onClick={onClose} type="button">
+          ✕
+        </button>
+      </div>
+
+      <div style={styles.detailBody}>
+        <div style={styles.detailCoverWrap}>
+          <div style={makeCoverStyle(selectedBook)}>
+            <div style={styles.coverGloss} />
+          </div>
+        </div>
+
+        <div style={styles.detailText}>
+          <div style={styles.detailLabel}>Description</div>
+          <div style={styles.detailNotes}>
+            {selectedBook.description || "No description yet."}
+          </div>
+
+          <button
+            onClick={() => toggleFavorite(selectedBook.id)}
+            style={styles.favoriteBtn}
+            type="button"
+          >
+            {favorites.includes(selectedBook.id)
+              ? "⭐ Remove Favorite"
+              : "☆ Add to Favorites"}
+          </button>
+
+          <div style={{ marginTop: 12 }}>
+            <div style={styles.detailLabel}>Reading Status</div>
+
+            <div style={styles.statusRow}>
+              {["Want to Read", "Reading", "Finished"].map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => updateStatus(selectedBook.id, status)}
+                  style={{
+                    ...styles.statusBtn,
+                    background:
+                      readingStatus[selectedBook.id] === status
+                        ? "rgba(210,180,140,0.55)"
+                        : "rgba(255,255,255,0.65)",
+                  }}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+
+            <div style={styles.smallLine}>
+              Current: <b>{readingStatus[selectedBook.id] || "—"}</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BookGrid({
+  books,
+  favorites,
+  readingStatus,
+  genre,
+  onSelectBook,
+  makeCoverStyle,
+}) {
+  if (books.length === 0) {
+    return <div style={styles.empty}>No matches. Try another search.</div>;
+  }
+
+  return (
+    <div style={styles.grid}>
+      {books.map((b) => (
+        <div
+          key={b.id}
+          style={{
+            ...styles.card,
+            outline: favorites.includes(b.id)
+              ? "2px solid rgba(201,165,90,0.65)"
+              : "none",
+          }}
+          onClick={() => onSelectBook(b)}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "translateY(-8px) scale(1.03)";
+            e.currentTarget.style.boxShadow =
+              "0 18px 40px rgba(0,0,0,0.22)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translateY(0) scale(1)";
+            e.currentTarget.style.boxShadow =
+              "0 10px 26px rgba(0,0,0,0.10)";
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          <div style={styles.coverWrap}>
+            <div style={makeCoverStyle(b)}>
+              <div style={styles.coverGloss} />
+              <div style={styles.coverOverlay}>
+                <div style={styles.coverTitle}>
+                  {favorites.includes(b.id) ? "⭐ " : ""}
+                  {b.title}
+                </div>
+                <div style={styles.coverAuthor}>{b.author}</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={styles.metaRow}>
+            <span style={styles.chip}>{b.year}</span>
+            <span style={styles.chip}>{genre}</span>
+            <span style={styles.chip}>{readingStatus[b.id] || "—"}</span>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -531,9 +572,9 @@ const styles = {
     cursor: "pointer",
   },
 
-  controlsRow: { marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" },
+controlsRow: { marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" },
 
-  sectionTitle: {
+sectionTitle: {
     marginTop: 18,
     color: "#3A2A1A",
     display: "flex",
@@ -574,7 +615,7 @@ const styles = {
     alignItems: "flex-end",
     padding: 10,
     background: "linear-gradient(to top, rgba(0,0,0,0.55), transparent 70%)",
-    pointerEvents: "none", // ✅ prevents overlay from blocking clicks 【1-e2bbd9】【2-c4cd93】
+    pointerEvents: "none",
   },
   favMiniText: {
     color: "rgba(255,255,255,0.95)",
@@ -732,11 +773,3 @@ const styles = {
     cursor: "pointer",
   },
 };
-
-/**
- * StoryKeep – Library Tree (web-first prototype)
- * Includes:
- * - Parchment background + translucent panels
- * - Genres (left) + Covers (right)
- * - Hover lift
- */
