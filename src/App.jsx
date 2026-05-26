@@ -1,5 +1,4 @@
-import React, { useMemo, useState } from "react";
-
+import React, { useEffect, useMemo, useState } from "react";
 const PARCHMENT_URL =
   "https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg";
 
@@ -116,17 +115,31 @@ export default function App() {
   const [selectedBook, setSelectedBook] = useState(null);
 
   // Favorites stored as book IDs
-  const [favorites, setFavorites] = useState([]);
+ const [favorites, setFavorites] = useState(() => {
+  try {
+    if (typeof window === "undefined") return [];
+    const saved = localStorage.getItem("storykeep-favorites");
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+});
 
-  // Reading status stored per bookId
-  const [readingStatus, setReadingStatus] = useState({});
-
-  // Toggle for favorites-only view
+const [readingStatus, setReadingStatus] = useState(() => {
+  try {
+    if (typeof window === "undefined") return {};
+    const saved = localStorage.getItem("storykeep-reading-status");
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+});
+  // Filters
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [filterScope, setFilterScope] = useState("genre"); // "genre" or "all"
 
-const [statusFilter, setStatusFilter] = useState("All");
-``  function toggleFavorite(bookId) {
+  function toggleFavorite(bookId) {
     setFavorites((prev) =>
       prev.includes(bookId)
         ? prev.filter((id) => id !== bookId)
@@ -141,29 +154,95 @@ const [statusFilter, setStatusFilter] = useState("All");
     }));
   }
 
+  function clearAllFilters() {
+    setShowFavoritesOnly(false);
+    setStatusFilter("All");
+    setFilterScope("genre");
+  }
+useEffect(() => {
+  try {
+    localStorage.setItem("storykeep-favorites", JSON.stringify(favorites));
+  } catch {
+    // ignore storage errors
+  }
+}, [favorites]);
+
+useEffect(() => {
+  try {
+    localStorage.setItem(
+      "storykeep-reading-status",
+      JSON.stringify(readingStatus)
+    );
+  } catch {
+    // ignore storage errors
+  }
+}, [readingStatus]);
   const activeColor = GENRE_COLORS[genre] ?? "#5A3B2E";
 
-  const books = useMemo(() => {
-    let list = LIBRARY[genre] ?? [];
+  const scopedBooks = useMemo(() => {
+  return filterScope === "all"
+    ? Object.values(LIBRARY).flat()
+    : LIBRARY[genre] ?? [];
+}, [filterScope, genre]);
 
-    if (showFavoritesOnly) {
-      list = list.filter((b) => favorites.includes(b.id));
-    }
+const preStatusBooks = useMemo(() => {
+  let list = [...scopedBooks];
 
-    const q = query.trim().toLowerCase();
-    if (!q) return list;
+  // Favorites filter
+  if (showFavoritesOnly) {
+    list = list.filter((b) => favorites.includes(b.id));
+  }
 
-    return list.filter(
-      (b) =>
-        b.title.toLowerCase().includes(q) ||
-        b.author.toLowerCase().includes(q)
-    );
-  }, [genre, query, favorites, showFavoritesOnly]);
+  // Search filter
+  const q = query.trim().toLowerCase();
+  if (!q) return list;
 
-  const favoriteBooksInGenre = useMemo(() => {
-    const list = LIBRARY[genre] ?? [];
-    return list.filter((b) => favorites.includes(b.id));
-  }, [genre, favorites]);
+  return list.filter(
+    (b) =>
+      b.title.toLowerCase().includes(q) ||
+      b.author.toLowerCase().includes(q)
+  );
+}, [scopedBooks, favorites, showFavoritesOnly, query]);
+
+const books = useMemo(() => {
+  if (statusFilter === "All") return preStatusBooks;
+
+  return preStatusBooks.filter(
+    (b) => (readingStatus[b.id] || "Want to Read") === statusFilter
+  );
+}, [preStatusBooks, statusFilter, readingStatus]);
+
+const favoriteBooksInView = useMemo(() => {
+  return scopedBooks.filter((b) => favorites.includes(b.id));
+}, [scopedBooks, favorites]);
+
+const statusCounts = useMemo(() => {
+  const counts = {
+    All: preStatusBooks.length,
+    "Want to Read": 0,
+    Reading: 0,
+    Finished: 0,
+  };
+
+  preStatusBooks.forEach((b) => {
+    const status = readingStatus[b.id] || "Want to Read";
+    counts[status] += 1;
+  });
+
+  return counts;
+}, [preStatusBooks, readingStatus]);
+
+const favoritesCountInView = useMemo(() => {
+  return preStatusBooks.filter((b) => favorites.includes(b.id)).length;
+}, [preStatusBooks, favorites]);
+
+function getBookGenre(bookId) {
+  return (
+    Object.keys(LIBRARY).find((g) =>
+      LIBRARY[g].some((book) => book.id === bookId)
+    ) || "Unknown"
+  );
+}
 
   function makeCoverStyle(book) {
     if (book.coverUrl) {
@@ -187,6 +266,34 @@ const [statusFilter, setStatusFilter] = useState("All");
       backgroundBlendMode: "overlay",
     };
   }
+
+  const viewingLabel = filterScope === "all" ? "Library" : genre;
+
+  const activeFilterChips = [
+    filterScope === "all"
+      ? {
+          key: "scope",
+          label: "All Shelves",
+          onRemove: () => setFilterScope("genre"),
+        }
+      : null,
+
+    statusFilter !== "All"
+      ? {
+          key: "status",
+          label: statusFilter,
+          onRemove: () => setStatusFilter("All"),
+        }
+      : null,
+
+    showFavoritesOnly
+      ? {
+          key: "favorites",
+          label: "⭐ Favorites",
+          onRemove: () => setShowFavoritesOnly(false),
+        }
+      : null,
+  ].filter(Boolean);
 
   return (
     <div style={styles.page}>
@@ -262,22 +369,105 @@ const [statusFilter, setStatusFilter] = useState("All");
           <button
             type="button"
             onClick={() => setShowFavoritesOnly((prev) => !prev)}
-            style={styles.favoriteBtn}
+            style={{
+              ...styles.favoriteBtn,
+              background: showFavoritesOnly
+                ? "rgba(210,180,140,0.65)"
+                : "rgba(255,255,255,0.65)",
+            }}
           >
-            {showFavoritesOnly ? "Show All Books" : "Show Favorites Only"}
+            ⭐ Favorites
           </button>
+
+          {/* Scope toggle */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[
+              { key: "genre", label: "Current Shelf Only" },
+              { key: "all", label: "All Shelves" },
+            ].map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setFilterScope(option.key)}
+                style={{
+                  ...styles.statusBtn,
+                  background:
+                    filterScope === option.key
+                      ? "rgba(210,180,140,0.65)"
+                      : "rgba(255,255,255,0.65)",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Status filter */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {["All", "Want to Read", "Reading", "Finished"].map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => setStatusFilter(status)}
+                style={{
+                  ...styles.statusBtn,
+                  background:
+                    statusFilter === status
+                      ? "rgba(210,180,140,0.65)"
+                      : "rgba(255,255,255,0.65)",
+                }}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
         </div>
 
         <h2 style={styles.sectionTitle}>
           {genre} Books <span style={{ ...styles.dot, background: activeColor }} />
         </h2>
 
+        <div style={styles.filterSummaryRow}>
+          <span style={styles.filterSummaryLabel}>
+            Viewing: <b>{viewingLabel}</b>
+          </span>
+
+          {activeFilterChips.length > 0 ? (
+            <>
+              <div style={styles.filterChipWrap}>
+                {activeFilterChips.map((chip) => (
+                  <button
+                    key={chip.key}
+                    type="button"
+                    onClick={chip.onRemove}
+                    style={styles.filterChip}
+                    title={`Remove ${chip.label} filter`}
+                  >
+                    <span>{chip.label}</span>
+                    <span style={styles.filterChipX}>✕</span>
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                style={styles.clearFiltersBtn}
+              >
+                Clear All
+              </button>
+            </>
+          ) : (
+            <span style={styles.filterSummaryMuted}>No extra filters</span>
+          )}
+        </div>
+
         <div style={styles.shelf} />
 
         {/* FAVORITES SHELF */}
-        {!showFavoritesOnly && favoriteBooksInGenre.length > 0 && (
+        {!showFavoritesOnly && favoriteBooksInView.length > 0 && (
           <FavoritesShelf
-            books={favoriteBooksInGenre}
+            books={favoriteBooksInView}
             onSelectBook={setSelectedBook}
             makeCoverStyle={makeCoverStyle}
           />
@@ -302,6 +492,8 @@ const [statusFilter, setStatusFilter] = useState("All");
           favorites={favorites}
           readingStatus={readingStatus}
           genre={genre}
+          filterScope={filterScope}
+          getBookGenre={getBookGenre}
           onSelectBook={setSelectedBook}
           makeCoverStyle={makeCoverStyle}
         />
@@ -422,6 +614,8 @@ function BookGrid({
   favorites,
   readingStatus,
   genre,
+  filterScope,
+  getBookGenre,
   onSelectBook,
   makeCoverStyle,
 }) {
@@ -469,8 +663,12 @@ function BookGrid({
 
           <div style={styles.metaRow}>
             <span style={styles.chip}>{b.year}</span>
-            <span style={styles.chip}>{genre}</span>
-            <span style={styles.chip}>{readingStatus[b.id] || "—"}</span>
+            <span style={styles.chip}>
+              {filterScope === "all" ? getBookGenre(b.id) : genre}
+            </span>
+            <span style={styles.chip}>
+              {readingStatus[b.id] || "Want to Read"}
+            </span>
           </div>
         </div>
       ))}
@@ -574,15 +772,78 @@ const styles = {
     cursor: "pointer",
   },
 
-controlsRow: { marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" },
+  controlsRow: {
+    marginTop: 10,
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
 
-sectionTitle: {
+  sectionTitle: {
     marginTop: 18,
     color: "#3A2A1A",
     display: "flex",
     gap: 10,
     alignItems: "center",
   },
+
+  filterSummaryRow: {
+    marginTop: 6,
+    marginBottom: 8,
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+
+  filterSummaryLabel: {
+    fontSize: 13,
+    color: "rgba(75,58,42,0.85)",
+  },
+
+  filterSummaryMuted: {
+    fontSize: 12,
+    color: "rgba(75,58,42,0.70)",
+  },
+
+  filterChipWrap: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+
+  filterChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(120,90,50,0.35)",
+    background: "linear-gradient(to bottom, #F5E6C8, #E6CFA3)",
+    color: "#3A2A1A",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 600,
+    boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+  },
+
+  filterChipX: {
+    fontSize: 12,
+    opacity: 0.8,
+  },
+
+  clearFiltersBtn: {
+    padding: "6px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(75,58,42,0.25)",
+    background: "rgba(255,255,255,0.65)",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 600,
+  },
+
   dot: { width: 12, height: 12, borderRadius: 999, display: "inline-block" },
 
   shelf: {
