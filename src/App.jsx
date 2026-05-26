@@ -123,8 +123,10 @@ export default function App() {
 
   // Toggle for favorites-only view
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
-  function toggleFavorite(bookId) {
+const [statusFilter, setStatusFilter] = useState("All");
+``  function toggleFavorite(bookId) {
     setFavorites((prev) =>
       prev.includes(bookId)
         ? prev.filter((id) => id !== bookId)
