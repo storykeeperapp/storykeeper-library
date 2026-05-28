@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+
 const PARCHMENT_URL =
   "https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg";
 
@@ -114,30 +115,48 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [selectedBook, setSelectedBook] = useState(null);
 
-  // Favorites stored as book IDs
- const [favorites, setFavorites] = useState(() => {
-  try {
-    if (typeof window === "undefined") return [];
-    const saved = localStorage.getItem("storykeep-favorites");
-    return saved ? JSON.parse(saved) : [];
-  } catch {
-    return [];
-  }
-});
+  // Persisted library state
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      const saved = localStorage.getItem("storykeeper-favorites");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
-const [readingStatus, setReadingStatus] = useState(() => {
-  try {
-    if (typeof window === "undefined") return {};
-    const saved = localStorage.getItem("storykeep-reading-status");
-    return saved ? JSON.parse(saved) : {};
-  } catch {
-    return {};
-  }
-});
+  const [readingStatus, setReadingStatus] = useState(() => {
+    try {
+      const saved = localStorage.getItem("storykeeper-reading-status");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
   // Filters
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [statusFilter, setStatusFilter] = useState("All");
   const [filterScope, setFilterScope] = useState("genre"); // "genre" or "all"
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("storykeeper-favorites", JSON.stringify(favorites));
+    } catch {
+      // ignore storage errors
+    }
+  }, [favorites]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "storykeeper-reading-status",
+        JSON.stringify(readingStatus)
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }, [readingStatus]);
 
   function toggleFavorite(bookId) {
     setFavorites((prev) =>
@@ -159,90 +178,71 @@ const [readingStatus, setReadingStatus] = useState(() => {
     setStatusFilter("All");
     setFilterScope("genre");
   }
-useEffect(() => {
-  try {
-    localStorage.setItem("storykeep-favorites", JSON.stringify(favorites));
-  } catch {
-    // ignore storage errors
-  }
-}, [favorites]);
 
-useEffect(() => {
-  try {
-    localStorage.setItem(
-      "storykeep-reading-status",
-      JSON.stringify(readingStatus)
-    );
-  } catch {
-    // ignore storage errors
-  }
-}, [readingStatus]);
   const activeColor = GENRE_COLORS[genre] ?? "#5A3B2E";
 
   const scopedBooks = useMemo(() => {
-  return filterScope === "all"
-    ? Object.values(LIBRARY).flat()
-    : LIBRARY[genre] ?? [];
-}, [filterScope, genre]);
+    return filterScope === "all"
+      ? Object.values(LIBRARY).flat()
+      : LIBRARY[genre] ?? [];
+  }, [filterScope, genre]);
 
-const preStatusBooks = useMemo(() => {
-  let list = [...scopedBooks];
+  const preStatusBooks = useMemo(() => {
+    let list = [...scopedBooks];
 
-  // Favorites filter
-  if (showFavoritesOnly) {
-    list = list.filter((b) => favorites.includes(b.id));
+    if (showFavoritesOnly) {
+      list = list.filter((b) => favorites.includes(b.id));
+    }
+
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+
+    return list.filter(
+      (b) =>
+        b.title.toLowerCase().includes(q) ||
+        b.author.toLowerCase().includes(q)
+    );
+  }, [scopedBooks, favorites, showFavoritesOnly, query]);
+
+  const books = useMemo(() => {
+    if (statusFilter === "All") return preStatusBooks;
+
+    return preStatusBooks.filter(
+      (b) => (readingStatus[b.id] || "Want to Read") === statusFilter
+    );
+  }, [preStatusBooks, statusFilter, readingStatus]);
+
+  const favoriteBooksInView = useMemo(() => {
+    return scopedBooks.filter((b) => favorites.includes(b.id));
+  }, [scopedBooks, favorites]);
+
+  const statusCounts = useMemo(() => {
+    const counts = {
+      All: preStatusBooks.length,
+      "Want to Read": 0,
+      Reading: 0,
+      Finished: 0,
+    };
+
+    preStatusBooks.forEach((b) => {
+      const status = readingStatus[b.id] || "Want to Read";
+      counts[status] += 1;
+    });
+
+    return counts;
+  }, [preStatusBooks, readingStatus]);
+
+  const favoritesCountInView = useMemo(() => {
+    return preStatusBooks.filter((b) => favorites.includes(b.id)).length;
+  }, [preStatusBooks, favorites]);
+
+  function getBookGenre(bookId) {
+    return (
+      Object.keys(LIBRARY).find((g) =>
+        LIBRARY[g].some((book) => book.id === bookId)
+      ) || "Unknown"
+    );
   }
-
-  // Search filter
-  const q = query.trim().toLowerCase();
-  if (!q) return list;
-
-  return list.filter(
-    (b) =>
-      b.title.toLowerCase().includes(q) ||
-      b.author.toLowerCase().includes(q)
-  );
-}, [scopedBooks, favorites, showFavoritesOnly, query]);
-
-const books = useMemo(() => {
-  if (statusFilter === "All") return preStatusBooks;
-
-  return preStatusBooks.filter(
-    (b) => (readingStatus[b.id] || "Want to Read") === statusFilter
-  );
-}, [preStatusBooks, statusFilter, readingStatus]);
-
-const favoriteBooksInView = useMemo(() => {
-  return scopedBooks.filter((b) => favorites.includes(b.id));
-}, [scopedBooks, favorites]);
-
-const statusCounts = useMemo(() => {
-  const counts = {
-    All: preStatusBooks.length,
-    "Want to Read": 0,
-    Reading: 0,
-    Finished: 0,
-  };
-
-  preStatusBooks.forEach((b) => {
-    const status = readingStatus[b.id] || "Want to Read";
-    counts[status] += 1;
-  });
-
-  return counts;
-}, [preStatusBooks, readingStatus]);
-
-const favoritesCountInView = useMemo(() => {
-  return preStatusBooks.filter((b) => favorites.includes(b.id)).length;
-}, [preStatusBooks, favorites]);
-
-function getBookGenre(bookId) {
-  return (
-    Object.keys(LIBRARY).find((g) =>
-      LIBRARY[g].some((book) => book.id === bookId)
-    ) || "Unknown"
-  );
-}
 
   function makeCoverStyle(book) {
     if (book.coverUrl) {
@@ -277,7 +277,6 @@ function getBookGenre(bookId) {
           onRemove: () => setFilterScope("genre"),
         }
       : null,
-
     statusFilter !== "All"
       ? {
           key: "status",
@@ -285,7 +284,6 @@ function getBookGenre(bookId) {
           onRemove: () => setStatusFilter("All"),
         }
       : null,
-
     showFavoritesOnly
       ? {
           key: "favorites",
@@ -334,169 +332,174 @@ function getBookGenre(bookId) {
         </div>
 
         <div style={styles.leftFooter}>
-          <div style={styles.leftHint}>Tip: Click a book to open details.</div>
+          <div style={styles.leftHint}>Tip: Click a title to open details.</div>
         </div>
       </aside>
 
       {/* RIGHT PANEL */}
       <main style={styles.right}>
-        <header style={styles.header}>
-          <div>
-            <h1 style={styles.title}>StoryKeep Library</h1>
-            <p style={styles.subtitle}>
-              Browse by branch — each genre lives on its own limb.
-            </p>
-          </div>
+        <div style={styles.contentWrapper}>
+          <header style={styles.header}>
+            <div style={styles.headerBrand}>
+              <h1 style={styles.title}>
+                <span style={styles.titleIcon}>📚</span>
+                <span style={styles.titleText}>StoryKeeper</span>
+                <span style={styles.titleIcon}>🎧</span>
+              </h1>
 
-          <div style={styles.searchBox}>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={`Search in ${genre}…`}
-              style={styles.searchInput}
-            />
+              <p style={styles.subtitle}>
+                <em>Read here. Listen here. Live here.</em>
+              </p>
+            </div>
+
+            <div style={styles.searchBox}>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search in ${genre}…`}
+                style={styles.searchInput}
+              />
+              <button
+                onClick={() => setQuery("")}
+                style={styles.clearBtn}
+                type="button"
+              >
+                Clear
+              </button>
+            </div>
+          </header>
+
+          <div style={styles.controlsRow}>
             <button
-              onClick={() => setQuery("")}
-              style={styles.clearBtn}
               type="button"
+              onClick={() => setShowFavoritesOnly((prev) => !prev)}
+              style={{
+                ...styles.favoriteBtn,
+                background: showFavoritesOnly
+                  ? "rgba(210,180,140,0.65)"
+                  : "rgba(255,255,255,0.65)",
+              }}
             >
-              Clear
+              <span>⭐ Favorites</span>
+              <span style={styles.filterBadge}>{favoritesCountInView}</span>
             </button>
+
+            <div style={styles.controlGroup}>
+              {[
+                { key: "genre", label: "Current Shelf Only" },
+                { key: "all", label: "All Shelves" },
+              ].map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setFilterScope(option.key)}
+                  style={{
+                    ...styles.statusBtn,
+                    background:
+                      filterScope === option.key
+                        ? "rgba(210,180,140,0.65)"
+                        : "rgba(255,255,255,0.65)",
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={styles.controlGroup}>
+              {["All", "Want to Read", "Reading", "Finished"].map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setStatusFilter(status)}
+                  style={{
+                    ...styles.statusBtn,
+                    background:
+                      statusFilter === status
+                        ? "rgba(210,180,140,0.65)"
+                        : "rgba(255,255,255,0.65)",
+                  }}
+                >
+                  <span>{status}</span>
+                  <span style={styles.filterBadge}>{statusCounts[status]}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </header>
 
-        <div style={styles.controlsRow}>
-          <button
-            type="button"
-            onClick={() => setShowFavoritesOnly((prev) => !prev)}
-            style={{
-              ...styles.favoriteBtn,
-              background: showFavoritesOnly
-                ? "rgba(210,180,140,0.65)"
-                : "rgba(255,255,255,0.65)",
-            }}
-          >
-            ⭐ Favorites
-          </button>
+          <h2 style={styles.sectionTitle}>
+            {genre} Books{" "}
+            <span style={{ ...styles.dot, background: activeColor }} />
+          </h2>
 
-          {/* Scope toggle */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {[
-              { key: "genre", label: "Current Shelf Only" },
-              { key: "all", label: "All Shelves" },
-            ].map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                onClick={() => setFilterScope(option.key)}
-                style={{
-                  ...styles.statusBtn,
-                  background:
-                    filterScope === option.key
-                      ? "rgba(210,180,140,0.65)"
-                      : "rgba(255,255,255,0.65)",
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
+          <div style={styles.filterSummaryRow}>
+            <span style={styles.filterSummaryLabel}>
+              Viewing: <b>{viewingLabel}</b>
+            </span>
+
+            {activeFilterChips.length > 0 ? (
+              <>
+                <div style={styles.filterChipWrap}>
+                  {activeFilterChips.map((chip) => (
+                    <button
+                      key={chip.key}
+                      type="button"
+                      onClick={chip.onRemove}
+                      style={styles.filterChip}
+                      title={`Remove ${chip.label} filter`}
+                    >
+                      <span>{chip.label}</span>
+                      <span style={styles.filterChipX}>✕</span>
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  style={styles.clearFiltersBtn}
+                >
+                  Clear All
+                </button>
+              </>
+            ) : (
+              <span style={styles.filterSummaryMuted}>No extra filters</span>
+            )}
           </div>
 
-          {/* Status filter */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {["All", "Want to Read", "Reading", "Finished"].map((status) => (
-              <button
-                key={status}
-                type="button"
-                onClick={() => setStatusFilter(status)}
-                style={{
-                  ...styles.statusBtn,
-                  background:
-                    statusFilter === status
-                      ? "rgba(210,180,140,0.65)"
-                      : "rgba(255,255,255,0.65)",
-                }}
-              >
-                {status}
-              </button>
-            ))}
-          </div>
-        </div>
+          <div style={styles.shelf} />
 
-        <h2 style={styles.sectionTitle}>
-          {genre} Books <span style={{ ...styles.dot, background: activeColor }} />
-        </h2>
-
-        <div style={styles.filterSummaryRow}>
-          <span style={styles.filterSummaryLabel}>
-            Viewing: <b>{viewingLabel}</b>
-          </span>
-
-          {activeFilterChips.length > 0 ? (
-            <>
-              <div style={styles.filterChipWrap}>
-                {activeFilterChips.map((chip) => (
-                  <button
-                    key={chip.key}
-                    type="button"
-                    onClick={chip.onRemove}
-                    style={styles.filterChip}
-                    title={`Remove ${chip.label} filter`}
-                  >
-                    <span>{chip.label}</span>
-                    <span style={styles.filterChipX}>✕</span>
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={clearAllFilters}
-                style={styles.clearFiltersBtn}
-              >
-                Clear All
-              </button>
-            </>
-          ) : (
-            <span style={styles.filterSummaryMuted}>No extra filters</span>
+          {!showFavoritesOnly && favoriteBooksInView.length > 0 && (
+            <FavoritesShelf
+              books={favoriteBooksInView}
+              onSelectBook={setSelectedBook}
+              makeCoverStyle={makeCoverStyle}
+            />
           )}
-        </div>
 
-        <div style={styles.shelf} />
+          {selectedBook && (
+            <BookDetails
+              selectedBook={selectedBook}
+              onClose={() => setSelectedBook(null)}
+              favorites={favorites}
+              toggleFavorite={toggleFavorite}
+              readingStatus={readingStatus}
+              updateStatus={updateStatus}
+              makeCoverStyle={makeCoverStyle}
+            />
+          )}
 
-        {/* FAVORITES SHELF */}
-        {!showFavoritesOnly && favoriteBooksInView.length > 0 && (
-          <FavoritesShelf
-            books={favoriteBooksInView}
+          <BookGrid
+            books={books}
+            favorites={favorites}
+            readingStatus={readingStatus}
+            genre={genre}
+            filterScope={filterScope}
+            getBookGenre={getBookGenre}
             onSelectBook={setSelectedBook}
             makeCoverStyle={makeCoverStyle}
           />
-        )}
-
-        {/* DETAILS PANEL */}
-        {selectedBook && (
-          <BookDetails
-            selectedBook={selectedBook}
-            onClose={() => setSelectedBook(null)}
-            favorites={favorites}
-            toggleFavorite={toggleFavorite}
-            readingStatus={readingStatus}
-            updateStatus={updateStatus}
-            makeCoverStyle={makeCoverStyle}
-          />
-        )}
-
-        {/* BOOK GRID */}
-        <BookGrid
-          books={books}
-          favorites={favorites}
-          readingStatus={readingStatus}
-          genre={genre}
-          filterScope={filterScope}
-          getBookGenre={getBookGenre}
-          onSelectBook={setSelectedBook}
-          makeCoverStyle={makeCoverStyle}
-        />
+        </div>
       </main>
     </div>
   );
@@ -732,19 +735,54 @@ const styles = {
   right: {
     flex: 1,
     padding: 30,
+    display: "flex",
+    justifyContent: "center",
     background: "rgba(255,255,255,0.18)",
     backdropFilter: "blur(3px)",
   },
 
+  contentWrapper: {
+    width: "100%",
+    maxWidth: 1200,
+  },
+
   header: {
     display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
+    flexDirection: "column",
+    alignItems: "center",
     gap: 16,
-    flexWrap: "wrap",
   },
-  title: { marginTop: 0, marginBottom: 6, color: "#3A2A1A" },
-  subtitle: { marginTop: 0, color: "rgba(75,58,42,0.9)" },
+
+  headerBrand: {
+    width: "100%",
+    textAlign: "center",
+  },
+
+  title: {
+    marginTop: 0,
+    marginBottom: 6,
+    color: "#3A2A1A",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+
+  titleIcon: {
+    fontSize: 20,
+  },
+
+  titleText: {
+    fontWeight: 700,
+  },
+
+  subtitle: {
+    marginTop: 4,
+    fontSize: 14,
+    letterSpacing: 0.5,
+    color: "rgba(75,58,42,0.85)",
+    textAlign: "center",
+  },
 
   searchBox: {
     display: "flex",
@@ -753,7 +791,9 @@ const styles = {
     borderRadius: 14,
     border: "1px solid rgba(75,58,42,0.20)",
     background: "rgba(255,255,255,0.40)",
+    justifyContent: "center",
   },
+
   searchInput: {
     width: 240,
     maxWidth: "60vw",
@@ -764,6 +804,7 @@ const styles = {
     outline: "none",
     fontSize: 14,
   },
+
   clearBtn: {
     padding: "10px 12px",
     borderRadius: 12,
@@ -773,9 +814,17 @@ const styles = {
   },
 
   controlsRow: {
-    marginTop: 10,
+    marginTop: 18,
     display: "flex",
     gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  controlGroup: {
+    display: "flex",
+    gap: 8,
     flexWrap: "wrap",
     alignItems: "center",
   },
@@ -844,7 +893,12 @@ const styles = {
     fontWeight: 600,
   },
 
-  dot: { width: 12, height: 12, borderRadius: 999, display: "inline-block" },
+  dot: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    display: "inline-block",
+  },
 
   shelf: {
     height: 10,
@@ -859,18 +913,22 @@ const styles = {
     fontWeight: 800,
     color: "rgba(75,58,42,0.95)",
   },
+
   favRow: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
     gap: 12,
   },
+
   favMiniCard: { cursor: "pointer" },
+
   favMiniCoverWrap: {
     borderRadius: 14,
     overflow: "hidden",
     border: "1px solid rgba(75,58,42,0.18)",
     boxShadow: "0 8px 16px rgba(0,0,0,0.14)",
   },
+
   favMiniOverlay: {
     position: "absolute",
     inset: 0,
@@ -880,6 +938,7 @@ const styles = {
     background: "linear-gradient(to top, rgba(0,0,0,0.55), transparent 70%)",
     pointerEvents: "none",
   },
+
   favMiniText: {
     color: "rgba(255,255,255,0.95)",
     fontWeight: 800,
@@ -956,7 +1015,13 @@ const styles = {
     textShadow: "0 2px 10px rgba(0,0,0,0.55)",
   },
 
-  metaRow: { marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" },
+  metaRow: {
+    marginTop: 10,
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+
   chip: {
     fontSize: 12,
     color: "rgba(75,58,42,0.9)",
@@ -966,7 +1031,10 @@ const styles = {
     background: "rgba(255,255,255,0.40)",
   },
 
-  empty: { marginTop: 16, color: "rgba(75,58,42,0.85)" },
+  empty: {
+    marginTop: 16,
+    color: "rgba(75,58,42,0.85)",
+  },
 
   detailPanel: {
     marginTop: 16,
@@ -977,23 +1045,27 @@ const styles = {
     background: "rgba(255,255,255,0.55)",
     boxShadow: "0 14px 34px rgba(0,0,0,0.18)",
   },
+
   detailHeader: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
   },
+
   detailTitle: {
     fontWeight: 800,
     color: "#3A2A1A",
     fontSize: 18,
     lineHeight: 1.2,
   },
+
   detailSub: {
     marginTop: 6,
     color: "rgba(75,58,42,0.9)",
     fontSize: 13,
   },
+
   detailClose: {
     width: 36,
     height: 36,
@@ -1002,6 +1074,7 @@ const styles = {
     background: "rgba(255,255,255,0.7)",
     cursor: "pointer",
   },
+
   detailBody: {
     marginTop: 14,
     display: "grid",
@@ -1009,15 +1082,28 @@ const styles = {
     gap: 14,
     alignItems: "start",
   },
+
   detailCoverWrap: {
     borderRadius: 14,
     overflow: "hidden",
     border: "1px solid rgba(75,58,42,0.18)",
     boxShadow: "0 10px 22px rgba(0,0,0,0.15)",
   },
-  detailText: { color: "rgba(75,58,42,0.95)" },
-  detailLabel: { fontWeight: 700, marginBottom: 8, color: "#3A2A1A" },
-  detailNotes: { fontSize: 13, lineHeight: 1.5 },
+
+  detailText: {
+    color: "rgba(75,58,42,0.95)",
+  },
+
+  detailLabel: {
+    fontWeight: 700,
+    marginBottom: 8,
+    color: "#3A2A1A",
+  },
+
+  detailNotes: {
+    fontSize: 13,
+    lineHeight: 1.5,
+  },
 
   favoriteBtn: {
     marginTop: 12,
@@ -1026,13 +1112,39 @@ const styles = {
     cursor: "pointer",
     border: "1px solid rgba(75,58,42,0.22)",
     background: "rgba(255,255,255,0.65)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
   },
 
-  statusRow: { marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" },
+  statusRow: {
+    marginTop: 8,
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+
   statusBtn: {
     padding: "6px 10px",
     borderRadius: 8,
     border: "1px solid rgba(75,58,42,0.22)",
     cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  filterBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 18,
+    height: 18,
+    padding: "0 6px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 700,
+    background: "rgba(75,58,42,0.12)",
+    color: "#3A2A1A",
   },
 };
