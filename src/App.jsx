@@ -1,9 +1,55 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+function KnotScrollTooltip({ text, left, top }) {
+  return (
+    <div style={{
+      position: "absolute",
+      left,
+      top,
+      transform: "translate(-50%, -110%)",
+      marginBottom: 4,
+      zIndex: 999,
+      pointerEvents: "none",
+      whiteSpace: "nowrap",
+    }}>
+      <div style={{
+        height: 7,
+        background: "linear-gradient(to bottom, #c8a050, #e8c878 40%, #d4a84a)",
+        borderRadius: "50% 50% 0 0 / 100% 100% 0 0",
+        boxShadow: "0 -2px 4px rgba(0,0,0,0.2)",
+        margin: "0 4px",
+      }} />
+      <div style={{
+        background: "linear-gradient(to bottom, #f5e6c0, #fdf3d8 30%, #fdf3d8 70%, #f0d9a0)",
+        border: "1px solid #c8a050",
+        borderTop: "none",
+        borderBottom: "none",
+        padding: "4px 12px",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        fontSize: 10,
+        color: "#3A2A1A",
+        fontStyle: "italic",
+        letterSpacing: "0.5px",
+        boxShadow: "2px 0 4px rgba(0,0,0,0.12), -2px 0 4px rgba(0,0,0,0.12)",
+        textAlign: "center",
+      }}>
+        {text}
+      </div>
+      <div style={{
+        height: 7,
+        background: "linear-gradient(to top, #c8a050, #e8c878 40%, #d4a84a)",
+        borderRadius: "0 0 50% 50% / 0 0 100% 100%",
+        boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+        margin: "0 4px",
+      }} />
+    </div>
+  );
+}
 
 const ALL_GENRES = ["Fantasy", "Mystery", "Sci-Fi", "Romance", "Thriller", "Self Help", "Dark Romance"];
 
 const DEFAULT_ASSIGNMENTS = [
-  { id: 1, left: "32%", top: "9%",  genre: "Fantasy"      },
+  { id: 1, left: "22%", top: "9%",  genre: "Fantasy"      },
   { id: 2, left: "75%", top: "8%",  genre: "Mystery"      },
   { id: 3, left: "8%",  top: "28%", genre: "Sci-Fi"       },
   { id: 4, left: "78%", top: "38%", genre: "Romance"      },
@@ -14,152 +60,206 @@ const DEFAULT_ASSIGNMENTS = [
 
 const library = {
   Fantasy: [
-    { title: "The Hobbit",           author: "J.R.R. Tolkien",        type: "ebooks",      isbn: "9780547928227" },
-    { title: "Mistborn",             author: "Brandon Sanderson",      type: "audiobooks",  isbn: "9780765311788" },
-    { title: "The Name of the Wind", author: "Patrick Rothfuss",       type: "ebooks",      isbn: "9780756404741" },
-    { title: "A Wizard of Earthsea", author: "Ursula K. Le Guin",      type: "ebooks",      isbn: "9780547773742" },
-    { title: "The Way of Kings",     author: "Brandon Sanderson",      type: "audiobooks",  isbn: "9780765326355" },
-    { title: "Eragon",               author: "Christopher Paolini",    type: "ebooks",      isbn: "9780375826696" },
+    { title: "The Hobbit",           author: "J.R.R. Tolkien",        type: "ebooks",      isbn: "9780547928227", description: "Bilbo Baggins, a comfort-loving hobbit, is swept into an epic quest to reclaim the dwarf kingdom of Erebor from the dragon Smaug. Along the way he encounters trolls, elves, goblins, and a curious creature named Gollum who possesses a very special ring. This beloved classic laid the foundation for Tolkien's entire Middle-earth mythology." },
+    { title: "Mistborn",             author: "Brandon Sanderson",      type: "audiobooks",  isbn: "9780765311788", description: "In a world shrouded in ash and mist, a young street thief named Vin discovers she has the rare magical ability to \"burn\" metals and gain extraordinary powers. She joins a crew of rebels plotting to overthrow the seemingly immortal Lord Ruler in a heist a thousand years in the making. Sanderson's intricate magic system and political intrigue make this a standout in epic fantasy." },
+    { title: "The Name of the Wind", author: "Patrick Rothfuss",       type: "ebooks",      isbn: "9780756404741", description: "Kvothe, once the most feared wizard in the world, tells the true story of his life to a chronicler in a quiet inn. From his origins as a child performer with a traveling troupe to his years as a student at the legendary University, his tale is one of love, loss, and relentless pursuit of knowledge. Rothfuss's lyrical prose transforms this into something closer to legend than mere fantasy." },
+    { title: "A Wizard of Earthsea", author: "Ursula K. Le Guin",      type: "ebooks",      isbn: "9780547773742", description: "On the archipelago world of Earthsea, a gifted but arrogant young boy named Ged earns a place at a school for wizards and accidentally unleashes a terrible shadow creature upon the world. His journey to confront and defeat it becomes a profound story about identity, hubris, and self-acceptance. Le Guin's slim novel is a masterwork of world-building and moral depth." },
+    { title: "The Way of Kings",     author: "Brandon Sanderson",      type: "audiobooks",  isbn: "9780765326355", description: "On the storm-swept world of Roshar, a war has raged for years over the death of a king, drawing together a reluctant soldier, a brilliant scholar, and a disgraced prince. Sanderson unveils a vast, meticulously crafted world filled with ancient mysteries, powerful magical armor, and forces that could destroy civilization itself. This is the ambitious first book of the ten-volume Stormlight Archive." },
+    { title: "Eragon",               author: "Christopher Paolini",    type: "ebooks",      isbn: "9780375826696", description: "A farm boy named Eragon discovers a polished blue stone in the mountains that turns out to be a dragon egg, and the hatchling bonds with him, changing his destiny forever. Thrust into a world of ancient magic and a brutal empire, he must learn to harness his new powers and join the rebellion. Written by a teenage author, this debut launched the beloved Inheritance Cycle." },
   ],
   Mystery: [
-    { title: "Sherlock Holmes",       author: "Arthur Conan Doyle",   type: "ebooks",      isbn: "9780743273565" },
-    { title: "Gone Girl",             author: "Gillian Flynn",         type: "audiobooks",  isbn: "9780307588371" },
-    { title: "The Girl on the Train", author: "Paula Hawkins",         type: "ebooks",      isbn: "9781594634024" },
-    { title: "Big Little Lies",       author: "Liane Moriarty",        type: "audiobooks",  isbn: "9780399167065" },
-    { title: "In the Woods",          author: "Tana French",           type: "ebooks",      isbn: "9780143113492" },
-    { title: "The Silent Patient",    author: "Alex Michaelides",      type: "ebooks",      isbn: "9781250301697" },
+    { title: "Sherlock Holmes",       author: "Arthur Conan Doyle",   type: "ebooks",      isbn: "9780743273565", description: "The complete adventures of the world's greatest consulting detective, Sherlock Holmes, and his faithful companion Dr. John Watson. Using razor-sharp deduction and an encyclopedic knowledge of crime, Holmes unravels cases that baffle Scotland Yard across Victorian London and beyond. These stories defined the detective fiction genre and made Holmes one of literature's most iconic characters." },
+    { title: "Gone Girl",             author: "Gillian Flynn",         type: "audiobooks",  isbn: "9780307588371", description: "On their fifth wedding anniversary, Amy Dunne goes missing and all evidence points to her husband Nick as the prime suspect. As the investigation unfolds through alternating diary entries and present-day narration, shocking secrets about both characters are revealed. Flynn's psychological thriller is a searing, subversive look at marriage, media, and the stories we tell about ourselves." },
+    { title: "The Girl on the Train", author: "Paula Hawkins",         type: "ebooks",      isbn: "9781594634024", description: "Rachel takes the same commuter train every day and becomes fixated on a seemingly perfect couple she watches from the window — until the woman goes missing and Rachel finds herself entangled in the investigation. Told from three unreliable female perspectives, the novel slowly strips away illusions about domestic life and hidden violence. It became a global phenomenon for its twisty, compulsive plotting." },
+    { title: "Big Little Lies",       author: "Liane Moriarty",        type: "audiobooks",  isbn: "9780399167065", description: "Three women — Madeline, Celeste, and Jane — form an unlikely friendship at their children's school on Australia's Bondi coast, their lives intersecting around a crime that will be revealed at the school's trivia night. Moriarty weaves together dark themes of domestic abuse, bullying, and class tension with sharp wit and compassion. This clever novel became the basis for the acclaimed HBO miniseries." },
+    { title: "In the Woods",          author: "Tana French",           type: "ebooks",      isbn: "9780143113492", description: "Dublin detective Rob Ryan is called to investigate the murder of a young girl found in an ancient wood — the same wood where he was found as a child, the sole survivor of an unexplained incident that erased his memories. As he and his partner Cassie Maddox dig deeper, the past begins to reassert itself dangerously. French's literary debut is a haunting exploration of memory, loss, and the limits of justice." },
+    { title: "The Silent Patient",    author: "Alex Michaelides",      type: "ebooks",      isbn: "9781250301697", description: "Alicia Berenson, a famous painter, shoots her husband five times and then never speaks another word. Criminal psychotherapist Theo Faber becomes obsessed with uncovering the motive behind her silence, and takes a job at the secure psychiatric unit where she is held. The novel builds to a stunning twist that recontextualizes everything that came before." },
   ],
   "Sci-Fi": [
-    { title: "Dune",              author: "Frank Herbert",        type: "ebooks",      isbn: "9780441013593" },
-    { title: "Neuromancer",       author: "William Gibson",       type: "audiobooks",  isbn: "9780441569595" },
-    { title: "The Martian",       author: "Andy Weir",            type: "ebooks",      isbn: "9780553418026" },
-    { title: "Ender's Game",      author: "Orson Scott Card",     type: "audiobooks",  isbn: "9780812550702" },
-    { title: "Foundation",        author: "Isaac Asimov",         type: "ebooks",      isbn: "9780553293357" },
-    { title: "Project Hail Mary", author: "Andy Weir",            type: "ebooks",      isbn: "9780593135204" },
+    { title: "Dune",              author: "Frank Herbert",        type: "ebooks",      isbn: "9780441013593", description: "On the desert planet Arrakis, the only source of the universe's most valuable substance — the spice melange — young Paul Atreides finds himself at the center of a power struggle between noble houses, religious prophecy, and the indigenous Fremen people. Herbert's monumental novel explores ecology, politics, religion, and human potential on an operatic scale. It remains the best-selling science fiction novel of all time." },
+    { title: "Neuromancer",       author: "William Gibson",       type: "audiobooks",  isbn: "9780441569595", description: "Case, a washed-up computer hacker living in a dystopian Chiba City underworld, is hired by a mysterious employer to pull off the ultimate hack in cyberspace. Gibson's debut novel invented the aesthetic of cyberpunk and coined the word \"cyberspace,\" predicting the internet age with eerie accuracy. This razor-sharp, neon-lit thriller won the Hugo, Nebula, and Philip K. Dick awards." },
+    { title: "The Martian",       author: "Andy Weir",            type: "ebooks",      isbn: "9780553418026", description: "Astronaut Mark Watney is stranded alone on Mars after being left for dead by his crew during an emergency evacuation, with limited food and no way to signal Earth. Using science, ingenuity, and an unbeatable sense of humor, he must figure out how to survive for years until a rescue mission can possibly reach him. Weir's meticulously researched novel is a triumph of optimism and problem-solving." },
+    { title: "Ender's Game",      author: "Orson Scott Card",     type: "audiobooks",  isbn: "9780812550702", description: "In a future where Earth has been attacked by insectoid aliens, the military recruits the most gifted children to a Battle School in space to train the next great commander. Young Ender Wiggin, a tactical genius, rises through simulated battle after battle, never knowing how much the stakes will ultimately cost him. This Hugo and Nebula Award winner raises profound questions about war, childhood, and moral responsibility." },
+    { title: "Foundation",        author: "Isaac Asimov",         type: "ebooks",      isbn: "9780553293357", description: "Mathematician Hari Seldon predicts using \"psychohistory\" that the Galactic Empire will fall, plunging humanity into 30,000 years of barbarism — unless a Foundation is established to preserve knowledge and shorten the dark age to a single millennium. Asimov's sweeping saga spans centuries of a future civilization's collapse and rebirth. This cornerstone of science fiction influenced generations of writers and thinkers." },
+    { title: "Project Hail Mary", author: "Andy Weir",            type: "ebooks",      isbn: "9780593135204", description: "Ryland Grace wakes up alone on a spaceship with no memory of how he got there or what his mission is, only to piece together that he is Earth's last hope against an extinction-level threat to the sun. His only ally is an unlikely friend he discovers millions of miles from home. Weir delivers his most inventive and emotionally resonant novel yet, full of scientific problem-solving and genuine heart." },
   ],
   Romance: [
-    { title: "Pride and Prejudice", author: "Jane Austen",        type: "ebooks",      isbn: "9780141439518" },
-    { title: "Outlander",           author: "Diana Gabaldon",     type: "audiobooks",  isbn: "9780440212560" },
-    { title: "The Notebook",        author: "Nicholas Sparks",    type: "ebooks",      isbn: "9780446676090" },
-    { title: "Me Before You",       author: "Jojo Moyes",         type: "audiobooks",  isbn: "9780143124542" },
-    { title: "It Ends with Us",     author: "Colleen Hoover",     type: "ebooks",      isbn: "9781501110368" },
-    { title: "The Hating Game",     author: "Sally Thorne",       type: "ebooks",      isbn: "9780062439598" },
+    { title: "Pride and Prejudice", author: "Jane Austen",        type: "ebooks",      isbn: "9780141439518", description: "When the Bennet family's five daughters must marry well to secure their future, the spirited Elizabeth Bennet meets the proud and wealthy Mr. Darcy and takes an instant dislike to him. Austen's masterpiece of wit and social observation follows their slow, reluctant path from mutual contempt to deep love. More than two centuries later, it remains the definitive romantic novel in the English language." },
+    { title: "Outlander",           author: "Diana Gabaldon",     type: "audiobooks",  isbn: "9780440212560", description: "In 1945, British combat nurse Claire Randall is transported back in time to 18th-century Scotland, where she is caught between her life in the present and a passionate bond with Highland warrior Jamie Fraser. Gabaldon's sweeping historical romance blends adventure, time travel, and one of fiction's most enduring love stories. This first novel launched an eight-book series beloved worldwide." },
+    { title: "The Notebook",        author: "Nicholas Sparks",    type: "ebooks",      isbn: "9780446676090", description: "In a nursing home, an old man reads to a woman with memory loss from a faded notebook, telling the story of a young couple — Allie and Noah — who fell in love one summer in the 1940s and were separated by class and circumstance. Sparks's debut novel is a tender meditation on enduring love and the way memory shapes us. Its film adaptation became one of the most iconic romantic movies ever made." },
+    { title: "Me Before You",       author: "Jojo Moyes",         type: "audiobooks",  isbn: "9780143124542", description: "Louisa Clark, a quirky small-town girl, takes a job caring for Will Traynor, a wealthy, sardonic man paralyzed after an accident who has given up on life. As their unlikely friendship deepens into something more, Louisa is determined to show Will that life is worth living — but Will has already made an irreversible decision. Moyes's novel is a profoundly moving exploration of autonomy, love, and sacrifice." },
+    { title: "It Ends with Us",     author: "Colleen Hoover",     type: "ebooks",      isbn: "9781501110368", description: "Lily Bloom moves to Boston, starts her dream business, and falls for the charming neurosurgeon Ryle Kincaid — a man who doesn't believe in love. But when she reconnects with her first love Atlas, long-buried secrets about her past and the cycle of abuse that shaped her begin to surface. Hoover's novel is a fearless, deeply emotional story about the hardest kind of love and the courage it takes to break free." },
+    { title: "The Hating Game",     author: "Sally Thorne",       type: "ebooks",      isbn: "9780062439598", description: "Lucy Hutton and Joshua Templeman share an office and an epic mutual loathing — or so Lucy thinks — as they compete for the same promotion at a publishing company born from a merger. The witty, tension-filled banter between these two rivals gradually reveals something entirely different beneath the surface. Thorne's debut is a sparkling, laugh-out-loud enemies-to-lovers romance." },
   ],
   Thriller: [
-    { title: "The Girl with the Dragon Tattoo", author: "Stieg Larsson",      type: "ebooks",      isbn: "9780307454546" },
-    { title: "No Country for Old Men",          author: "Cormac McCarthy",    type: "audiobooks",  isbn: "9780307387899" },
-    { title: "The Da Vinci Code",               author: "Dan Brown",          type: "ebooks",      isbn: "9780307474278" },
-    { title: "Gone Girl",                       author: "Gillian Flynn",      type: "audiobooks",  isbn: "9780307588371" },
-    { title: "I Am Pilgrim",                    author: "Terry Hayes",        type: "ebooks",      isbn: "9781476717494" },
-    { title: "The Firm",                        author: "John Grisham",       type: "ebooks",      isbn: "9780385319058" },
+    { title: "The Girl with the Dragon Tattoo", author: "Stieg Larsson",      type: "ebooks",      isbn: "9780307454546", description: "Journalist Mikael Blomkvist and hacker Lisbeth Salander are hired by a wealthy industrialist to investigate the decades-old disappearance of his granddaughter, uncovering a dark web of family secrets and serial murder. Larsson's novel is a gripping procedural wrapped in a fierce critique of violence against women in Swedish society. It launched a global phenomenon and introduced one of crime fiction's most unforgettable heroines." },
+    { title: "No Country for Old Men",          author: "Cormac McCarthy",    type: "audiobooks",  isbn: "9780307387899", description: "In 1980 West Texas, a welder named Llewelyn Moss stumbles upon the aftermath of a drug deal gone wrong and takes the money — setting a relentless, emotionless killer named Anton Chigurh on his trail. Sheriff Bell, aging and world-weary, pursues both men while reflecting on a world that seems to have left his values behind. McCarthy's lean, violent novel is a philosophical meditation on fate, evil, and mortality." },
+    { title: "The Da Vinci Code",               author: "Dan Brown",          type: "ebooks",      isbn: "9780307474278", description: "Harvard symbologist Robert Langdon is called to the Louvre where a curator has been murdered, leaving behind a series of cryptic clues pointing to a secret society and a conspiracy that could shake the foundations of Christianity. Racing across Europe with cryptologist Sophie Neveu, Langdon must decode symbols hidden in the works of Leonardo da Vinci. Brown's page-turning thriller became one of the best-selling novels in history." },
+    { title: "Gone Girl",                       author: "Gillian Flynn",      type: "audiobooks",  isbn: "9780307588371", description: "On their fifth wedding anniversary, Amy Dunne goes missing and all evidence points to her husband Nick as the prime suspect. As the investigation unfolds through alternating diary entries and present-day narration, shocking secrets about both characters are revealed. Flynn's psychological thriller is a searing, subversive look at marriage, media, and the stories we tell about ourselves." },
+    { title: "I Am Pilgrim",                    author: "Terry Hayes",        type: "ebooks",      isbn: "9781476717494", description: "A retired American intelligence agent known only as Pilgrim is pulled out of anonymity to track a ghost — a faceless man who has found a way to manufacture a weaponized plague with the potential to kill millions. Spanning continents and decades of espionage tradecraft, Hayes's debut is a masterclass in sustained tension. This modern thriller has earned comparisons to the best of John le Carré." },
+    { title: "The Firm",                        author: "John Grisham",       type: "ebooks",      isbn: "9780385319058", description: "Mitch McDeere, a brilliant Harvard Law graduate, joins a small but lucrative Memphis law firm only to discover it is under FBI investigation for its ties to the mob. Trapped between the Mafia and federal agents who each want something from him, Mitch must use every ounce of his intelligence to stay alive and free. Grisham's breakthrough legal thriller is a masterwork of claustrophobic, escalating dread." },
   ],
   "Self Help": [
-    { title: "Atomic Habits",      author: "James Clear",        type: "ebooks",      isbn: "9780735211292" },
-    { title: "The Power of Now",   author: "Eckhart Tolle",      type: "audiobooks",  isbn: "9781577314806" },
-    { title: "Think and Grow Rich",author: "Napoleon Hill",      type: "ebooks",      isbn: "9781585424337" },
-    { title: "The 7 Habits",       author: "Stephen Covey",      type: "audiobooks",  isbn: "9781982137274" },
-    { title: "Untamed",            author: "Glennon Doyle",      type: "ebooks",      isbn: "9781984801258" },
-    { title: "You Are a Badass",   author: "Jen Sincero",        type: "ebooks",      isbn: "9780762447695" },
+    { title: "Atomic Habits",      author: "James Clear",        type: "ebooks",      isbn: "9780735211292", description: "James Clear presents a practical framework for building good habits and breaking bad ones, arguing that tiny, 1% improvements compound over time into remarkable results. Drawing on biology, psychology, and neuroscience, he shows how the environment, identity, and small cues shape nearly all human behavior. This is one of the most actionable and widely read books on personal change published in recent years." },
+    { title: "The Power of Now",   author: "Eckhart Tolle",      type: "audiobooks",  isbn: "9781577314806", description: "Eckhart Tolle argues that the root of most human suffering is our identification with the thinking mind and our inability to live in the present moment. Drawing on diverse spiritual traditions without belonging to any one of them, he offers a practical guide to achieving a state of alert, conscious presence. This transformative book has sold millions of copies and is considered a modern spiritual classic." },
+    { title: "Think and Grow Rich",author: "Napoleon Hill",      type: "ebooks",      isbn: "9781585424337", description: "Based on over twenty years of research into the habits of America's most successful people, Napoleon Hill distills their philosophies into thirteen principles for achieving wealth and success. The book argues that a burning desire, faith, and a definite plan are the first steps toward any great achievement. Published in 1937, it remains one of the best-selling self-help books of all time." },
+    { title: "The 7 Habits",       author: "Stephen Covey",      type: "audiobooks",  isbn: "9781982137274", description: "Stephen Covey presents seven interconnected habits — from being proactive and beginning with the end in mind to sharpening the saw — that he argues are the foundation of personal and professional effectiveness. Moving beyond personality-based success tips, Covey grounds his framework in timeless principles of character and integrity. This landmark book transformed how millions of people think about leadership and daily life." },
+    { title: "Untamed",            author: "Glennon Doyle",      type: "ebooks",      isbn: "9781984801258", description: "Glennon Doyle recounts the moment she decided to stop living the life she was supposed to live — as a faithful wife, devoted mother, and successful author — and start listening to the voice inside her that said there was something more. Her memoir is a fierce call to women to stop being \"good\" and start being free, to reclaim their wildness and trust their own knowing. It became a phenomenon, spending years on the bestseller list." },
+    { title: "You Are a Badass",   author: "Jen Sincero",        type: "ebooks",      isbn: "9780762447695", description: "Jen Sincero blends irreverent humor with sharp insight to help readers identify and overcome the self-sabotaging beliefs that keep them from the lives they want. Using personal anecdotes and practical exercises, she guides readers toward embracing their inner greatness and taking decisive action. This refreshingly no-nonsense book has empowered millions to stop making excuses and start living boldly." },
   ],
   "Dark Romance": [
-    { title: "Haunting Adeline",    author: "H.D. Carlton",       type: "ebooks",      isbn: "9781957635026" },
-    { title: "Corrupt",             author: "Penelope Douglas",   type: "audiobooks",  isbn: "9781682305546" },
-    { title: "Twisted Love",        author: "Ana Huang",          type: "ebooks",      isbn: "9781728269382" },
-    { title: "Credence",            author: "Penelope Douglas",   type: "audiobooks",  isbn: "9781682308004" },
-    { title: "Terms and Conditions",author: "Lauren Asher",       type: "ebooks",      isbn: "9781728249919" },
-    { title: "Vicious",             author: "L.J. Shen",          type: "ebooks",      isbn: "9781250107466" },
+    { title: "Haunting Adeline",    author: "H.D. Carlton",       type: "ebooks",      isbn: "9781957635026", description: "Adeline inherits her great-grandmother's Victorian mansion and soon realizes she is being watched — and then hunted — by a shadowy, obsessive stalker who believes she belongs to him. Carlton's dark romance pushes every boundary, exploring a deeply twisted dynamic between predator and prey that is as disturbing as it is compulsive. This is not for the faint of heart, but it has amassed a devoted and passionate readership." },
+    { title: "Corrupt",             author: "Penelope Douglas",   type: "audiobooks",  isbn: "9781682305546", description: "Three years after Erika Fane's testimony helped send Michael Crist to prison, he returns on Devil's Night with his friends to make her pay for what she did. But as revenge unfolds in the shadows of Halloween, the lines between hatred and obsession blur dangerously. Douglas's hallmark is high-intensity emotional conflict, and Corrupt delivers it with dark, brooding atmosphere and relentless tension." },
+    { title: "Twisted Love",        author: "Ana Huang",          type: "ebooks",      isbn: "9781728269382", description: "Alex Volkov is cold, ruthless, and off-limits — the overprotective best friend's guardian who has promised to look out for sunny, warm-hearted Ava Chen while her brother is abroad. What starts as reluctant proximity becomes something neither of them can control, dragged down by Alex's dangerous past and the secrets he is keeping. Huang's debut in the Twisted series launched a reader frenzy for its tortured anti-hero and slow-burn tension." },
+    { title: "Credence",            author: "Penelope Douglas",   type: "audiobooks",  isbn: "9781682308004", description: "After the deaths of her parents, Tiernan de Haas is sent to live with her estranged uncle and his two sons in a remote mountain cabin, completely cut off from the world. What begins as cold indifference from all three men transforms into something primal and consuming. Douglas's most controversial and polarizing novel, Credence challenges every rule of romance with its isolated, claustrophobic intensity." },
+    { title: "Terms and Conditions",author: "Lauren Asher",       type: "ebooks",      isbn: "9781728249919", description: "Declan Kane needs a wife on paper to secure his family's company, and his assistant Iris is the logical — and convenient — choice for a fake marriage. But the terms of their arrangement become blurred as proximity and shared secrets chip away at Declan's carefully constructed walls. Asher's slow-burn office romance is filled with delicious tension and a deeply wounded hero learning what it means to truly let someone in." },
+    { title: "Vicious",             author: "L.J. Shen",          type: "ebooks",      isbn: "9781250107466", description: "Baron \"Vicious\" Spencer has hated Emilia Clarke since they were teenagers, and she has never understood why — only that his cruelty has followed her like a shadow for years. When fate forces them back together as adults, the hatred between them ignites into something far more dangerous. Shen's Sinners of Saint series opens with this sharp, emotionally intense enemies-to-lovers story drenched in wealth, power, and dark desire." },
   ],
 };
 
 
+// Worn aged leather colors — muted, faded, distressed
 const SPINE_COLORS = [
-  { bg: ["#6b1a1a", "#8B2020", "#5a1515"], text: "#f5e6c8" },
-  { bg: ["#1a3a6b", "#1e4d8c", "#152d52"], text: "#f0e8d0" },
-  { bg: ["#1a4a2a", "#22603a", "#153820"], text: "#f5e6c8" },
-  { bg: ["#4a2a0a", "#6b3f10", "#3a2008"], text: "#ffeeba" },
-  { bg: ["#3a1a5a", "#52247a", "#2a1242"], text: "#f0deff" },
-  { bg: ["#1a4a4a", "#206060", "#123838"], text: "#d0f5f5" },
-  { bg: ["#5a3010", "#7a4418", "#42220c"], text: "#ffeeba" },
-  { bg: ["#2a1a4a", "#3a2464", "#1e1236"], text: "#e8d8ff" },
+  { base: "#5c2a2a", mid: "#4a2020", dark: "#321515", text: "#c8a87a" }, // aged burgundy
+  { base: "#2a3a52", mid: "#1e2e42", dark: "#141e2e", text: "#b8c8a0" }, // faded navy
+  { base: "#2a3e28", mid: "#1e3018", dark: "#142010", text: "#c0b878" }, // worn forest green
+  { base: "#4a3218", mid: "#3a2410", dark: "#28180a", text: "#c8b07a" }, // cracked brown
+  { base: "#3a2848", mid: "#2c1e38", dark: "#1c1228", text: "#b8a8c8" }, // dusty purple
+  { base: "#1e3838", mid: "#162c2c", dark: "#0e1e1e", text: "#a8c0b8" }, // tarnished teal
+  { base: "#503018", mid: "#3c2210", dark: "#28140a", text: "#c8a868" }, // tobacco brown
+  { base: "#3a2240", mid: "#2c1830", dark: "#1c1020", text: "#c0a8c0" }, // faded plum
 ];
 
-function BookSpine({ book, index, rowIndex }) {
-  const colorSet = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
-  const height = 155 + ((rowIndex * 6 + index) % 4) * 18;
+function BookSpine({ book, index, rowIndex, onClick }) {
+  const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
+  const height = 160 + ((rowIndex * 6 + index) % 4) * 18;
+  // Raised bands positions as % of height
+  const bands = [12, 28, 72, 88];
 
   return (
     <div
       title={`${book.title} — ${book.author}`}
+      onClick={() => onClick && onClick(book)}
       style={{
-        width: 48,
+        width: 50,
         height,
         borderRadius: "2px 3px 3px 2px",
-        background: `linear-gradient(to right, ${colorSet.bg[0]} 0%, ${colorSet.bg[1]} 35%, ${colorSet.bg[1]} 65%, ${colorSet.bg[2]} 100%)`,
-        boxShadow: "4px 0 10px rgba(0,0,0,0.6), -1px 0 4px rgba(0,0,0,0.3), inset 4px 0 8px rgba(255,255,255,0.07)",
+        background: `linear-gradient(to right, ${c.dark} 0%, ${c.base} 15%, ${c.mid} 50%, ${c.base} 85%, ${c.dark} 100%)`,
+        boxShadow: "4px 0 12px rgba(0,0,0,0.7), -1px 0 4px rgba(0,0,0,0.4), inset 3px 0 6px rgba(255,255,255,0.04)",
         position: "relative",
-        cursor: "default",
+        cursor: "pointer",
         flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "10px 0",
+        overflow: "hidden",
       }}
     >
-      {/* Top decorative gold line */}
-      <div style={{ width: "55%", height: 1.5, background: "rgba(255,215,0,0.55)", borderRadius: 1, flexShrink: 0 }} />
+      {/* Worn leather texture overlay */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: `repeating-linear-gradient(
+          175deg,
+          transparent 0px, transparent 3px,
+          rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px
+        )`,
+        pointerEvents: "none",
+      }} />
+
+      {/* Raised bands — horizontal ridges */}
+      {bands.map((pct, i) => (
+        <div key={i} style={{
+          position: "absolute",
+          top: `${pct}%`,
+          left: 0, right: 0,
+          height: 7,
+          background: `linear-gradient(to bottom,
+            rgba(0,0,0,0.35) 0%,
+            ${c.base} 20%,
+            rgba(255,255,255,0.08) 50%,
+            ${c.mid} 80%,
+            rgba(0,0,0,0.3) 100%)`,
+          boxShadow: "0 1px 2px rgba(0,0,0,0.4), 0 -1px 1px rgba(0,0,0,0.3)",
+          zIndex: 2,
+        }} />
+      ))}
+
+      {/* Top corner flourish */}
+      <div style={{
+        position: "absolute", top: "14%", left: "50%",
+        transform: "translateX(-50%)",
+        color: c.text, fontSize: 9, opacity: 0.7,
+        zIndex: 3, lineHeight: 1,
+        textShadow: "0 0 3px rgba(0,0,0,0.5)",
+      }}>❧</div>
+
+      {/* Bottom corner flourish */}
+      <div style={{
+        position: "absolute", bottom: "10%", left: "50%",
+        transform: "translateX(-50%) scaleY(-1)",
+        color: c.text, fontSize: 9, opacity:0.7,
+        zIndex: 3, lineHeight: 1,
+      }}>❧</div>
 
       {/* Title */}
       <div style={{
-        writingMode: "vertical-rl",
-        transform: "rotate(180deg)",
-        color: colorSet.text,
-        fontFamily: '"Palatino Linotype", Palatino, serif',
-        fontWeight: 700,
-        fontSize: 11,
-        letterSpacing: "0.8px",
-        textAlign: "center",
-        textShadow: "0 1px 4px rgba(0,0,0,0.7)",
-        lineHeight: 1.3,
-        flex: 1,
-        overflow: "hidden",
-        maxHeight: "55%",
-        padding: "4px 0",
+        position: "absolute",
+        top: "30%", bottom: "30%",
+        left: 0, right: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 3,
       }}>
-        {book.title}
+        <div style={{
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+          color: c.text,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontWeight: 700,
+          fontSize: 10,
+          letterSpacing: "1px",
+          textAlign: "center",
+          textShadow: `0 0 8px rgba(0,0,0,0.8), 0 1px 2px rgba(0,0,0,0.9)`,
+          lineHeight: 1.3,
+          overflow: "hidden",
+          maxHeight: "100%",
+          opacity: 0.92,
+        }}>
+          {book.title}
+        </div>
       </div>
 
-      {/* Middle gold divider */}
-      <div style={{ width: "45%", height: 1, background: "rgba(255,215,0,0.35)", borderRadius: 1, flexShrink: 0 }} />
-
-      {/* Author */}
-      <div style={{
-        writingMode: "vertical-rl",
-        transform: "rotate(180deg)",
-        color: `${colorSet.text}bb`,
-        fontFamily: '"Palatino Linotype", Palatino, serif',
-        fontStyle: "italic",
-        fontSize: 9,
-        letterSpacing: "0.5px",
-        textShadow: "0 1px 3px rgba(0,0,0,0.6)",
-        overflow: "hidden",
-        maxHeight: "28%",
-        flexShrink: 0,
-      }}>
-        {book.author}
-      </div>
-
-      {/* Bottom gold line */}
-      <div style={{ width: "55%", height: 1.5, background: "rgba(255,215,0,0.55)", borderRadius: 1, flexShrink: 0 }} />
-
-      {/* Left edge highlight (spine binding) */}
+      {/* Author — near bottom band */}
       <div style={{
         position: "absolute",
-        top: 0, left: 0, bottom: 0,
-        width: 4,
-        background: "linear-gradient(to right, rgba(255,255,255,0.12), transparent)",
+        bottom: "13%",
+        left: 0, right: 0,
+        display: "flex",
+        justifyContent: "center",
+        zIndex: 3,
+      }}>
+        <div style={{
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+          color: c.text,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontStyle: "italic",
+          fontSize: 8,
+          opacity: 0.65,
+          textShadow: "0 1px 3px rgba(0,0,0,0.8)",
+          overflow: "hidden",
+          maxHeight: 60,
+        }}>
+          {book.author}
+        </div>
+      </div>
+
+      {/* Spine binding edge */}
+      <div style={{
+        position: "absolute",
+        top: 0, left: 0, bottom: 0, width: 5,
+        background: "linear-gradient(to right, rgba(0,0,0,0.4), rgba(255,255,255,0.04) 60%, transparent)",
         borderRadius: "2px 0 0 2px",
         pointerEvents: "none",
+        zIndex: 4,
       }} />
 
       {/* Right shadow edge */}
@@ -174,271 +274,454 @@ function BookSpine({ book, index, rowIndex }) {
   );
 }
 
-// Patterns for each shelf row: "b"=book, "p0/p1/p2"=plant type, "n0/n1/n2/n3"=nook type
-const SHELF_PATTERNS = [
-  ["b","b","p0","b","b","n0","b","p1","b"],
-  ["p2","b","b","n1","b","b","p0","b","b"],
-  ["b","p1","b","b","n2","b","p2","b","b"],
-  ["b","b","n3","b","p0","b","b","p2","b"],
-];
+function CDCase({ book, index, rowIndex, onClick }) {
+  const [imgError, setImgError] = useState(false);
+  const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
 
-const PLANTS = [
-  /* 0 — trailing ivy with long hanging vines */
-  () => (
-    <svg width="36" height="220" viewBox="0 0 36 220" style={{ flexShrink: 0, alignSelf: "flex-end", overflow: "visible" }}>
-      <path d="M 8 102 Q 7 115 9 118 L 27 118 Q 29 115 28 102 Z" fill="#c1440e" />
-      <rect x="6" y="99" width="24" height="5" rx="2" fill="#d4521a" />
-      <ellipse cx="18" cy="101" rx="11" ry="3" fill="#2a1408" />
-      <ellipse cx="18" cy="100" rx="9" ry="2.5" fill="#3a1e0a" />
-      <path d="M 18 99 Q 16 80 18 60 Q 20 40 17 20" stroke="#4a7a1e" strokeWidth="2" fill="none" strokeLinecap="round" />
-      <path d="M 18 99 Q 22 78 20 55 Q 18 35 22 15" stroke="#3a6a14" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-      <path d="M 17 80 Q 4 74 2 84"   stroke="#2d6010" strokeWidth="1" fill="#4a9020" fillOpacity="0.92" />
-      <path d="M 18 68 Q 6 60 3 70"   stroke="#2d6010" strokeWidth="1" fill="#3a8018" fillOpacity="0.92" />
-      <path d="M 18 55 Q 7 46 4 56"   stroke="#2d6010" strokeWidth="1" fill="#4a9020" fillOpacity="0.9"  />
-      <path d="M 20 75 Q 30 67 33 76" stroke="#2d6010" strokeWidth="1" fill="#3a8818" fillOpacity="0.92" />
-      <path d="M 19 60 Q 29 52 32 61" stroke="#2d6010" strokeWidth="1" fill="#4a9020" fillOpacity="0.9"  />
-      <path d="M 17 40 Q 6 32 3 42"   stroke="#2d6010" strokeWidth="1" fill="#3a8018" fillOpacity="0.9"  />
-      <path d="M 22 35 Q 30 26 33 35" stroke="#2d6010" strokeWidth="1" fill="#4a9020" fillOpacity="0.9"  />
-      <ellipse cx="17" cy="17" rx="7" ry="9" fill="#2e7a10" opacity="0.92" />
-      <ellipse cx="11" cy="12" rx="5" ry="7" fill="#3a8a18" opacity="0.88" />
-      <ellipse cx="23" cy="12" rx="5" ry="7" fill="#4a9a22" opacity="0.88" />
-      <path d="M 12 118 Q 8 138 10 158 Q 12 178 8 200 Q 6 210 8 220"  stroke="#3a7018" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-      <path d="M 22 118 Q 26 140 24 162 Q 22 182 26 202 Q 28 212 26 220" stroke="#2d6010" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-      <path d="M 17 118 Q 15 142 17 165 Q 19 188 16 210"               stroke="#3a7018" strokeWidth="1"   fill="none" strokeLinecap="round" />
-      <path d="M 10 148 Q 1 144 0 152"  stroke="#2d6010" strokeWidth="1" fill="#4a8e20" fillOpacity="0.88" />
-      <path d="M 9  170 Q 0 166 0 175"  stroke="#2d6010" strokeWidth="1" fill="#3a8018" fillOpacity="0.88" />
-      <path d="M 9  195 Q 1 190 1 199"  stroke="#2d6010" strokeWidth="1" fill="#4a9020" fillOpacity="0.85" />
-      <path d="M 24 152 Q 33 147 34 156" stroke="#2d6010" strokeWidth="1" fill="#3a8818" fillOpacity="0.88" />
-      <path d="M 25 174 Q 34 169 35 178" stroke="#2d6010" strokeWidth="1" fill="#4a8e20" fillOpacity="0.88" />
-      <path d="M 25 198 Q 33 193 34 202" stroke="#2d6010" strokeWidth="1" fill="#3a8018" fillOpacity="0.85" />
-      <path d="M 17 158 Q 9 153 8 162"  stroke="#2d6010" strokeWidth="1" fill="#4a9020" fillOpacity="0.85" />
-      <path d="M 16 185 Q 8 180 7 189"  stroke="#2d6010" strokeWidth="1" fill="#3a8018" fillOpacity="0.85" />
-    </svg>
-  ),
-
-  /* 1 — pothos in ceramic pot with cascading vines */
-  () => (
-    <svg width="36" height="210" viewBox="0 0 36 210" style={{ flexShrink: 0, alignSelf: "flex-end", overflow: "visible" }}>
-      <path d="M 7 100 Q 6 113 8 116 L 28 116 Q 30 113 29 100 Z" fill="#7a8a9a" />
-      <rect x="5" y="97" width="26" height="5" rx="2" fill="#9aaaba" />
-      <ellipse cx="18" cy="99" rx="12" ry="3" fill="#2a1a08" />
-      <ellipse cx="18" cy="98" rx="10" ry="2.5" fill="#3a2a10" />
-      <path d="M 18 97 Q 14 75 16 50 Q 18 28 15 10" stroke="#5a8a1e" strokeWidth="2" fill="none" strokeLinecap="round" />
-      <path d="M 18 97 Q 22 73 20 48 Q 18 28 22 8"  stroke="#4a7a14" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-      <path d="M 16 78 Q 2 70 1 82 Q 2 90 10 86 Q 16 88 16 78"  stroke="#2a5a0a" strokeWidth="1" fill="#4a8a18" fillOpacity="0.9" />
-      <path d="M 18 62 Q 5 54 4 66 Q 5 74 12 70 Q 18 72 18 62"  stroke="#2a5a0a" strokeWidth="1" fill="#3a7a12" fillOpacity="0.9" />
-      <path d="M 20 72 Q 32 64 33 76 Q 32 84 25 80 Q 20 82 20 72" stroke="#2a5a0a" strokeWidth="1" fill="#4a8a18" fillOpacity="0.9" />
-      <path d="M 15 46 Q 3 38 2 50 Q 3 58 10 54 Q 15 56 15 46"  stroke="#2a5a0a" strokeWidth="1" fill="#3a7a12" fillOpacity="0.9" />
-      <path d="M 21 40 Q 32 32 33 44 Q 32 52 26 48 Q 21 50 21 40" stroke="#2a5a0a" strokeWidth="1" fill="#4a8a18" fillOpacity="0.9" />
-      <path d="M 15 22 Q 4 15 3 26 Q 4 33 11 29 Q 15 31 15 22"  stroke="#2a5a0a" strokeWidth="1" fill="#3a7a12" fillOpacity="0.9" />
-      <path d="M 10 116 Q 6 136 9 158 Q 11 178 7 198 Q 5 208 8 218"  stroke="#4a7a1e" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-      <path d="M 24 116 Q 28 138 25 160 Q 23 180 27 200 Q 29 210 27 218" stroke="#3a6a14" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-      <path d="M 17 116 Q 17 140 18 162 Q 19 185 17 205"               stroke="#4a7a1e" strokeWidth="1"   fill="none" strokeLinecap="round" />
-      <path d="M 9 148 Q 0 144 0 153 Q 1 159 7 156 Q 9 157 9 148"   stroke="#2a5a0a" strokeWidth="1" fill="#4a8818" fillOpacity="0.88" />
-      <path d="M 8 172 Q -1 168 0 177 Q 1 183 7 180 Q 9 181 8 172"  stroke="#2a5a0a" strokeWidth="1" fill="#3a7a12" fillOpacity="0.88" />
-      <path d="M 25 152 Q 34 148 35 157 Q 34 163 28 160 Q 25 161 25 152" stroke="#2a5a0a" strokeWidth="1" fill="#3a7812" fillOpacity="0.88" />
-      <path d="M 26 176 Q 35 172 35 181 Q 34 187 28 184 Q 26 185 26 176" stroke="#2a5a0a" strokeWidth="1" fill="#4a8818" fillOpacity="0.88" />
-      <path d="M 17 158 Q 9 154 9 162 Q 10 168 15 165"               stroke="#2a5a0a" strokeWidth="1" fill="#3a7a12" fillOpacity="0.85" />
-    </svg>
-  ),
-
-  /* 2 — string of pearls */
-  () => (
-    <svg width="32" height="200" viewBox="0 0 32 200" style={{ flexShrink: 0, alignSelf: "flex-end", overflow: "visible" }}>
-      <path d="M 6 96 Q 5 108 7 111 L 25 111 Q 27 108 26 96 Z" fill="#e8e0d8" />
-      <rect x="4" y="93" width="24" height="5" rx="2" fill="#f0e8e0" />
-      <ellipse cx="16" cy="95" rx="11" ry="3" fill="#2a1a08" />
-      <ellipse cx="16" cy="94" rx="9" ry="2.5" fill="#c8b890" />
-      <ellipse cx="16" cy="78" rx="10" ry="12" fill="#4a8a20" opacity="0.9" />
-      <ellipse cx="9"  cy="74" rx="7"  ry="9"  fill="#3a7a18" opacity="0.88" />
-      <ellipse cx="23" cy="74" rx="7"  ry="9"  fill="#5a9a28" opacity="0.88" />
-      <ellipse cx="16" cy="68" rx="8"  ry="8"  fill="#4a9022" opacity="0.9"  />
-      <line x1="8"  y1="111" x2="8"  y2="190" stroke="#4a8a1e" strokeWidth="0.8" opacity="0.6" />
-      <line x1="12" y1="111" x2="12" y2="200" stroke="#4a8a1e" strokeWidth="0.8" opacity="0.6" />
-      <line x1="16" y1="111" x2="16" y2="195" stroke="#4a8a1e" strokeWidth="0.8" opacity="0.6" />
-      <line x1="20" y1="111" x2="20" y2="200" stroke="#4a8a1e" strokeWidth="0.8" opacity="0.6" />
-      <line x1="24" y1="111" x2="24" y2="185" stroke="#4a8a1e" strokeWidth="0.8" opacity="0.6" />
-      {[8,12,16,20,24].map((x, si) => {
-        const len = [79, 89, 84, 89, 74][si];
-        return Array.from({length: Math.floor(len/10)}, (_,b) => (
-          <circle key={b} cx={x} cy={111 + b*10 + 6} r="3.8"
-            fill="#5aaa28" opacity="0.88" stroke="#3a7a18" strokeWidth="0.5" />
-        ));
-      })}
-    </svg>
-  ),
-];
-
-const BOOKNOOKS = [
-  /* 0 — cozy cottage doorway */
-  <svg key="cottage" width="44" height="160" viewBox="0 0 44 160">
-    <rect x="0" y="0" width="44" height="160" rx="2" fill="#d4b896" />
-    <rect x="3" y="3" width="38" height="154" rx="1" fill="#c8a878" />
-    {/* Sky */}
-    <rect x="3" y="3" width="38" height="80" fill="#a8c4e8" />
-    {/* Clouds */}
-    <ellipse cx="14" cy="18" rx="8"  ry="5"  fill="#fff" opacity="0.85" />
-    <ellipse cx="20" cy="15" rx="7"  ry="5"  fill="#fff" opacity="0.85" />
-    <ellipse cx="32" cy="22" rx="6"  ry="4"  fill="#fff" opacity="0.8"  />
-    {/* Cottage */}
-    <rect x="8" y="60" width="28" height="45" fill="#e8d0a8" />
-    <polygon points="6,62 22,40 38,62" fill="#8B4513" />
-    {/* Roof shingles */}
-    {[0,1,2].map(i => <rect key={i} x={8+i*10} y={48} width="9" height="5" rx="1" fill="#7a3c10" opacity="0.7" />)}
-    {/* Door */}
-    <rect x="16" y="82" width="12" height="22" rx="2" fill="#6b3f14" />
-    <rect x="16" y="82" width="12" height="10" rx="2" fill="#7a4a1a" />
-    <circle cx="25" cy="93" r="1.5" fill="#ffd700" />
-    {/* Lit window */}
-    <rect x="9"  y="65" width="10" height="10" rx="1" fill="#ffe88a" />
-    <rect x="25" y="65" width="10" height="10" rx="1" fill="#ffe88a" />
-    <line x1="14" y1="65" x2="14" y2="75" stroke="#8B6914" strokeWidth="0.8" />
-    <line x1="9"  y1="70" x2="19" y2="70" stroke="#8B6914" strokeWidth="0.8" />
-    <line x1="30" y1="65" x2="30" y2="75" stroke="#8B6914" strokeWidth="0.8" />
-    <line x1="25" y1="70" x2="35" y2="70" stroke="#8B6914" strokeWidth="0.8" />
-    {/* Garden path */}
-    <ellipse cx="22" cy="112" rx="7"  ry="3"  fill="#b8956a" />
-    <ellipse cx="22" cy="120" rx="8"  ry="3"  fill="#c0a070" />
-    <ellipse cx="22" cy="130" rx="9"  ry="3"  fill="#b8956a" />
-    <ellipse cx="22" cy="142" rx="10" ry="3"  fill="#c0a070" />
-    {/* Flowers */}
-    <circle cx="9"  cy="108" r="3" fill="#e85a8a" />
-    <circle cx="9"  cy="108" r="1" fill="#ffe000" />
-    <circle cx="35" cy="110" r="3" fill="#e8a02a" />
-    <circle cx="35" cy="110" r="1" fill="#fff" />
-    <circle cx="7"  cy="115" r="2" fill="#c84a6a" />
-    <circle cx="37" cy="118" r="2" fill="#e8602a" />
-    {/* Grass */}
-    <rect x="3" y="105" width="38" height="52" fill="#7ab83a" opacity="0.3" />
-  </svg>,
-
-  /* 1 — moonlit forest */
-  <svg key="forest" width="44" height="160" viewBox="0 0 44 160">
-    <rect x="0" y="0" width="44" height="160" rx="2" fill="#c8d8f0" />
-    <rect x="3" y="3" width="38" height="154" rx="1" fill="#1a2a4a" />
-    {/* Night sky gradient */}
-    <rect x="3" y="3" width="38" height="90" fill="#1a2a4a" />
-    {/* Moon */}
-    <circle cx="30" cy="20" r="10" fill="#fff8e0" opacity="0.95" />
-    <circle cx="34" cy="16" r="8"  fill="#1a2a4a" opacity="0.6"  />
-    {/* Stars */}
-    {[[8,10],[15,7],[6,22],[38,12],[40,28],[10,32],[35,35]].map(([x,y],i) => (
-      <circle key={i} cx={x} cy={y} r="1" fill="#fff" opacity="0.9" />
-    ))}
-    {/* Ground */}
-    <rect x="3" y="115" width="38" height="42" fill="#2a4a1a" />
-    {/* Trees */}
-    <polygon points="22,40 13,95 31,95"  fill="#0d2a0d" />
-    <polygon points="22,52 14,98 30,98"  fill="#122a12" />
-    <rect x="20" y="95" width="4" height="22" fill="#1a0e06" />
-    <polygon points="8,55 1,95 15,95"    fill="#0d2a0d" opacity="0.95" />
-    <rect x="6"  y="94" width="3" height="23" fill="#1a0e06" />
-    <polygon points="36,60 29,95 43,95"  fill="#0d2a0d" opacity="0.95" />
-    <rect x="34" y="94" width="3" height="23" fill="#1a0e06" />
-    {/* Glowing path */}
-    <path d="M 16 157 Q 18 135 22 110 Q 26 135 28 157" fill="#3a5a2a" opacity="0.8" />
-    <ellipse cx="22" cy="155" rx="10" ry="3" fill="#aaddff" opacity="0.15" />
-    {/* Fireflies */}
-    <circle cx="10" cy="100" r="1.5" fill="#ffffaa" opacity="0.8" />
-    <circle cx="33" cy="105" r="1.5" fill="#ffffaa" opacity="0.8" />
-    <circle cx="18" cy="108" r="1"   fill="#ffffaa" opacity="0.6" />
-  </svg>,
-
-  /* 2 — wizard's library alcove */
-  <svg key="wizard" width="44" height="160" viewBox="0 0 44 160">
-    <rect x="0" y="0" width="44" height="160" rx="2" fill="#c8b8d8" />
-    <rect x="3" y="3" width="38" height="154" rx="1" fill="#1a0e2a" />
-    {/* Stone archway */}
-    <path d="M 5 80 Q 5 20 22 15 Q 39 20 39 80" fill="#2a1a3a" stroke="#4a3a5a" strokeWidth="1.5" />
-    <path d="M 8 80 Q 8 24 22 20 Q 36 24 36 80" fill="#1a0e2a" />
-    {/* Glowing orb */}
-    <circle cx="22" cy="45" r="10" fill="#cc88ff" opacity="0.4" />
-    <circle cx="22" cy="45" r="7"  fill="#dd99ff" opacity="0.5" />
-    <circle cx="22" cy="45" r="4"  fill="#eeccff" opacity="0.9" />
-    <circle cx="20" cy="43" r="2"  fill="#fff"    opacity="0.8" />
-    {/* Orb glow rays */}
-    {[0,45,90,135,180,225,270,315].map((deg, i) => (
-      <line key={i}
-        x1={22} y1={45}
-        x2={22 + Math.cos(deg*Math.PI/180)*14}
-        y2={45 + Math.sin(deg*Math.PI/180)*14}
-        stroke="#cc88ff" strokeWidth="0.8" opacity="0.3"
-      />
-    ))}
-    {/* Mini bookshelves inside */}
-    <rect x="9"  y="75" width="10" height="6" fill="#5a3a1a" />
-    <rect x="9"  y="76" width="2"  height="5" fill="#8B2020" />
-    <rect x="11" y="76" width="2"  height="5" fill="#1a3a6b" />
-    <rect x="13" y="76" width="2"  height="5" fill="#2a6b3a" />
-    <rect x="15" y="76" width="2"  height="5" fill="#4a1a6b" />
-    <rect x="25" y="75" width="10" height="6" fill="#5a3a1a" />
-    <rect x="25" y="76" width="2"  height="5" fill="#6b3a1a" />
-    <rect x="27" y="76" width="2"  height="5" fill="#1a4a4a" />
-    <rect x="29" y="76" width="2"  height="5" fill="#8B2020" />
-    <rect x="31" y="76" width="2"  height="5" fill="#2a6b3a" />
-    {/* Candles */}
-    <rect x="10" y="68" width="3" height="8"  fill="#f5e6c8" />
-    <ellipse cx="11.5" cy="68" rx="1.5" ry="3" fill="#ffcc44" opacity="0.9" />
-    <rect x="31" y="65" width="3" height="11" fill="#f5e6c8" />
-    <ellipse cx="32.5" cy="65" rx="1.5" ry="3" fill="#ffcc44" opacity="0.9" />
-    {/* Cobblestone floor */}
-    {[[8,90],[18,90],[28,90],[38,90],[5,97],[14,97],[23,97],[32,97],[41,97]].map(([x,y],i) => (
-      <ellipse key={i} cx={x} cy={y} rx="4" ry="2.5" fill="#2a1a3a" stroke="#3a2a4a" strokeWidth="0.5" />
-    ))}
-    {/* Floating sparkles */}
-    {[[14,58],[30,55],[8,65],[36,62]].map(([x,y],i) => (
-      <circle key={i} cx={x} cy={y} r="1" fill="#eeccff" opacity="0.7" />
-    ))}
-  </svg>,
-
-  /* 3 — beach sunset cove */
-  <svg key="beach" width="44" height="160" viewBox="0 0 44 160">
-    <rect x="0" y="0" width="44" height="160" rx="2" fill="#f0c860" />
-    <rect x="3" y="3" width="38" height="154" rx="1" fill="#f0a040" />
-    {/* Sunset sky */}
-    <rect x="3" y="3"  width="38" height="60" fill="#ff7a2a" />
-    <rect x="3" y="40" width="38" height="30" fill="#ffaa44" />
-    <rect x="3" y="60" width="38" height="20" fill="#ffcc66" />
-    {/* Sun */}
-    <circle cx="22" cy="55" r="12" fill="#ffee44" opacity="0.95" />
-    {/* Sun reflection on water */}
-    <rect x="18" y="90" width="8" height="30" fill="#ffdd44" opacity="0.5" />
-    {/* Water */}
-    <rect x="3" y="88" width="38" height="50" fill="#2a6aaa" />
-    <rect x="3" y="88" width="38" height="10" fill="#3a8acc" opacity="0.6" />
-    {/* Waves */}
-    <path d="M 3 95 Q 12 92 22 95 Q 32 98 41 95" stroke="#5aaad4" strokeWidth="1.5" fill="none" />
-    <path d="M 3 102 Q 12 99 22 102 Q 32 105 41 102" stroke="#5aaad4" strokeWidth="1"   fill="none" opacity="0.7" />
-    {/* Sand */}
-    <rect x="3" y="133" width="38" height="24" fill="#e8c870" />
-    {/* Seashells */}
-    <ellipse cx="10" cy="140" rx="4" ry="2" fill="#f0d898" />
-    <ellipse cx="32" cy="138" rx="3" ry="2" fill="#e8c068" />
-    <ellipse cx="20" cy="145" rx="2" ry="1" fill="#f8e8a0" />
-    {/* Palm tree */}
-    <path d="M 8 135 Q 10 110 12 88" stroke="#5a3210" strokeWidth="3" fill="none" strokeLinecap="round" />
-    <ellipse cx="8"  cy="84" rx="8"  ry="5" fill="#3a8a1a" opacity="0.9" transform="rotate(-20,8,84)"  />
-    <ellipse cx="14" cy="80" rx="8"  ry="4" fill="#4a9a2a" opacity="0.9" transform="rotate(10,14,80)"  />
-    <ellipse cx="10" cy="78" rx="7"  ry="4" fill="#3a8a1a" opacity="0.85" transform="rotate(-30,10,78)" />
-  </svg>,
-];
-
-function ShelfPlant({ plantIndex }) {
-  const plant = PLANTS[plantIndex % PLANTS.length];
-  return plant();
-}
-
-function BookNook({ nookIndex }) {
   return (
-    <div style={{ flexShrink: 0, alignSelf: "flex-end", borderRadius: "2px 2px 0 0", overflow: "hidden", boxShadow: "2px 0 8px rgba(0,0,0,0.35), -2px 0 8px rgba(0,0,0,0.35)" }}>
-      {BOOKNOOKS[nookIndex % BOOKNOOKS.length]}
+    <div
+      title={`${book.title} — ${book.author}`}
+      onClick={() => onClick && onClick(book)}
+      style={{
+        width: 90,
+        height: 90,
+        display: "flex",
+        flexDirection: "row",
+        position: "relative",
+        borderRadius: 2,
+        border: "1px solid rgba(0,0,0,0.4)",
+        boxShadow: "3px 3px 8px rgba(0,0,0,0.5), -1px 0 3px rgba(0,0,0,0.2)",
+        overflow: "hidden",
+        flexShrink: 0,
+        alignSelf: "flex-end",
+        cursor: "pointer",
+      }}
+    >
+      {/* Left spine */}
+      <div style={{
+        width: 8,
+        flexShrink: 0,
+        background: "linear-gradient(to right, #1a1a1a, #2a2a2a)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+      }}>
+        <span style={{
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+          color: "#ffffff",
+          fontSize: 7,
+          lineHeight: 1.2,
+          overflow: "hidden",
+          maxHeight: "100%",
+          opacity: 0.85,
+          whiteSpace: "nowrap",
+          textOverflow: "ellipsis",
+        }}>
+          {book.title}
+        </span>
+      </div>
+
+      {/* Main face */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {!imgError ? (
+          <img
+            src={`https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg`}
+            alt={book.title}
+            onError={() => setImgError(true)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ) : (
+          <div style={{
+            width: "100%",
+            height: "100%",
+            background: `linear-gradient(135deg, ${c.dark} 0%, ${c.base} 100%)`,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 6,
+            boxSizing: "border-box",
+          }}>
+            <span style={{
+              writingMode: "vertical-rl",
+              transform: "rotate(180deg)",
+              color: c.text,
+              fontSize: 9,
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontWeight: 700,
+              textAlign: "center",
+              lineHeight: 1.3,
+              overflow: "hidden",
+              maxHeight: "70%",
+            }}>
+              {book.title}
+            </span>
+            <span style={{
+              writingMode: "vertical-rl",
+              transform: "rotate(180deg)",
+              color: c.text,
+              fontSize: 7,
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontStyle: "italic",
+              opacity: 0.75,
+              overflow: "hidden",
+              maxHeight: "25%",
+            }}>
+              {book.author}
+            </span>
+          </div>
+        )}
+
+        {/* Glossy overlay */}
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: "linear-gradient(to bottom, rgba(255,255,255,0.18) 0%, transparent 50%)",
+          pointerEvents: "none",
+        }} />
+
+        {/* Headphones badge */}
+        <div style={{
+          position: "absolute",
+          bottom: 3,
+          right: 3,
+          fontSize: 12,
+          lineHeight: 1,
+          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.8))",
+          pointerEvents: "none",
+        }}>
+          🎧
+        </div>
+      </div>
     </div>
   );
 }
 
-function BookShelf({ genre, onClose }) {
-  const allBooks = (library[genre] || []).filter((b) => b.type === "ebooks");
+function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType }) {
+  const [imgError, setImgError] = useState(false);
+  const [dates, setDates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`)) || {}; } catch { return {}; }
+  });
+  const isbn = book.isbn;
+  const isFav = !!favorites[isbn];
+  const status = statuses[isbn] || null;
+  const prog = progress[isbn] || 0;
+
+  useEffect(() => { localStorage.setItem(`sk_dates_${mediaType}`, JSON.stringify(dates)); }, [dates, mediaType]);
+
+  const handleStatus = (s) => {
+    setStatuses((prev) => ({ ...prev, [isbn]: s }));
+    if (s === "reading") {
+      setDates((prev) => {
+        const existing = prev[isbn] || {};
+        if (existing.startDate) return prev;
+        return { ...prev, [isbn]: { ...existing, startDate: new Date().toISOString() } };
+      });
+    }
+    if (s === "finished") {
+      setDates((prev) => {
+        const existing = prev[isbn] || {};
+        return { ...prev, [isbn]: { ...existing, endDate: new Date().toISOString() } };
+      });
+    }
+  };
+
+  const handleFav = () => {
+    setFavorites((prev) => {
+      const next = { ...prev };
+      if (next[isbn]) delete next[isbn];
+      else next[isbn] = true;
+      return next;
+    });
+  };
+
+  const handleProgress = (e) => {
+    setProgress((prev) => ({ ...prev, [isbn]: Number(e.target.value) }));
+  };
+
+  const statusBtnStyle = (s) => ({
+    padding: "7px 12px",
+    borderRadius: 6,
+    border: "1px solid #8B5E3C",
+    cursor: "pointer",
+    fontFamily: '"Palatino Linotype", Palatino, serif',
+    fontSize: 12,
+    fontWeight: status === s ? 700 : 400,
+    background: status === s ? "#3A2A1A" : "#F8F1E4",
+    color: status === s ? "#F8F1E4" : "#3A2A1A",
+    flex: 1,
+    transition: "all 0.15s",
+  });
+
+  const divider = (
+    <div style={{ borderTop: "1px solid #C9A96E", margin: "14px 0", opacity: 0.6 }} />
+  );
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 300,
+        background: "rgba(20,14,8,0.72)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: 700,
+          width: "100%",
+          background: "#F8F1E4",
+          border: "1px solid #8B5E3C",
+          borderRadius: 12,
+          padding: 30,
+          position: "relative",
+          boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+          maxHeight: "90vh",
+          overflowY: "auto",
+        }}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          style={{
+            position: "absolute",
+            top: 14,
+            right: 16,
+            background: "none",
+            border: "none",
+            fontSize: 22,
+            cursor: "pointer",
+            color: "#6B4E32",
+            lineHeight: 1,
+            padding: "2px 6px",
+          }}
+          aria-label="Close"
+        >
+          ✕
+        </button>
+
+        {/* Two-column layout */}
+        <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+          {/* Left column — book cover */}
+          <div style={{ width: "35%", flexShrink: 0 }}>
+            {!imgError ? (
+              <img
+                src={`https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`}
+                alt={book.title}
+                onError={() => setImgError(true)}
+                style={{
+                  width: "100%",
+                  borderRadius: 6,
+                  boxShadow: "3px 4px 14px rgba(0,0,0,0.35)",
+                  display: "block",
+                  border: "1px solid #C9A96E",
+                }}
+              />
+            ) : (
+              <div style={{
+                width: "100%",
+                paddingTop: "145%",
+                position: "relative",
+                borderRadius: 6,
+                background: "linear-gradient(135deg, #3A2A1A 0%, #6B4E32 100%)",
+                boxShadow: "3px 4px 14px rgba(0,0,0,0.35)",
+                border: "1px solid #C9A96E",
+              }}>
+                <div style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 12,
+                  textAlign: "center",
+                  color: "#F8F1E4",
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  lineHeight: 1.4,
+                }}>
+                  {book.title}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right column */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 22,
+              fontWeight: 700,
+              color: "#3A2A1A",
+              margin: "0 0 4px 0",
+              lineHeight: 1.3,
+              paddingRight: 30,
+            }}>
+              {book.title}
+            </h2>
+            <p style={{
+              fontFamily: "Georgia, serif",
+              fontStyle: "italic",
+              fontSize: 14,
+              color: "#6B4E32",
+              margin: "0 0 12px 0",
+            }}>
+              {book.author}
+            </p>
+
+            {divider}
+
+            <p style={{
+              fontFamily: "Georgia, serif",
+              fontSize: 13,
+              color: "#4B3A2A",
+              lineHeight: 1.7,
+              margin: "0 0 4px 0",
+            }}>
+              {book.description}
+            </p>
+
+            {divider}
+
+            {/* Status buttons */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button style={statusBtnStyle("want-to-read")} onClick={() => handleStatus("want-to-read")}>
+                {mediaType === "audiobooks" ? "🎧 Want to Listen" : "📖 Want to Read"}
+              </button>
+              <button style={statusBtnStyle("reading")} onClick={() => handleStatus("reading")}>
+                {mediaType === "audiobooks" ? "🎧 Listening" : "📚 Reading"}
+              </button>
+              <button style={statusBtnStyle("finished")} onClick={() => handleStatus("finished")}>
+                ✅ Finished
+              </button>
+            </div>
+
+            {/* Progress bar — only when reading */}
+            {status === "reading" && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{
+                  fontFamily: "Georgia, serif",
+                  fontSize: 12,
+                  color: "#4B3A2A",
+                  display: "block",
+                  marginBottom: 6,
+                }}>
+                  {mediaType === "audiobooks" ? "Listening Progress" : "Reading Progress"}: {prog}%
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={prog}
+                  onChange={handleProgress}
+                  style={{
+                    width: "100%",
+                    accentColor: "#8B5E3C",
+                    cursor: "pointer",
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Favorites row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                onClick={handleFav}
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: 22,
+                  cursor: "pointer",
+                  color: isFav ? "#8B2020" : "#8B5E3C",
+                  padding: 0,
+                  lineHeight: 1,
+                }}
+                aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+              >
+                {isFav ? "♥" : "♡"}
+              </button>
+              <span style={{
+                fontFamily: "Georgia, serif",
+                fontSize: 13,
+                color: isFav ? "#8B2020" : "#6B4E32",
+                fontStyle: "italic",
+              }}>
+                {isFav ? "Favorited" : "Add to Favorites"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Patterns for each shelf row: "b"=book, "p0/p1"=plant type
+const SHELF_PATTERNS = [
+  ["b","b","p0","b","b","b","b","b"],
+  ["b","b","b","b","p0","b","b","b"],
+  ["b","p0","b","b","b","b","b","b"],
+  ["b","b","b","b","b","p0","b","b"],
+];
+
+
+
+const PLANT_IMAGES = ["plant2.png"];
+
+function ShelfPlant({ plantIndex }) {
+  const src = "/" + PLANT_IMAGES[plantIndex % PLANT_IMAGES.length];
+  return (
+    <img
+      src={src}
+      alt="plant"
+      style={{
+        width: 220,
+        height: 420,
+        objectFit: "contain",
+        objectPosition: "top center",
+        display: "block",
+      }}
+    />
+  );
+}
+
+function BookShelf({ genre, mediaType, onClose }) {
+  const allBooks = (library[genre] || []).filter((b) => b.type === mediaType);
   const books = allBooks;
+
+  const [selectedBook, setSelectedBook] = useState(null);
+
+  const favKey      = `sk_favorites_${mediaType}`;
+  const statusKey   = `sk_statuses_${mediaType}`;
+  const progressKey = `sk_progress_${mediaType}`;
+
+  const [favorites, setFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`sk_favorites_${mediaType}`)) || {}; } catch { return {}; }
+  });
+  const [statuses, setStatuses] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`sk_statuses_${mediaType}`)) || {}; } catch { return {}; }
+  });
+  const [progress, setProgress] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`sk_progress_${mediaType}`)) || {}; } catch { return {}; }
+  });
+
+  useEffect(() => { localStorage.setItem(favKey,      JSON.stringify(favorites)); }, [favorites, favKey]);
+  useEffect(() => { localStorage.setItem(statusKey,   JSON.stringify(statuses));  }, [statuses, statusKey]);
+  useEffect(() => { localStorage.setItem(progressKey, JSON.stringify(progress));  }, [progress, progressKey]);
 
   // Split books into rows of 6
   const rows = [];
@@ -493,7 +776,7 @@ function BookShelf({ genre, onClose }) {
           letterSpacing: "1.5px",
           marginBottom: 6,
         }}>
-          📚 {genre}
+          {mediaType === "ebooks" ? "📚" : "🎧"} {genre}
         </h1>
         <p style={{
           fontFamily: '"Palatino Linotype", Palatino, serif',
@@ -501,16 +784,16 @@ function BookShelf({ genre, onClose }) {
           fontStyle: "italic",
           fontSize: 15,
         }}>
-          📘 {allBooks.length} eBooks in this collection
+          {mediaType === "ebooks" ? "📘" : "🎧"} {allBooks.length} {mediaType === "ebooks" ? "eBooks" : "Audiobooks"} in this collection
         </p>
       </div>
 
       {/* Bookshelves */}
       <div style={{ maxWidth: 780, margin: "0 auto" }}>
         {rows.map((row, rowIndex) => (
-          <div key={rowIndex} style={{ marginBottom: 50 }}>
+          <div key={rowIndex} style={{ marginBottom: 80, position: "relative" }}>
 
-            {/* Books sitting on the shelf — no dark panel */}
+            {/* Books row — only books, no plants */}
             <div style={{
               display: "flex",
               alignItems: "flex-end",
@@ -525,33 +808,68 @@ function BookShelf({ genre, onClose }) {
                     const book = row[bookIdx];
                     bookIdx++;
                     if (!book) return null;
-                    return <BookSpine key={pi} book={book} index={bookIdx - 1} rowIndex={rowIndex} />;
-                  } else if (item.startsWith("p")) {
-                    const pIdx = parseInt(item[1]);
-                    return <ShelfPlant key={pi} plantIndex={pIdx} />;
-                  } else if (item.startsWith("n")) {
-                    const nIdx = parseInt(item[1]);
-                    return <BookNook key={pi} nookIndex={nIdx} />;
+                    return mediaType === "audiobooks" ? (
+                      <CDCase
+                        key={pi}
+                        book={book}
+                        index={bookIdx - 1}
+                        rowIndex={rowIndex}
+                        onClick={setSelectedBook}
+                      />
+                    ) : (
+                      <BookSpine
+                        key={pi}
+                        book={book}
+                        index={bookIdx - 1}
+                        rowIndex={rowIndex}
+                        onClick={setSelectedBook}
+                      />
+                    );
                   }
                   return null;
                 });
               })()}
             </div>
 
-            {/* Elegant mahogany shelf plank */}
-            <div style={{
-              height: 22,
-              background: "linear-gradient(to bottom, #8B4513 0%, #6b3310 30%, #4a2208 70%, #3a1a06 100%)",
-              boxShadow: "0 6px 14px rgba(0,0,0,0.4), inset 0 3px 5px rgba(255,255,255,0.1), inset 0 -2px 4px rgba(0,0,0,0.4)",
-              position: "relative",
-              overflow: "hidden",
-            }}>
-              {[10, 22, 38, 51, 64, 77, 89].map((pct) => (
-                <div key={pct} style={{ position: "absolute", left: `${pct}%`, top: 2, bottom: 2, width: 1, background: "rgba(0,0,0,0.2)" }} />
-              ))}
-              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "rgba(255,255,255,0.18)" }} />
-            </div>
-            <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.25), transparent)" }} />
+            {/* Real shelf photo */}
+            <img
+              src="/shelf2.jpg"
+              alt="shelf"
+              style={{
+                width: "100%",
+                height: 28,
+                objectFit: "cover",
+                objectPosition: "center center",
+                display: "block",
+                boxShadow: "0 6px 14px rgba(0,0,0,0.4)",
+              }}
+            />
+
+            {/* Plants pinned to shelf edge, vines hanging below */}
+            {(() => {
+              const pattern = SHELF_PATTERNS[rowIndex % SHELF_PATTERNS.length];
+              const totalItems = pattern.length;
+              const itemWidth = 60;
+              return pattern.map((item, pi) => {
+                if (!item.startsWith("p")) return null;
+                const pIdx = parseInt(item[1]);
+                const leftPct = (pi / totalItems) * 100;
+                return (
+                  <div key={pi} style={{
+                    position: "absolute",
+                    left: `${leftPct}%`,
+                    top: "100%",
+                    transform: "translateX(25%) translateY(-110px)",
+                    zIndex: 10,
+                    width: itemWidth,
+                  }}>
+                    <ShelfPlant plantIndex={pIdx} />
+                  </div>
+                );
+              });
+            })()}
+
+            <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)" }} />
           </div>
         ))}
 
@@ -568,6 +886,574 @@ function BookShelf({ genre, onClose }) {
           </p>
         )}
       </div>
+
+      {/* Book detail modal */}
+      {selectedBook && (
+        <BookModal
+          book={selectedBook}
+          onClose={() => setSelectedBook(null)}
+          favorites={favorites}
+          setFavorites={setFavorites}
+          statuses={statuses}
+          setStatuses={setStatuses}
+          progress={progress}
+          setProgress={setProgress}
+          mediaType={mediaType}
+        />
+      )}
+    </div>
+  );
+}
+
+function FavoritesShelf({ onClose }) {
+  const [selectedBook, setSelectedBook] = useState(null);
+
+  // Merge ebook + audiobook favorites for the favorites shelf
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      const eb = JSON.parse(localStorage.getItem("sk_favorites_ebooks")) || {};
+      const ab = JSON.parse(localStorage.getItem("sk_favorites_audiobooks")) || {};
+      return { ...eb, ...ab };
+    } catch { return {}; }
+  });
+  const [statuses, setStatuses] = useState(() => {
+    try {
+      const eb = JSON.parse(localStorage.getItem("sk_statuses_ebooks")) || {};
+      const ab = JSON.parse(localStorage.getItem("sk_statuses_audiobooks")) || {};
+      return { ...eb, ...ab };
+    } catch { return {}; }
+  });
+  const [progress, setProgress] = useState(() => {
+    try {
+      const eb = JSON.parse(localStorage.getItem("sk_progress_ebooks")) || {};
+      const ab = JSON.parse(localStorage.getItem("sk_progress_audiobooks")) || {};
+      return { ...eb, ...ab };
+    } catch { return {}; }
+  });
+
+  // Collect all favorited books from the library
+  const favoritedBooks = [];
+  Object.values(library).forEach((genreBooks) => {
+    genreBooks.forEach((book) => {
+      if (favorites[book.isbn]) {
+        favoritedBooks.push(book);
+      }
+    });
+  });
+
+  // Split into rows of 6
+  const rows = [];
+  for (let i = 0; i < favoritedBooks.length; i += 6) {
+    rows.push(favoritedBooks.slice(i, i + 6));
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        backgroundColor: "#F8F1E4",
+        backgroundImage:
+          'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        overflowY: "auto",
+        padding: "30px 40px",
+      }}
+    >
+      {/* Back button */}
+      <button
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          top: 20,
+          left: 20,
+          padding: "8px 18px",
+          borderRadius: "50px",
+          border: "1px solid #8B5E3C",
+          cursor: "pointer",
+          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          color: "#3A2A1A",
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontWeight: 700,
+          fontSize: 14,
+          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          zIndex: 201,
+        }}
+      >
+        ← Back to Tree
+      </button>
+
+      {/* Header */}
+      <div style={{ textAlign: "center", marginBottom: 30, paddingTop: 10 }}>
+        <h1 style={{
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          color: "#3A2A1A",
+          fontSize: 34,
+          letterSpacing: "1.5px",
+          marginBottom: 6,
+        }}>
+          ♥ My Favorites
+        </h1>
+        <p style={{
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          color: "#4B3A2A",
+          fontStyle: "italic",
+          fontSize: 15,
+        }}>
+          Your most beloved books, all in one place
+        </p>
+      </div>
+
+      {/* Bookshelves */}
+      <div style={{ maxWidth: 780, margin: "0 auto" }}>
+        {favoritedBooks.length === 0 ? (
+          <p style={{
+            textAlign: "center",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            fontStyle: "italic",
+            color: "#6B4E32",
+            fontSize: 16,
+            marginTop: 40,
+          }}>
+            You haven&apos;t added any favorites yet. Click the ♡ on any book to add it here.
+          </p>
+        ) : (
+          rows.map((row, rowIndex) => (
+            <div key={rowIndex} style={{ marginBottom: 80, position: "relative" }}>
+              {/* Books row */}
+              <div style={{
+                display: "flex",
+                alignItems: "flex-end",
+                gap: 5,
+                padding: "0 8px",
+              }}>
+                {row.map((book, idx) => (
+                  <BookSpine
+                    key={book.isbn}
+                    book={book}
+                    index={idx}
+                    rowIndex={rowIndex}
+                    onClick={setSelectedBook}
+                  />
+                ))}
+              </div>
+
+              {/* Shelf photo */}
+              <img
+                src="/shelf2.jpg"
+                alt="shelf"
+                style={{
+                  width: "100%",
+                  height: 28,
+                  objectFit: "cover",
+                  objectPosition: "center center",
+                  display: "block",
+                  boxShadow: "0 6px 14px rgba(0,0,0,0.4)",
+                }}
+              />
+
+              <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)" }} />
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Book detail modal */}
+      {selectedBook && (
+        <BookModal
+          book={selectedBook}
+          onClose={() => setSelectedBook(null)}
+          favorites={favorites}
+          setFavorites={setFavorites}
+          statuses={statuses}
+          setStatuses={setStatuses}
+          progress={progress}
+          setProgress={setProgress}
+          mediaType={selectedBook.type}
+        />
+      )}
+    </div>
+  );
+}
+
+function StatsPage({ onClose, mediaType }) {
+  const [calMonth, setCalMonth] = useState(new Date());
+  const [selectedTallyMonth, setSelectedTallyMonth] = useState(null); // { yr, mi }
+
+  const statuses = (() => { try { return JSON.parse(localStorage.getItem(`sk_statuses_${mediaType}`)) || {}; } catch { return {}; } })();
+  const favorites = (() => { try { return JSON.parse(localStorage.getItem(`sk_favorites_${mediaType}`)) || {}; } catch { return {}; } })();
+  const progress = (() => { try { return JSON.parse(localStorage.getItem(`sk_progress_${mediaType}`)) || {}; } catch { return {}; } })();
+  const dates = (() => { try { return JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`)) || {}; } catch { return {}; } })();
+
+  // Flatten all books
+  const allBooks = Object.values(library).flat();
+
+  const finishedBooks = allBooks.filter((b) => statuses[b.isbn] === "finished");
+  const readingBooks = allBooks.filter((b) => statuses[b.isbn] === "reading");
+  const favCount = Object.values(favorites).filter(Boolean).length;
+
+  const avgDays = (() => {
+    const withDates = finishedBooks.filter((b) => dates[b.isbn]?.startDate && dates[b.isbn]?.endDate);
+    if (withDates.length === 0) return null;
+    const total = withDates.reduce((acc, b) => {
+      const start = new Date(dates[b.isbn].startDate);
+      const end = new Date(dates[b.isbn].endDate);
+      return acc + Math.max(0, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+    }, 0);
+    return Math.round(total / withDates.length);
+  })();
+
+  // Calendar helpers
+  const today = new Date();
+  const year = calMonth.getFullYear();
+  const month = calMonth.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthName = calMonth.toLocaleString("default", { month: "long" });
+
+  const booksOnDay = (day) => {
+    const dayDate = new Date(year, month, day);
+    const dayStart = new Date(dayDate); dayStart.setHours(0,0,0,0);
+    const dayEnd = new Date(dayDate); dayEnd.setHours(23,59,59,999);
+    return allBooks.filter((b) => {
+      const d = dates[b.isbn];
+      if (!d?.startDate) return false;
+      const start = new Date(d.startDate);
+      const end = d.endDate ? new Date(d.endDate) : new Date();
+      return start <= dayEnd && end >= dayStart;
+    });
+  };
+
+  const isToday = (day) =>
+    today.getFullYear() === year && today.getMonth() === month && today.getDate() === day;
+
+  const daysSince = (iso) => {
+    if (!iso) return null;
+    return Math.max(0, Math.round((new Date() - new Date(iso)) / (1000 * 60 * 60 * 24)));
+  };
+
+  const daysBetween = (startIso, endIso) => {  // eslint-disable-line no-unused-vars
+    if (!startIso || !endIso) return null;
+    return Math.max(0, Math.round((new Date(endIso) - new Date(startIso)) / (1000 * 60 * 60 * 24)));
+  };
+
+  const cardStyle = {
+    background: "rgba(255,255,255,0.7)",
+    border: "1px solid #D8C3A5",
+    borderRadius: 10,
+    padding: "16px 24px",
+    textAlign: "center",
+    minWidth: 130,
+  };
+
+  const sectionTitle = (text) => (
+    <h2 style={{
+      fontFamily: '"Palatino Linotype", Palatino, serif',
+      fontSize: 20,
+      color: "#3A2A1A",
+      marginBottom: 16,
+      marginTop: 0,
+    }}>{text}</h2>
+  );
+
+  const divider = <div style={{ borderTop: "1px solid #D8C3A5", margin: "0 0 32px 0", opacity: 0.7 }} />;
+
+  // Build calendar grid cells
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  return (
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 200,
+      backgroundColor: "#F8F1E4",
+      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+      overflowY: "auto",
+      padding: "30px 40px",
+    }}>
+      {/* Back button */}
+      <button
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          top: 20,
+          left: 20,
+          padding: "8px 18px",
+          borderRadius: "50px",
+          border: "1px solid #8B5E3C",
+          cursor: "pointer",
+          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          color: "#3A2A1A",
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontWeight: 700,
+          fontSize: 14,
+          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          zIndex: 201,
+        }}
+      >
+        ← Back to Tree
+      </button>
+
+      <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 10 }}>
+        {/* Header */}
+        <h1 style={{
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontSize: 32,
+          color: "#3A2A1A",
+          textAlign: "center",
+          marginBottom: 30,
+        }}>{mediaType === "audiobooks" ? "🎧 My Listening Journey" : "📊 My Reading Journey"}</h1>
+
+        {/* Section 1 — Summary Cards */}
+        <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginBottom: 40 }}>
+          <div style={cardStyle}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{finishedBooks.length}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Books Listened To" : "📚 Books Read"}</div>
+          </div>
+          <div style={cardStyle}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{readingBooks.length}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Currently Listening" : "📖 In Progress"}</div>
+          </div>
+          <div style={cardStyle}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{favCount}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>⭐ Favourites</div>
+          </div>
+          <div style={cardStyle}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{avgDays !== null ? avgDays : "—"}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "⏱ Avg Listen Days" : "⏱ Avg Days"}</div>
+          </div>
+        </div>
+
+        {divider}
+
+        {/* Section 2 — Monthly Reading Calendar */}
+        <div style={{ marginBottom: 40 }}>
+          {sectionTitle(mediaType === "audiobooks" ? "📅 Monthly Listening Calendar" : "📅 Monthly Reading Calendar")}
+
+          {/* Month navigation */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 20, marginBottom: 12 }}>
+            <button
+              onClick={() => setCalMonth(new Date(year, month - 1, 1))}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#8B5E3C" }}
+            >‹</button>
+            <span style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 18, color: "#3A2A1A", fontWeight: 700 }}>
+              {monthName} {year}
+            </span>
+            <button
+              onClick={() => setCalMonth(new Date(year, month + 1, 1))}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#8B5E3C" }}
+            >›</button>
+          </div>
+
+          {/* Day headers */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
+              <div key={d} style={{ textAlign: "center", fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontWeight: 700, padding: "4px 0" }}>{d}</div>
+            ))}
+          </div>
+
+          {/* Calendar grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+            {cells.map((day, i) => {
+              if (day === null) return <div key={`empty-${i}`} />;
+              const books = booksOnDay(day);
+              return (
+                <div key={day} style={{
+                  minHeight: 90,
+                  border: "1px solid #D8C3A5",
+                  borderRadius: 6,
+                  padding: 5,
+                  background: isToday(day) ? "rgba(139,94,60,0.15)" : "rgba(255,255,255,0.4)",
+                  position: "relative",
+                }}>
+                  <div style={{ fontSize: 11, color: "#6B4E32", fontFamily: "Georgia, serif", marginBottom: 4, fontWeight: 700 }}>{day}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                    {books.map((b) => (
+                      <img
+                        key={b.isbn}
+                        src={`https://covers.openlibrary.org/b/isbn/${b.isbn}-M.jpg`}
+                        alt={b.title}
+                        title={b.title}
+                        style={{ width: 46, height: 64, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", boxShadow: "1px 1px 4px rgba(0,0,0,0.2)" }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {divider}
+
+        {/* Section — Monthly & Yearly Tally */}
+        {(() => {
+          const allBooks = Object.values(library).flat();
+          const datesData = JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`) || "{}");
+          const statusData = JSON.parse(localStorage.getItem(`sk_statuses_${mediaType}`) || "{}");
+
+          // Build monthly counts grouped by year
+          const monthlyCounts = {};
+          allBooks.forEach((b) => {
+            if (statusData[b.isbn] === "finished" && datesData[b.isbn]?.endDate) {
+              const d = new Date(datesData[b.isbn].endDate);
+              const yr = d.getFullYear();
+              const mo = d.getMonth();
+              if (!monthlyCounts[yr]) monthlyCounts[yr] = Array(12).fill(0);
+              monthlyCounts[yr][mo]++;
+            }
+          });
+
+          const years = Object.keys(monthlyCounts).sort((a, b) => b - a);
+          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          return (
+            <div style={{ marginBottom: 40 }}>
+              {sectionTitle(mediaType === "audiobooks" ? "📅 Monthly & Yearly Listening Tally" : "📅 Monthly & Yearly Reading Tally")}
+              {years.length === 0 ? (
+                <p style={{ fontFamily: "Georgia, serif", fontStyle: "italic", color: "#6B4E32" }}>Finish a book to start building your tally!</p>
+              ) : years.map((yr) => {
+                const counts = monthlyCounts[yr];
+                const yearTotal = counts.reduce((a, b) => a + b, 0);
+                return (
+                  <div key={yr} style={{ marginBottom: 30 }}>
+                    {/* Year total box */}
+                    <div style={{ ...cardStyle, display: "inline-flex", flexDirection: "column", alignItems: "center", marginBottom: 16, minWidth: 160 }}>
+                      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{yearTotal}</div>
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? `🎧 Books Listened To in ${yr}` : `📚 Books Read in ${yr}`}</div>
+                    </div>
+
+                    {/* Monthly boxes */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+                      {counts.map((count, mi) => {
+                        const isSelected = selectedTallyMonth?.yr === yr && selectedTallyMonth?.mi === mi;
+                        return (
+                          <div
+                            key={mi}
+                            onClick={() => count > 0 && setSelectedTallyMonth(isSelected ? null : { yr, mi })}
+                            style={{
+                              ...cardStyle,
+                              padding: "12px 8px",
+                              minWidth: 0,
+                              opacity: count === 0 ? 0.4 : 1,
+                              cursor: count > 0 ? "pointer" : "default",
+                              border: isSelected ? "2px solid #8B5E3C" : "1px solid #D8C3A5",
+                              background: isSelected ? "rgba(139,94,60,0.12)" : "rgba(255,255,255,0.7)",
+                              transition: "all 0.15s ease",
+                            }}
+                          >
+                            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 22, fontWeight: 700, color: "#3A2A1A" }}>
+                              {count}
+                            </div>
+                            <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>
+                              {monthNames[mi]}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Expanded book list for selected month */}
+                    {selectedTallyMonth?.yr === yr && (() => {
+                      const monthBooks = allBooks.filter((b) => {
+                        if (statusData[b.isbn] !== "finished" || !datesData[b.isbn]?.endDate) return false;
+                        const d = new Date(datesData[b.isbn].endDate);
+                        return d.getFullYear().toString() === yr && d.getMonth() === selectedTallyMonth.mi;
+                      });
+                      return (
+                        <div style={{ marginTop: 16, padding: "16px", background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8 }}>
+                          <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: "#3A2A1A", marginBottom: 12 }}>
+                            ✅ Finished in {monthNames[selectedTallyMonth.mi]} {yr}
+                          </div>
+                          {monthBooks.map((b) => {
+                            const d = datesData[b.isbn] || {};
+                            const took = d.startDate && d.endDate
+                              ? Math.max(0, Math.round((new Date(d.endDate) - new Date(d.startDate)) / (1000*60*60*24)))
+                              : null;
+                            return (
+                              <div key={b.isbn} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.6)", borderRadius: 6, border: "1px solid #D8C3A5" }}>
+                                <img
+                                  src={`https://covers.openlibrary.org/b/isbn/${b.isbn}-S.jpg`}
+                                  alt={b.title}
+                                  style={{ width: 36, height: 50, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", flexShrink: 0 }}
+                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, color: "#3A2A1A", fontSize: 13 }}>{b.title}</div>
+                                  <div style={{ fontFamily: "Georgia, serif", fontStyle: "italic", color: "#6B4E32", fontSize: 11 }}>{b.author}</div>
+                                  {took !== null && <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", marginTop: 2 }}>📅 {took} days to read</div>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {divider}
+
+        {/* Section 3 — Currently Reading */}
+        <div style={{ marginBottom: 40 }}>
+          {sectionTitle(mediaType === "audiobooks" ? "🎧 Currently Listening" : "📖 Currently Reading")}
+          {readingBooks.length === 0 ? (
+            <p style={{ fontFamily: "Georgia, serif", fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "No audiobooks currently in progress" : "No books currently in progress"}</p>
+          ) : (
+            readingBooks.map((b) => {
+              const prog = progress[b.isbn] || 0;
+              const start = dates[b.isbn]?.startDate;
+              const days = start ? daysSince(start) : null;
+              return (
+                <div key={b.isbn} style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  marginBottom: 14,
+                  padding: "12px 16px",
+                  background: "rgba(255,255,255,0.6)",
+                  border: "1px solid #D8C3A5",
+                  borderRadius: 8,
+                }}>
+                  <img
+                    src={`https://covers.openlibrary.org/b/isbn/${b.isbn}-S.jpg`}
+                    alt={b.title}
+                    style={{ width: 40, height: 55, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, color: "#3A2A1A", fontSize: 14, marginBottom: 2 }}>{b.title}</div>
+                    <div style={{ fontFamily: "Georgia, serif", fontStyle: "italic", color: "#6B4E32", fontSize: 12, marginBottom: 6 }}>{b.author}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, background: "#D8C3A5", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ width: `${prog}%`, height: "100%", background: "#8B5E3C", borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", whiteSpace: "nowrap" }}>{prog}%</span>
+                    </div>
+                  </div>
+                  {days !== null && (
+                    <div style={{ textAlign: "center", flexShrink: 0 }}>
+                      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, fontWeight: 700, color: "#8B5E3C" }}>{days}</div>
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 10, color: "#6B4E32", fontStyle: "italic" }}>days</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {divider}
+
+      </div>
     </div>
   );
 }
@@ -577,6 +1463,9 @@ export default function App() {
   const [mediaType, setMediaType] = useState("ebooks");
   const [nests, setNests] = useState(DEFAULT_ASSIGNMENTS);
   const [openNestId, setOpenNestId] = useState(null);
+  const [showFavorites, setShowFavorites] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [hoverKnot, setHoverKnot] = useState(null); // "toggle" | "stats"
 
   const handleNestClick = (nestGenre) => {
     setGenre(nestGenre);
@@ -607,10 +1496,30 @@ export default function App() {
 
   return (
     <>
+      {/* Gold pulse animation for favorites nest */}
+      <style>{`
+        @keyframes goldPulse {
+          0%, 100% { opacity: 0.9; }
+          50% { opacity: 0.5; }
+        }
+        .gold-pulse {
+          animation: goldPulse 2s ease-in-out infinite;
+        }
+      `}</style>
+
+      {/* STATS PAGE */}
+      {showStats && <StatsPage onClose={() => setShowStats(false)} mediaType={mediaType} />}
+
+      {/* FAVORITES SHELF PAGE */}
+      {showFavorites && (
+        <FavoritesShelf onClose={() => setShowFavorites(false)} />
+      )}
+
       {/* BOOKSHELF PAGE */}
       {genre && (
         <BookShelf
           genre={genre}
+          mediaType={mediaType}
           onClose={() => setGenre(null)}
         />
       )}
@@ -654,6 +1563,18 @@ export default function App() {
           </p>
           <p style={{ color: "#5a3e28", marginTop: 4, fontSize: 12, fontStyle: "italic" }}>
             💡 Click a nest to browse · Right-click to reassign its genre
+            <span style={{
+              marginLeft: 12,
+              padding: "2px 10px",
+              borderRadius: 20,
+              background: mediaType === "ebooks" ? "rgba(26,58,107,0.15)" : "rgba(139,94,60,0.15)",
+              border: `1px solid ${mediaType === "ebooks" ? "#1a3a6b" : "#8B5E3C"}`,
+              color: mediaType === "ebooks" ? "#1a3a6b" : "#8B5E3C",
+              fontStyle: "normal",
+              fontWeight: 600,
+            }}>
+              {mediaType === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
+            </span>
           </p>
         </div>
 
@@ -753,27 +1674,130 @@ export default function App() {
               </div>
             ))}
 
-            {/* TRUNK KNOT TOGGLE */}
-            <button
-              onClick={(e) => { e.stopPropagation(); setMediaType(mediaType === "ebooks" ? "audiobooks" : "ebooks"); }}
-              title="Toggle ebooks / audiobooks"
+            {/* GOLDEN FAVORITES NEST */}
+            <div
               style={{
                 position: "absolute",
-                left: "48%",
-                top: "83%",
+                left: "46%",
+                top: "2%",
                 transform: "translate(-50%, -50%)",
-                width: 62,
-                height: 50,
+                zIndex: 10,
+              }}
+              onClick={(e) => { e.stopPropagation(); setShowFavorites(true); }}
+            >
+              <div style={{ position: "relative", width: 100, height: 70, cursor: "pointer" }}>
+                <svg viewBox="0 0 100 70" width="100" height="70" style={{ position: "absolute", top: 0, left: 0 }}>
+                  <defs>
+                    <clipPath id="nestClip-favorites">
+                      <ellipse cx="50" cy="44" rx="46" ry="28" />
+                    </clipPath>
+                  </defs>
+                  <image
+                    href="/nest_PNG.png"
+                    x="-10" y="10" width="120" height="80"
+                    clipPath="url(#nestClip-favorites)"
+                    preserveAspectRatio="xMidYMid slice"
+                  />
+                  <ellipse cx="50" cy="68" rx="38" ry="5" fill="rgba(0,0,0,0.3)" />
+                  {/* Golden glow ring — always visible, pulsing */}
+                  <ellipse
+                    cx="50" cy="44" rx="46" ry="28"
+                    fill="none"
+                    stroke="#ffd700"
+                    strokeWidth="3"
+                    opacity="0.9"
+                    className="gold-pulse"
+                  />
+                </svg>
+
+                <div style={{
+                  position: "absolute",
+                  top: "54%",
+                  left: "50%",
+                  transform: "translate(-50%, -50%)",
+                  color: "#ffd700",
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  fontWeight: 700,
+                  fontSize: 11,
+                  whiteSpace: "nowrap",
+                  textShadow: "0 1px 5px rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.8)",
+                  pointerEvents: "none",
+                }}>
+                  ♥ Favorites
+                </div>
+              </div>
+            </div>
+
+            {/* TRUNK KNOT TOGGLE */}
+            {hoverKnot === "toggle" && (
+              <KnotScrollTooltip text={mediaType === "ebooks" ? "Switch to Audiobooks" : "Switch to eBooks"} left="51%" top="50%" />
+            )}
+            <button
+              onMouseEnter={() => setHoverKnot("toggle")}
+              onMouseLeave={() => setHoverKnot(null)}
+              onClick={(e) => { e.stopPropagation(); setMediaType(mediaType === "ebooks" ? "audiobooks" : "ebooks"); }}
+              style={{
+                position: "absolute",
+                left: "51%",
+                top: "55%",
+                transform: "translate(-50%, -50%)",
+                width: 56,
+                height: 46,
                 borderRadius: "50%",
                 border: "none",
                 cursor: "pointer",
-                fontSize: 20,
-                background: "radial-gradient(ellipse at 46% 50%, #0d0b08 20%, #1e1a10 34%, #2e2416 46%, #3a2d18 56%, #2a2010 68%, #1a1509 82%, #0e0c07 100%)",
-                boxShadow: "inset 0 2px 5px rgba(255,255,255,0.04), inset 0 -2px 6px rgba(0,0,0,0.8), 0 3px 10px rgba(0,0,0,0.7), 0 0 0 3px #1a1509, 0 0 0 5px #2e2416, 0 0 0 7px #18130a",
+                fontSize: 28,
+                overflow: "hidden",
+                padding: 0,
+                boxShadow: "0 3px 10px rgba(0,0,0,0.7)",
+                background: "transparent",
                 color: "rgba(255,255,255,0.85)",
               }}
             >
-              {mediaType === "ebooks" ? "📚" : "🎧"}
+              <img
+                src="/tree knot.jpg"
+                alt="knot"
+                style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center", display: "block", mixBlendMode: "multiply", filter: "brightness(0.45) saturate(0.7)" }}
+              />
+              <span style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 20, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.9))" }}>
+                {mediaType === "ebooks" ? "📚" : "🎧"}
+              </span>
+            </button>
+
+            {/* STATS KNOT */}
+            {hoverKnot === "stats" && (
+              <KnotScrollTooltip text={mediaType === "audiobooks" ? "Listening Journal" : "Reading Journal"} left="48%" top="73%" />
+            )}
+            <button
+              onMouseEnter={() => setHoverKnot("stats")}
+              onMouseLeave={() => setHoverKnot(null)}
+              onClick={(e) => { e.stopPropagation(); setShowStats(true); }}
+              style={{
+                position: "absolute",
+                left: "48%",
+                top: "78%",
+                transform: "translate(-50%, -50%)",
+                width: 56,
+                height: 46,
+                borderRadius: "50%",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 28,
+                overflow: "hidden",
+                padding: 0,
+                boxShadow: "0 3px 10px rgba(0,0,0,0.7)",
+                background: "transparent",
+                color: "rgba(255,255,255,0.85)",
+              }}
+            >
+              <img
+                src="/tree knot.jpg"
+                alt="stats knot"
+                style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center", display: "block", mixBlendMode: "multiply", filter: "brightness(0.45) saturate(0.7)" }}
+              />
+              <span style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 16, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.9))" }}>
+                🦉
+              </span>
             </button>
           </div>
         </div>
