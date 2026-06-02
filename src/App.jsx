@@ -1458,6 +1458,198 @@ function StatsPage({ onClose, mediaType }) {
   );
 }
 
+const EBOOK_PLATFORMS = [
+  { id: "kindle",     name: "Kindle",           emoji: "📱", desc: "Amazon's ebook library",         url: "https://read.amazon.com" },
+  { id: "apple",      name: "Apple Books",       emoji: "📖", desc: "Apple's book platform",          url: "https://books.apple.com" },
+  { id: "kobo",       name: "Kobo",              emoji: "📚", desc: "Rakuten's ebook platform",       url: "https://www.kobo.com" },
+  { id: "nook",       name: "Nook",              emoji: "📗", desc: "Barnes & Noble ebooks",          url: "https://www.barnesandnoble.com/b/nook" },
+  { id: "googleplay", name: "Google Play Books", emoji: "📘", desc: "Google's ebook store",           url: "https://play.google.com/books" },
+  { id: "scribd",     name: "Scribd",            emoji: "📜", desc: "Unlimited reading subscription",  url: "https://www.scribd.com" },
+  { id: "bookfunnel", name: "BookFunnel",        emoji: "🎁", desc: "Indie author book delivery",     url: "https://bookfunnel.com" },
+  { id: "libby",      name: "Libby / OverDrive", emoji: "🏛️", desc: "Free library ebooks & audio",    url: "https://libbyapp.com" },
+];
+
+const AUDIO_PLATFORMS = [
+  { id: "audible",      name: "Audible",        emoji: "🎧", desc: "Amazon's audiobook platform",  url: "https://www.audible.com" },
+  { id: "librofm",      name: "Libro.fm",       emoji: "🎙️", desc: "Indie bookstore audiobooks",   url: "https://libro.fm" },
+  { id: "hoopla",       name: "Hoopla",         emoji: "🎵", desc: "Free library audiobooks",      url: "https://www.hoopladigital.com" },
+  { id: "chirp",        name: "Chirp",          emoji: "🐦", desc: "Audiobook deals platform",     url: "https://www.chirpbooks.com" },
+  { id: "graphicaudio", name: "Graphic Audio",  emoji: "🎭", desc: "Full-cast audio productions",  url: "https://www.graphicaudio.net" },
+];
+
+function PlatformCard({ platform, connected, onConnect, onDisconnect }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.75)",
+      border: "1px solid #D8C3A5",
+      borderRadius: 10,
+      padding: "20px 16px",
+      textAlign: "center",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+    }}>
+      <div style={{ fontSize: 32, marginBottom: 6 }}>{platform.emoji}</div>
+      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: "#3A2A1A", marginBottom: 4 }}>{platform.name}</div>
+      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32", marginBottom: 10 }}>{platform.desc}</div>
+      {connected ? (
+        <>
+          <div style={{ color: "#2d6a2d", fontFamily: "Georgia, serif", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>✓ Connected</div>
+          <button
+            onClick={() => { alert("Library import coming soon!"); }}
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "7px 0",
+              marginBottom: 6,
+              background: "#3A2A1A",
+              color: "#F8F1E4",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 13,
+            }}
+          >
+            📥 Import Library
+          </button>
+          <button
+            onClick={() => onDisconnect(platform.id)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#a00",
+              fontFamily: "Georgia, serif",
+              fontSize: 12,
+              textDecoration: "underline",
+              padding: 0,
+            }}
+          >
+            Disconnect
+          </button>
+        </>
+      ) : (
+        <button
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+          onClick={() => { window.open(platform.url, "_blank"); onConnect(platform.id); }}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 6,
+            border: "1px solid #8B5E3C",
+            cursor: "pointer",
+            background: hover ? "#D8C3A5" : "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+            color: "#3A2A1A",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            fontSize: 13,
+            transition: "background 0.15s",
+          }}
+        >
+          Connect
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PlatformPage({ onClose }) {
+  const [connections, setConnections] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sk_connections")) || {}; } catch { return {}; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("sk_connections", JSON.stringify(connections));
+  }, [connections]);
+
+  const connect = (id) => setConnections((prev) => ({ ...prev, [id]: true }));
+  const disconnect = (id) => setConnections((prev) => { const next = { ...prev }; delete next[id]; return next; });
+
+  const sectionTitle = (text) => (
+    <h2 style={{
+      fontFamily: '"Palatino Linotype", Palatino, serif',
+      fontSize: 22,
+      color: "#3A2A1A",
+      marginBottom: 16,
+      marginTop: 0,
+    }}>{text}</h2>
+  );
+
+  return (
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 200,
+      backgroundColor: "#F8F1E4",
+      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+      overflowY: "auto",
+      padding: "30px 40px",
+    }}>
+      {/* Back button */}
+      <button
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          top: 20,
+          left: 20,
+          padding: "8px 18px",
+          borderRadius: "50px",
+          border: "1px solid #8B5E3C",
+          cursor: "pointer",
+          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          color: "#3A2A1A",
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontWeight: 700,
+          fontSize: 14,
+          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          zIndex: 201,
+        }}
+      >
+        ← Back
+      </button>
+
+      <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 10 }}>
+        <h1 style={{
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontSize: 32,
+          color: "#3A2A1A",
+          textAlign: "center",
+          marginBottom: 6,
+        }}>🔗 My Platforms</h1>
+        <p style={{
+          textAlign: "center",
+          fontFamily: "Georgia, serif",
+          fontStyle: "italic",
+          fontSize: 14,
+          color: "#6B4E32",
+          marginBottom: 36,
+        }}>Connect your reading platforms to import your library</p>
+
+        {/* eBook Platforms */}
+        <div style={{ marginBottom: 40 }}>
+          {sectionTitle("📚 eBook Platforms")}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
+            {EBOOK_PLATFORMS.map((p) => (
+              <PlatformCard key={p.id} platform={p} connected={!!connections[p.id]} onConnect={connect} onDisconnect={disconnect} />
+            ))}
+          </div>
+        </div>
+
+        {/* Audiobook Platforms */}
+        <div style={{ marginBottom: 40 }}>
+          {sectionTitle("🎧 Audiobook Platforms")}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
+            {AUDIO_PLATFORMS.map((p) => (
+              <PlatformCard key={p.id} platform={p} connected={!!connections[p.id]} onConnect={connect} onDisconnect={disconnect} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [genre, setGenre] = useState(null);
   const [mediaType, setMediaType] = useState("ebooks");
@@ -1465,7 +1657,10 @@ export default function App() {
   const [openNestId, setOpenNestId] = useState(null);
   const [showFavorites, setShowFavorites] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [showPlatforms, setShowPlatforms] = useState(false);
   const [hoverKnot, setHoverKnot] = useState(null); // "toggle" | "stats"
+  const [sidebarHover, setSidebarHover] = useState(null);
 
   const handleNestClick = (nestGenre) => {
     setGenre(nestGenre);
@@ -1515,6 +1710,136 @@ export default function App() {
         <FavoritesShelf onClose={() => setShowFavorites(false)} />
       )}
 
+      {/* PLATFORMS PAGE */}
+      {showPlatforms && <PlatformPage onClose={() => setShowPlatforms(false)} />}
+
+      {/* HAMBURGER BUTTON */}
+      <button
+        onClick={() => setShowSidebar(true)}
+        style={{
+          position: "fixed",
+          top: 16,
+          left: 16,
+          zIndex: 1000,
+          background: "none",
+          border: "none",
+          fontSize: 22,
+          color: "#3A2A1A",
+          cursor: "pointer",
+          lineHeight: 1,
+          padding: "4px 6px",
+          display: showSidebar ? "none" : "block",
+        }}
+        aria-label="Open menu"
+      >
+        ☰
+      </button>
+
+      {/* SIDEBAR OVERLAY */}
+      {showSidebar && (
+        <div
+          onClick={() => setShowSidebar(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.3)",
+            zIndex: 998,
+          }}
+        />
+      )}
+
+      {/* SIDEBAR PANEL */}
+      <div style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        height: "100vh",
+        width: 260,
+        zIndex: 999,
+        background: "linear-gradient(to bottom, #f5e6c8, #ede0c4)",
+        borderRight: "2px solid #8B5E3C",
+        boxShadow: "4px 0 20px rgba(0,0,0,0.2)",
+        padding: "60px 0 20px 0",
+        transform: showSidebar ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform 0.3s ease",
+      }}>
+        {/* Close button */}
+        <button
+          onClick={() => setShowSidebar(false)}
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 16,
+            background: "none",
+            border: "none",
+            fontSize: 18,
+            color: "#3A2A1A",
+            cursor: "pointer",
+          }}
+          aria-label="Close menu"
+        >
+          ✕
+        </button>
+
+        {/* Sidebar header */}
+        <div style={{
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontSize: 18,
+          fontWeight: 700,
+          color: "#3A2A1A",
+          textAlign: "center",
+          padding: "0 20px 20px",
+          borderBottom: "1px solid #D8C3A5",
+        }}>
+          📚 StoryKeeper
+        </div>
+
+        {/* Menu items */}
+        {[
+          { key: "platforms", label: "🔗 Platform Connections", action: () => { setShowSidebar(false); setShowPlatforms(true); } },
+          { key: "favorites", label: "❤️ My Favorites", action: () => { setShowSidebar(false); setShowFavorites(true); } },
+          { key: "stats",     label: "📊 Reading Stats",        action: () => { setShowSidebar(false); setShowStats(true); } },
+        ].map((item) => (
+          <div
+            key={item.key}
+            onClick={item.action}
+            onMouseEnter={() => setSidebarHover(item.key)}
+            onMouseLeave={() => setSidebarHover(null)}
+            style={{
+              padding: "14px 24px",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 15,
+              color: "#3A2A1A",
+              cursor: "pointer",
+              borderBottom: "1px solid rgba(216,195,165,0.4)",
+              background: sidebarHover === item.key ? "rgba(139,94,60,0.1)" : "transparent",
+              borderLeft: "3px solid transparent",
+              transition: "background 0.15s",
+            }}
+          >
+            {item.label}
+          </div>
+        ))}
+
+        {/* Settings — coming soon */}
+        <div style={{
+          padding: "14px 24px",
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontSize: 15,
+          color: "#9B8B7A",
+          fontStyle: "italic",
+          borderBottom: "1px solid rgba(216,195,165,0.4)",
+          borderLeft: "3px solid transparent",
+          cursor: "default",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}>
+          ⚙️ Settings
+          <span style={{ fontSize: 11, fontStyle: "normal" }}>(Coming Soon)</span>
+        </div>
+      </div>
+
       {/* BOOKSHELF PAGE */}
       {genre && (
         <BookShelf
@@ -1560,21 +1885,6 @@ export default function App() {
           </p>
           <p style={{ color: "#2A1A0A", marginTop: 4, fontStyle: "italic", fontSize: 15, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
             A living library that grows with each story
-          </p>
-          <p style={{ color: "#5a3e28", marginTop: 4, fontSize: 12, fontStyle: "italic" }}>
-            💡 Click a nest to browse · Right-click to reassign its genre
-            <span style={{
-              marginLeft: 12,
-              padding: "2px 10px",
-              borderRadius: 20,
-              background: mediaType === "ebooks" ? "rgba(26,58,107,0.15)" : "rgba(139,94,60,0.15)",
-              border: `1px solid ${mediaType === "ebooks" ? "#1a3a6b" : "#8B5E3C"}`,
-              color: mediaType === "ebooks" ? "#1a3a6b" : "#8B5E3C",
-              fontStyle: "normal",
-              fontWeight: 600,
-            }}>
-              {mediaType === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
-            </span>
           </p>
         </div>
 
@@ -1800,6 +2110,26 @@ export default function App() {
               </span>
             </button>
           </div>
+        </div>
+
+        {/* HINT + MODE BADGE near the roots */}
+        <div style={{ textAlign: "center", marginTop: 8, paddingBottom: 20 }}>
+          <p style={{ color: "#5a3e28", fontSize: 11, fontStyle: "italic", margin: 0 }}>
+            💡 Click a nest to browse · Right-click to reassign its genre
+            <span style={{
+              marginLeft: 10,
+              padding: "2px 10px",
+              borderRadius: 20,
+              background: mediaType === "ebooks" ? "rgba(26,58,107,0.15)" : "rgba(139,94,60,0.15)",
+              border: `1px solid ${mediaType === "ebooks" ? "#1a3a6b" : "#8B5E3C"}`,
+              color: mediaType === "ebooks" ? "#1a3a6b" : "#8B5E3C",
+              fontStyle: "normal",
+              fontWeight: 600,
+              fontSize: 11,
+            }}>
+              {mediaType === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
+            </span>
+          </p>
         </div>
       </div>
     </>
