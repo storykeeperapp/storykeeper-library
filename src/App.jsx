@@ -46,16 +46,49 @@ function KnotScrollTooltip({ text, left, top }) {
   );
 }
 
-const ALL_GENRES = ["Fantasy", "Mystery", "Sci-Fi", "Romance", "Thriller", "Self Help", "Dark Romance"];
+function cleanTitle(title) {
+  return title
+    .replace(/\s*[\(\[].*?[\)\]]/g, "") // remove (Book 1), [Unabridged], etc.
+    .replace(/\s*:\s*.+$/, "")           // remove subtitle after colon
+    .replace(/,?\s*(Book|Vol|Volume|Part|Series)\s*\d+.*/i, "") // remove series numbering
+    .trim();
+}
+
+const ALL_GENRES = [
+  "Fantasy", "Mystery", "Sci-Fi", "Romance", "Thriller",
+  "Self Help", "Dark Romance", "Fiction", "Historical Fiction",
+  "Cookbooks", "Drama",
+];
+
+// Map Open Library subjects to our genres
+function detectGenre(subjects = []) {
+  const s = subjects.join(" ").toLowerCase();
+  if (s.includes("dark romance")) return "Dark Romance";
+  if (s.includes("cooking") || s.includes("cookbook") || s.includes("recipes") || s.includes("baking") || s.includes("culinary")) return "Cookbooks";
+  if (s.includes("historical fiction") || s.includes("historical novel") || s.includes("history") || s.includes("world war") || s.includes("medieval")) return "Historical Fiction";
+  if (s.includes("drama") || s.includes("play") || s.includes("theatre") || s.includes("theater")) return "Drama";
+  if (s.includes("fantasy") || s.includes("magic") || s.includes("dragon")) return "Fantasy";
+  if (s.includes("mystery") || s.includes("detective") || s.includes("crime")) return "Mystery";
+  if (s.includes("science fiction") || s.includes("sci-fi") || s.includes("space") || s.includes("futur")) return "Sci-Fi";
+  if (s.includes("romance") || s.includes("love story")) return "Romance";
+  if (s.includes("thriller") || s.includes("suspense")) return "Thriller";
+  if (s.includes("self-help") || s.includes("self help") || s.includes("personal development") || s.includes("motivation")) return "Self Help";
+  if (s.includes("fiction") || s.includes("literary") || s.includes("novel")) return "Fiction";
+  return "Fiction";
+}
 
 const DEFAULT_ASSIGNMENTS = [
-  { id: 1, left: "22%", top: "9%",  genre: "Fantasy"      },
-  { id: 2, left: "75%", top: "8%",  genre: "Mystery"      },
-  { id: 3, left: "8%",  top: "28%", genre: "Sci-Fi"       },
-  { id: 4, left: "78%", top: "38%", genre: "Romance"      },
-  { id: 5, left: "6%",  top: "52%", genre: "Thriller"     },
-  { id: 6, left: "76%", top: "58%", genre: "Self Help"    },
-  { id: 7, left: "76%", top: "76%", genre: "Dark Romance" },
+  { id: 1,  left: "22%", top: "9%",  genre: "Fantasy"           },
+  { id: 2,  left: "75%", top: "8%",  genre: "Mystery"           },
+  { id: 3,  left: "8%",  top: "28%", genre: "Sci-Fi"            },
+  { id: 4,  left: "78%", top: "38%", genre: "Romance"           },
+  { id: 5,  left: "6%",  top: "52%", genre: "Thriller"          },
+  { id: 6,  left: "76%", top: "58%", genre: "Self Help"         },
+  { id: 7,  left: "76%", top: "76%", genre: "Dark Romance"      },
+  { id: 8,  left: "35%", top: "18%", genre: "Fiction"           },
+  { id: 9,  left: "60%", top: "22%", genre: "Historical Fiction" },
+  { id: 10, left: "20%", top: "42%", genre: "Cookbooks"         },
+  { id: 11, left: "50%", top: "38%", genre: "Drama"             },
 ];
 
 const library = {
@@ -115,8 +148,31 @@ const library = {
     { title: "Terms and Conditions",author: "Lauren Asher",       type: "ebooks",      isbn: "9781728249919", description: "Declan Kane needs a wife on paper to secure his family's company, and his assistant Iris is the logical — and convenient — choice for a fake marriage. But the terms of their arrangement become blurred as proximity and shared secrets chip away at Declan's carefully constructed walls. Asher's slow-burn office romance is filled with delicious tension and a deeply wounded hero learning what it means to truly let someone in." },
     { title: "Vicious",             author: "L.J. Shen",          type: "ebooks",      isbn: "9781250107466", description: "Baron \"Vicious\" Spencer has hated Emilia Clarke since they were teenagers, and she has never understood why — only that his cruelty has followed her like a shadow for years. When fate forces them back together as adults, the hatred between them ignites into something far more dangerous. Shen's Sinners of Saint series opens with this sharp, emotionally intense enemies-to-lovers story drenched in wealth, power, and dark desire." },
   ],
+  Fiction: [
+    { title: "To Kill a Mockingbird", author: "Harper Lee",        type: "ebooks",     isbn: "9780061935466", description: "Through the eyes of young Scout Finch, Harper Lee's Pulitzer Prize-winning novel explores racial injustice and moral growth in the American South during the 1930s. Her father, lawyer Atticus Finch, defends a Black man accused of a crime he didn't commit, and the trial shakes their small Alabama town to its core. A timeless story of compassion, courage, and the loss of innocence." },
+    { title: "The Great Gatsby",      author: "F. Scott Fitzgerald", type: "ebooks",   isbn: "9780743273565", description: "Narrated by the observant Nick Carraway, this Jazz Age masterpiece follows the mysterious millionaire Jay Gatsby and his obsessive pursuit of the beautiful Daisy Buchanan across the glittering, hollow world of Long Island's elite. Fitzgerald's lyrical prose captures the intoxicating promise and crushing disillusionment of the American Dream. A perfect, devastating novel that has never gone out of style." },
+    { title: "Normal People",         author: "Sally Rooney",       type: "ebooks",     isbn: "9781984822178", description: "Connell and Marianne grow up in the same small Irish town but move in completely different social circles — until a connection forms that will follow them from secondary school to Trinity College Dublin and beyond. Rooney's spare, precise prose dissects the push and pull of their complicated relationship with remarkable emotional intelligence. A novel about power, class, and the transformative nature of young love." },
+    { title: "Conversations with Friends", author: "Sally Rooney", type: "audiobooks", isbn: "9780571333134", description: "Frances is a cool, cerebral Dublin college student who performs spoken word poetry with her ex-girlfriend Bobbi. When they befriend an older married couple — actor Melissa and her husband Nick — Frances finds herself drawn into an affair that will quietly upend her carefully constructed sense of self. Rooney's debut announced a major literary talent with an exacting eye for the emotional textures of contemporary life." },
+  ],
+  "Historical Fiction": [
+    { title: "The Pillars of the Earth", author: "Ken Follett",      type: "ebooks",    isbn: "9780451166890", description: "Set in 12th-century England, this sweeping epic follows the building of a cathedral in the fictional town of Kingsbridge over decades of political intrigue, religious conflict, and personal ambition. Follett populates his medieval world with an unforgettable cast of builders, monks, noble women, and villains across generations. An enormous, addictive novel that makes history breathe." },
+    { title: "All the Light We Cannot See", author: "Anthony Doerr", type: "ebooks",   isbn: "9781476746586", description: "A blind French girl and a German boy's paths converge in occupied France during World War II in this Pulitzer Prize-winning novel of extraordinary beauty. Doerr alternates between their stories across time — her escape from Paris, his recruitment into the Nazi war machine — until their inevitable meeting in a besieged coastal town. A luminous meditation on fate, war, and the persistence of goodness." },
+    { title: "The Bronze Horseman",   author: "Paullina Simons",    type: "audiobooks", isbn: "9780060956356", description: "In Leningrad in the summer of 1941, eighteen-year-old Tatiana meets a young soldier named Alexander on the day the Nazis invade the Soviet Union. What follows is a devastating love story played out against the Siege of Leningrad — one of history's most brutal — spanning years of war, starvation, and impossible choices. A monumental, heartbreaking romance that readers carry with them forever." },
+    { title: "The Nightingale",       author: "Kristin Hannah",     type: "ebooks",     isbn: "9780312577223", description: "Two sisters in Nazi-occupied France choose very different paths of survival and resistance during World War II — one enduring hardship at home, the other joining the French Resistance. Hannah's emotionally shattering novel honors the often-unacknowledged courage of women in wartime. A story of sacrifice, love, and the unbreakable bond between sisters." },
+  ],
+  Cookbooks: [
+    { title: "Salt, Fat, Acid, Heat", author: "Samin Nosrat",       type: "ebooks",     isbn: "9781476753836", description: "Rather than a collection of recipes, this James Beard Award-winning book teaches the fundamental elements that make food delicious — salt, fat, acid, and heat — giving home cooks the instinct to improvise confidently. Nosrat's warm, inviting voice and Wendy MacNaughton's gorgeous illustrations make this as pleasurable to read as it is useful to cook from. It will permanently change the way you think about food." },
+    { title: "Jerusalem",             author: "Yotam Ottolenghi",   type: "ebooks",     isbn: "9781607743941", description: "A celebration of the food of Jerusalem from two chefs — one Israeli, one Palestinian — who grew up on opposite sides of a divided city. The book explores the Middle Eastern flavors, spices, and dishes that both communities share, weaving personal history into vibrant recipes. Ottolenghi's influence on modern cooking is immeasurable, and Jerusalem is the book that started it all." },
+    { title: "Plenty",                author: "Yotam Ottolenghi",   type: "ebooks",     isbn: "9781452101248", description: "A groundbreaking vegetable-forward cookbook from Yotam Ottolenghi that inspired a generation of cooks to put vegetables at the center of the plate. The recipes are bold, colorful, and full of Middle Eastern and Mediterranean flavors — dishes like charred eggplant with pomegranate and spiced cauliflower cake. Even committed meat-eaters find themselves cooking through this book obsessively." },
+    { title: "The Joy of Cooking",    author: "Irma S. Rombauer",   type: "audiobooks", isbn: "9780743246262", description: "First published in 1931, this enduring American classic has taught generations of home cooks everything from roasting a chicken to baking a layer cake, written in a warm, conversational voice that feels like advice from a brilliant friend. The most comprehensive general cookbook ever written, it covers thousands of recipes and techniques and has been updated through the decades while retaining its essential character." },
+  ],
+  Drama: [
+    { title: "Hamlet",                author: "William Shakespeare", type: "ebooks",    isbn: "9780743477123", description: "Prince Hamlet of Denmark is visited by his father's ghost, who reveals he was murdered by Hamlet's uncle Claudius — now king and married to Hamlet's mother. What follows is Shakespeare's most profound exploration of grief, moral corruption, and the paralyzing nature of thought versus action. The most performed and analyzed play in the English language, and arguably the greatest work of literature ever written." },
+    { title: "A Streetcar Named Desire", author: "Tennessee Williams", type: "ebooks", isbn: "9780811216029", description: "Blanche DuBois arrives at her sister Stella's cramped New Orleans apartment, seeking refuge from a ruined past, and immediately clashes with Stella's brutish, magnetic husband Stanley Kowalski. Williams's Pulitzer Prize-winning play is a masterwork of simmering tension, desire, and self-delusion — a Southern Gothic tragedy that burns with heat and heartbreak. Brando's Stanley became one of cinema's defining performances." },
+    { title: "Death of a Salesman",   author: "Arthur Miller",      type: "ebooks",     isbn: "9780140481341", description: "Willy Loman, an aging, delusional traveling salesman, faces the collapse of his career and his carefully constructed illusions about success and the American Dream as his sons' lives also unravel. Miller's Pulitzer Prize-winning tragedy is one of the defining American plays — a searing, compassionate portrait of a man destroyed by his own myths. It has lost none of its power or relevance." },
+    { title: "The Glass Menagerie",   author: "Tennessee Williams", type: "audiobooks", isbn: "9780811214049", description: "Tom Wingfield narrates this memory play about his fragile, dream-haunted family in 1930s St. Louis — his domineering mother Amanda, who clings to faded Southern gentility, and his painfully shy sister Laura, who retreats into her collection of glass animals. Williams's first major success established the poetic, emotionally resonant style that would define his career. A heartbreaking, beautiful elegy for lost time and broken dreams." },
+  ],
 };
-
 
 // Worn aged leather colors — muted, faded, distressed
 const SPINE_COLORS = [
@@ -132,7 +188,7 @@ const SPINE_COLORS = [
 
 function BookSpine({ book, index, rowIndex, onClick }) {
   const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
-  const height = 160 + ((rowIndex * 6 + index) % 4) * 18;
+  const height = 180 + ((rowIndex * 6 + index) % 4) * 20;
   // Raised bands positions as % of height
   const bands = [12, 28, 72, 88];
 
@@ -141,7 +197,7 @@ function BookSpine({ book, index, rowIndex, onClick }) {
       title={`${book.title} — ${book.author}`}
       onClick={() => onClick && onClick(book)}
       style={{
-        width: 50,
+        width: 58,
         height,
         borderRadius: "2px 3px 3px 2px",
         background: `linear-gradient(to right, ${c.dark} 0%, ${c.base} 15%, ${c.mid} 50%, ${c.base} 85%, ${c.dark} 100%)`,
@@ -274,9 +330,32 @@ function BookSpine({ book, index, rowIndex, onClick }) {
   );
 }
 
+function BookCover({ isbn, coverUrl, title, style }) {
+  const sources = [
+    coverUrl,
+    isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : null,
+    isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-S.jpg` : null,
+  ].filter(Boolean);
+  const [srcIdx, setSrcIdx] = useState(0);
+  const [failed, setFailed] = useState(false);
+
+  if (failed || sources.length === 0) return null;
+  return (
+    <img
+      src={sources[srcIdx]}
+      alt={title}
+      onError={() => {
+        if (srcIdx + 1 < sources.length) setSrcIdx(srcIdx + 1);
+        else setFailed(true);
+      }}
+      style={style}
+    />
+  );
+}
+
 function CDCase({ book, index, rowIndex, onClick }) {
-  const [imgError, setImgError] = useState(false);
   const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
+  const height = 120 + ((rowIndex * 6 + index) % 4) * 10;
 
   return (
     <div
@@ -284,131 +363,156 @@ function CDCase({ book, index, rowIndex, onClick }) {
       onClick={() => onClick && onClick(book)}
       style={{
         width: 90,
-        height: 90,
+        height,
         display: "flex",
         flexDirection: "row",
         position: "relative",
-        borderRadius: 2,
-        border: "1px solid rgba(0,0,0,0.4)",
-        boxShadow: "3px 3px 8px rgba(0,0,0,0.5), -1px 0 3px rgba(0,0,0,0.2)",
+        borderRadius: "3px 4px 4px 3px",
+        boxShadow: "4px 0 12px rgba(0,0,0,0.7), -1px 0 4px rgba(0,0,0,0.4)",
         overflow: "hidden",
         flexShrink: 0,
         alignSelf: "flex-end",
         cursor: "pointer",
+        background: `linear-gradient(to right, ${c.dark} 0%, ${c.base} 15%, ${c.mid} 50%, ${c.base} 85%, ${c.dark} 100%)`,
       }}
     >
-      {/* Left spine */}
+      {/* Leather texture */}
+      <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(175deg, transparent 0px, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px)", pointerEvents: "none" }} />
+
+      {/* Raised bands */}
+      {[12, 28, 72, 88].map((pct, i) => (
+        <div key={i} style={{
+          position: "absolute",
+          top: `${pct}%`, left: 0, right: 0, height: 7,
+          background: `linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, ${c.base} 20%, rgba(255,255,255,0.08) 50%, ${c.mid} 80%, rgba(0,0,0,0.3) 100%)`,
+          boxShadow: "0 1px 2px rgba(0,0,0,0.4), 0 -1px 1px rgba(0,0,0,0.3)",
+          zIndex: 2,
+        }} />
+      ))}
+
+      {/* Top flourish */}
+      <div style={{ position: "absolute", top: "14%", left: "50%", transform: "translateX(-50%)", color: c.text, fontSize: 9, opacity: 0.7, zIndex: 3, lineHeight: 1, textShadow: "0 0 3px rgba(0,0,0,0.5)" }}>❧</div>
+
+      {/* Headphones icon — center */}
       <div style={{
-        width: 8,
-        flexShrink: 0,
-        background: "linear-gradient(to right, #1a1a1a, #2a2a2a)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
+        position: "absolute", top: "38%", left: "50%",
+        transform: "translate(-50%, -50%)",
+        fontSize: 22,
+        zIndex: 3,
+        filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.8))",
+        lineHeight: 1,
+        opacity: 0.85,
+      }}>🎧</div>
+
+      {/* Title */}
+      <div style={{
+        position: "absolute",
+        top: "50%", bottom: "12%",
+        left: 4, right: 4,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 3,
       }}>
-        <span style={{
+        <div style={{
           writingMode: "vertical-rl",
           transform: "rotate(180deg)",
-          color: "#ffffff",
-          fontSize: 7,
-          lineHeight: 1.2,
+          color: c.text,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontWeight: 700,
+          fontSize: 10,
+          letterSpacing: "1px",
+          textAlign: "center",
+          textShadow: "0 0 8px rgba(0,0,0,0.8), 0 1px 2px rgba(0,0,0,0.9)",
+          lineHeight: 1.3,
           overflow: "hidden",
           maxHeight: "100%",
-          opacity: 0.85,
-          whiteSpace: "nowrap",
-          textOverflow: "ellipsis",
+          opacity: 0.92,
         }}>
           {book.title}
-        </span>
-      </div>
-
-      {/* Main face */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        {!imgError ? (
-          <img
-            src={`https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg`}
-            alt={book.title}
-            onError={() => setImgError(true)}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
-          />
-        ) : (
-          <div style={{
-            width: "100%",
-            height: "100%",
-            background: `linear-gradient(135deg, ${c.dark} 0%, ${c.base} 100%)`,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 6,
-            boxSizing: "border-box",
-          }}>
-            <span style={{
-              writingMode: "vertical-rl",
-              transform: "rotate(180deg)",
-              color: c.text,
-              fontSize: 9,
-              fontFamily: '"Palatino Linotype", Palatino, serif',
-              fontWeight: 700,
-              textAlign: "center",
-              lineHeight: 1.3,
-              overflow: "hidden",
-              maxHeight: "70%",
-            }}>
-              {book.title}
-            </span>
-            <span style={{
-              writingMode: "vertical-rl",
-              transform: "rotate(180deg)",
-              color: c.text,
-              fontSize: 7,
-              fontFamily: '"Palatino Linotype", Palatino, serif',
-              fontStyle: "italic",
-              opacity: 0.75,
-              overflow: "hidden",
-              maxHeight: "25%",
-            }}>
-              {book.author}
-            </span>
-          </div>
-        )}
-
-        {/* Glossy overlay */}
-        <div style={{
-          position: "absolute",
-          inset: 0,
-          background: "linear-gradient(to bottom, rgba(255,255,255,0.18) 0%, transparent 50%)",
-          pointerEvents: "none",
-        }} />
-
-        {/* Headphones badge */}
-        <div style={{
-          position: "absolute",
-          bottom: 3,
-          right: 3,
-          fontSize: 12,
-          lineHeight: 1,
-          filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.8))",
-          pointerEvents: "none",
-        }}>
-          🎧
         </div>
       </div>
+
+      {/* Author */}
+      <div style={{
+        position: "absolute", bottom: "14%", left: 0, right: 0,
+        display: "flex", justifyContent: "center",
+        zIndex: 3,
+      }}>
+        <div style={{
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+          color: c.text,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontStyle: "italic",
+          fontSize: 8,
+          opacity: 0.65,
+          textShadow: "0 1px 3px rgba(0,0,0,0.8)",
+          overflow: "hidden",
+          maxHeight: 55,
+        }}>
+          {book.author}
+        </div>
+      </div>
+
+      {/* Spine binding edge */}
+      <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: 5, background: "linear-gradient(to right, rgba(0,0,0,0.4), rgba(255,255,255,0.04) 60%, transparent)", borderRadius: "3px 0 0 3px", pointerEvents: "none", zIndex: 4 }} />
+      {/* Right shadow */}
+      <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 5, background: "linear-gradient(to left, rgba(0,0,0,0.35), transparent)", pointerEvents: "none" }} />
     </div>
   );
 }
 
-function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType }) {
+function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType, onBookEdited }) {
   const [imgError, setImgError] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editFields, setEditFields] = useState({ title: book.title, author: book.author || "", description: book.description || "", genre: book.genre || "Fiction", coverUrl: book.coverUrl || "" });
   const [dates, setDates] = useState(() => {
     try { return JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`)) || {}; } catch { return {}; }
   });
+
+  const isUserBook = (() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      return all.some(b => b.title === book.title && b.author === book.author);
+    } catch { return false; }
+  })();
+
+  const currentGenre = (() => {
+    try {
+      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+      return overrides[isbn] || book.genre || "";
+    } catch { return book.genre || ""; }
+  })();
+  const [selectedGenre, setSelectedGenre] = useState(currentGenre);
+
+  const handleGenreChange = (newGenre) => {
+    setSelectedGenre(newGenre);
+    if (isUserBook) {
+      try {
+        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+        const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+        if (idx !== -1) { all[idx].genre = newGenre; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+      } catch { /* ignore */ }
+    } else {
+      try {
+        const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+        overrides[isbn] = newGenre;
+        localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
+      } catch { /* ignore */ }
+    }
+  };
+
+  const handleSaveEdit = () => {
+    try {
+      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+      if (idx !== -1) {
+        all[idx] = { ...all[idx], ...editFields };
+        localStorage.setItem("sk_user_books", JSON.stringify(all));
+        if (onBookEdited) onBookEdited({ ...all[idx] });
+      }
+    } catch { /* ignore */ }
+    setEditing(false);
+  };
   const isbn = book.isbn;
   const isFav = !!favorites[isbn];
   const status = statuses[isbn] || null;
@@ -444,6 +548,52 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
   const handleProgress = (e) => {
     setProgress((prev) => ({ ...prev, [isbn]: Number(e.target.value) }));
+  };
+
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState(null);
+
+  const handleFetchInfo = async () => {
+    if (!isUserBook) return;
+    setFetching(true);
+    setFetchMsg(null);
+    try {
+      const cleaned = cleanTitle(book.title);
+      const queries = [
+        book.isbn ? `https://www.googleapis.com/books/v1/volumes?q=isbn:${book.isbn}&maxResults=1` : null,
+        book.author ? `https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(book.author)}&maxResults=1` : null,
+        `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleaned)}&maxResults=1`,
+      ].filter(Boolean);
+
+      let vol = null;
+      for (const url of queries) {
+        const res = await fetch(url);
+        const json = await res.json();
+        vol = json.items?.[0]?.volumeInfo;
+        if (vol) break;
+      }
+
+      if (vol) {
+        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+        const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+        if (idx !== -1) {
+          if (!all[idx].author && vol.authors?.length) all[idx].author = vol.authors.join(", ");
+          if (vol.imageLinks?.thumbnail) all[idx].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://").replace("&zoom=1", "&zoom=2");
+          if (!all[idx].description && vol.description) all[idx].description = vol.description;
+          if (!all[idx].isbn && vol.industryIdentifiers?.length) {
+            const id = vol.industryIdentifiers.find(i => i.type === "ISBN_13") || vol.industryIdentifiers[0];
+            if (id) all[idx].isbn = id.identifier;
+          }
+          localStorage.setItem("sk_user_books", JSON.stringify(all));
+          setFetchMsg("✅ Updated! Reopen this book to see the changes.");
+        }
+      } else {
+        setFetchMsg("Could not find this book online. Try editing the title manually.");
+      }
+    } catch {
+      setFetchMsg("Network error — please try again.");
+    }
+    setFetching(false);
   };
 
   const statusBtnStyle = (s) => ({
@@ -513,15 +663,101 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
           ✕
         </button>
 
+        {/* Edit button — only for user-imported books */}
+        {isUserBook && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            style={{
+              position: "absolute",
+              top: 14,
+              right: 52,
+              background: "none",
+              border: "none",
+              fontSize: 16,
+              cursor: "pointer",
+              color: "#8B5E3C",
+              lineHeight: 1,
+              padding: "2px 6px",
+              opacity: 0.7,
+            }}
+            aria-label="Edit book"
+            title="Edit this book"
+          >
+            ✏️
+          </button>
+        )}
+
+        {/* Edit form */}
+        {editing && (
+          <div>
+            <h2 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, color: "#3A2A1A", margin: "0 0 16px 0", paddingRight: 30 }}>
+              ✏️ Edit Book
+            </h2>
+            {[
+              { label: "Title", field: "title" },
+              { label: "Author", field: "author" },
+              { label: "Cover URL", field: "coverUrl", placeholder: "https://..." },
+            ].map(({ label, field, placeholder }) => (
+              <div key={field} style={{ marginBottom: 12 }}>
+                <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>{label}</label>
+                <input
+                  type="text"
+                  value={editFields[field]}
+                  placeholder={placeholder || ""}
+                  onChange={e => setEditFields(p => ({ ...p, [field]: e.target.value }))}
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", boxSizing: "border-box" }}
+                />
+              </div>
+            ))}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>Genre</label>
+              <select
+                value={editFields.genre}
+                onChange={e => setEditFields(p => ({ ...p, genre: e.target.value }))}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A" }}
+              >
+                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>Description</label>
+              <textarea
+                value={editFields.description}
+                onChange={e => setEditFields(p => ({ ...p, description: e.target.value }))}
+                rows={4}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", resize: "vertical", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={handleSaveEdit}
+                style={{ padding: "8px 20px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setEditing(false)}
+                style={{ padding: "8px 16px", background: "none", border: "1px solid #8B5E3C", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, color: "#3A2A1A" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Two-column layout */}
+        {!editing && <>
         <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
           {/* Left column — book cover */}
           <div style={{ width: "35%", flexShrink: 0 }}>
             {!imgError ? (
               <img
-                src={`https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`}
+                src={book.coverUrl || (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg` : "")}
                 alt={book.title}
-                onError={() => setImgError(true)}
+                onError={() => {
+                  if (book.coverUrl && !imgError) { setImgError(true); }
+                  else setImgError(true);
+                }}
                 style={{
                   width: "100%",
                   borderRadius: 6,
@@ -595,6 +831,35 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               {book.description}
             </p>
 
+            {/* Genre row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0 4px" }}>
+              <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic", whiteSpace: "nowrap" }}>
+                Genre:
+              </span>
+              <select
+                value={selectedGenre}
+                onChange={e => handleGenreChange(e.target.value)}
+                style={{
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  fontSize: 13,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  border: "1px solid #8B5E3C",
+                  background: "#F8F1E4",
+                  color: "#3A2A1A",
+                  cursor: "pointer",
+                  flex: 1,
+                }}
+              >
+                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+              {selectedGenre !== currentGenre && (
+                <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>
+                  ✓ saved
+                </span>
+              )}
+            </div>
+
             {divider}
 
             {/* Status buttons */}
@@ -637,6 +902,33 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               </div>
             )}
 
+            {/* Find Cover & Info — for imported books missing data */}
+            {isUserBook && (!book.coverUrl || !book.description) && (
+              <div style={{ marginBottom: 12 }}>
+                <button
+                  onClick={handleFetchInfo}
+                  disabled={fetching}
+                  style={{
+                    padding: "6px 14px",
+                    background: fetching ? "#D8C3A5" : "transparent",
+                    border: "1px solid #8B5E3C",
+                    borderRadius: 6,
+                    cursor: fetching ? "default" : "pointer",
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                    fontSize: 12,
+                    color: "#3A2A1A",
+                  }}
+                >
+                  {fetching ? "Searching…" : "🔍 Find Cover & Info"}
+                </button>
+                {fetchMsg && (
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic", marginTop: 5 }}>
+                    {fetchMsg}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Favorites row */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <button
@@ -665,20 +957,14 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             </div>
           </div>
         </div>
+        </>}
       </div>
     </div>
   );
 }
 
-// Patterns for each shelf row: "b"=book, "p0/p1"=plant type
-const SHELF_PATTERNS = [
-  ["b","b","p0","b","b","b","b","b"],
-  ["b","b","b","b","p0","b","b","b"],
-  ["b","p0","b","b","b","b","b","b"],
-  ["b","b","b","b","b","p0","b","b"],
-];
-
-
+// Plant left-position % for each shelf row — varies so each shelf looks different
+const SHELF_PLANT_POSITIONS = [10, 75, 20, 65, 30, 80, 15, 70, 25, 60];
 
 const PLANT_IMAGES = ["plant2.png"];
 
@@ -689,19 +975,190 @@ function ShelfPlant({ plantIndex }) {
       src={src}
       alt="plant"
       style={{
-        width: 220,
-        height: 420,
+        width: 240,
+        height: 520,
         objectFit: "contain",
-        objectPosition: "top center",
+        objectPosition: "bottom center",
         display: "block",
       }}
     />
   );
 }
 
+function LyingBookSpine({ book, index, rowIndex, onClick }) {
+  const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
+  const width = 260 + ((rowIndex * 4 + index) % 4) * 16;
+  // Stagger: each book shifts slightly left/right so the pile looks natural
+  const staggerOffsets = [6, -4, 10, -8, 4, -6, 8, -2];
+  const marginLeft = staggerOffsets[(rowIndex * 3 + index) % staggerOffsets.length];
+
+  // Raised bands at same proportions as BookSpine (12%, 28%, 72%, 88%) but vertical
+  const bands = [12, 28, 72, 88];
+
+  return (
+    <div
+      onClick={() => onClick && onClick(book)}
+      title={`${book.title} — ${book.author}`}
+      style={{
+        width,
+        height: 52,
+        marginLeft,
+        background: `linear-gradient(to bottom, ${c.dark} 0%, ${c.base} 15%, ${c.mid} 50%, ${c.base} 85%, ${c.dark} 100%)`,
+        borderRadius: "2px 2px 3px 3px",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.7), 0 -1px 4px rgba(0,0,0,0.4), inset 0 3px 6px rgba(255,255,255,0.04)",
+        position: "relative",
+        flexShrink: 0,
+        overflow: "hidden",
+        cursor: "pointer",
+      }}
+    >
+      {/* Worn leather texture — same as BookSpine */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: `repeating-linear-gradient(85deg, transparent 0px, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px)`,
+        pointerEvents: "none",
+      }} />
+
+      {/* Raised bands — vertical ridges (horizontal equivalent of BookSpine's horizontal bands) */}
+      {bands.map((pct, i) => (
+        <div key={i} style={{
+          position: "absolute",
+          left: `${pct}%`,
+          top: 0, bottom: 0,
+          width: 7,
+          background: `linear-gradient(to right,
+            rgba(0,0,0,0.35) 0%,
+            ${c.base} 20%,
+            rgba(255,255,255,0.08) 50%,
+            ${c.mid} 80%,
+            rgba(0,0,0,0.3) 100%)`,
+          boxShadow: "1px 0 2px rgba(0,0,0,0.4), -1px 0 1px rgba(0,0,0,0.3)",
+          zIndex: 2,
+        }} />
+      ))}
+
+      {/* Left corner flourish */}
+      <div style={{
+        position: "absolute", top: "50%", left: "15%",
+        transform: "translateY(-50%) rotate(-90deg)",
+        color: c.text, fontSize: 9, opacity: 0.7,
+        zIndex: 3, lineHeight: 1,
+        textShadow: "0 0 3px rgba(0,0,0,0.5)",
+      }}>❧</div>
+
+      {/* Right corner flourish */}
+      <div style={{
+        position: "absolute", top: "50%", right: "4%",
+        transform: "translateY(-50%) rotate(90deg)",
+        color: c.text, fontSize: 9, opacity: 0.7,
+        zIndex: 3, lineHeight: 1,
+      }}>❧</div>
+
+      {/* Title */}
+      <div style={{
+        position: "absolute", top: "50%", left: "22%", right: "12%",
+        transform: "translateY(-50%)",
+        color: c.text,
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        fontWeight: 700, fontSize: 13,
+        letterSpacing: "0.8px",
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        textShadow: `0 0 8px rgba(0,0,0,0.8), 0 1px 2px rgba(0,0,0,0.9)`,
+        opacity: 0.92,
+        zIndex: 3,
+      }}>
+        {book.title}
+      </div>
+
+      {/* Author — tucked between last band and page edge */}
+      <div style={{
+        position: "absolute", top: "50%", right: "6%",
+        transform: "translateY(-50%)",
+        color: c.text, opacity: 0.65,
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        fontStyle: "italic", fontSize: 9,
+        whiteSpace: "nowrap", overflow: "hidden", maxWidth: "8%",
+        textShadow: "0 1px 3px rgba(0,0,0,0.8)",
+        zIndex: 3,
+      }}>
+        {book.author}
+      </div>
+
+      {/* Top binding edge (spine side) */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, height: 5,
+        background: "linear-gradient(to bottom, rgba(0,0,0,0.4), rgba(255,255,255,0.04) 60%, transparent)",
+        borderRadius: "2px 2px 0 0",
+        pointerEvents: "none", zIndex: 4,
+      }} />
+
+      {/* Bottom page-edge */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 2, right: 2, height: 6,
+        background: "linear-gradient(to top, #f5e6c8, #e8d5a0 60%, transparent)",
+        borderRadius: "0 0 3px 3px",
+        pointerEvents: "none",
+      }} />
+
+      {/* Left shadow edge */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, bottom: 0, width: 5,
+        background: "linear-gradient(to right, rgba(0,0,0,0.35), transparent)",
+        pointerEvents: "none",
+      }} />
+    </div>
+  );
+}
+
+function StackedBooks({ books, rowIndex, startColorIndex, onBookClick }) {
+  const count = books && books.length > 0 ? Math.min(books.length, 5) : 4 + (rowIndex % 2);
+
+  return (
+    <div style={{
+      flexShrink: 0,
+      alignSelf: "flex-end",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-start",
+      gap: 2,
+      marginLeft: 12,
+      marginRight: 12,
+    }}>
+      {Array.from({ length: count }, (_, i) => {
+        const book = books && books[i];
+        if (book) {
+          return <LyingBookSpine key={i} book={book} index={startColorIndex + i} rowIndex={rowIndex} onClick={onBookClick} />;
+        }
+        const c = SPINE_COLORS[(startColorIndex + i) % SPINE_COLORS.length];
+        return (
+          <div key={i} style={{
+            width: 160 + (i % 4) * 12, height: 34,
+            background: `linear-gradient(to right, ${c.dark}, ${c.base} 20%, ${c.mid} 50%, ${c.base} 80%, ${c.dark})`,
+            borderRadius: "2px 2px 3px 3px",
+            boxShadow: "0 3px 8px rgba(0,0,0,0.5)",
+          }} />
+        );
+      })}
+      <div style={{ width: "85%", height: 4, alignSelf: "center", background: "radial-gradient(ellipse, rgba(0,0,0,0.25) 0%, transparent 100%)", marginTop: 1 }} />
+    </div>
+  );
+}
+
+
 function BookShelf({ genre, mediaType, onClose }) {
-  const allBooks = (library[genre] || []).filter((b) => b.type === mediaType);
-  const books = allBooks;
+  const genreOverrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
+  const allBooks = (library[genre] || [])
+    .filter(b => b.type === mediaType)
+    .filter(b => (genreOverrides[b.isbn] || genre) === genre);
+  const overriddenToHere = Object.values(library).flat()
+    .filter(b => b.type === mediaType && genreOverrides[b.isbn] === genre && !(library[genre] || []).some(lb => lb.isbn === b.isbn));
+  const userBooks = (() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("sk_user_books")) || [];
+      return all.filter(b => b.genre === genre && b.type === mediaType);
+    } catch { return []; }
+  })();
+  const books = [...allBooks, ...overriddenToHere, ...userBooks];
 
   const [selectedBook, setSelectedBook] = useState(null);
 
@@ -723,10 +1180,10 @@ function BookShelf({ genre, mediaType, onClose }) {
   useEffect(() => { localStorage.setItem(statusKey,   JSON.stringify(statuses));  }, [statuses, statusKey]);
   useEffect(() => { localStorage.setItem(progressKey, JSON.stringify(progress));  }, [progress, progressKey]);
 
-  // Split books into rows of 6
+  // Split books into rows of 12
   const rows = [];
-  for (let i = 0; i < books.length; i += 6) {
-    rows.push(books.slice(i, i + 6));
+  for (let i = 0; i < books.length; i += 12) {
+    rows.push(books.slice(i, i + 12));
   }
 
   return (
@@ -749,18 +1206,20 @@ function BookShelf({ genre, mediaType, onClose }) {
         onClick={onClose}
         style={{
           position: "fixed",
-          top: 20,
+          top: 60,
           left: 20,
           padding: "8px 18px",
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
           color: "#3A2A1A",
-          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
-          fontSize: 14,
-          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          fontStyle: "italic",
+          fontSize: 15,
+          letterSpacing: "0.5px",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
           zIndex: 201,
         }}
       >
@@ -789,89 +1248,110 @@ function BookShelf({ genre, mediaType, onClose }) {
       </div>
 
       {/* Bookshelves */}
-      <div style={{ maxWidth: 780, margin: "0 auto" }}>
-        {rows.map((row, rowIndex) => (
-          <div key={rowIndex} style={{ marginBottom: 80, position: "relative" }}>
+      <div style={{ maxWidth: 1050, margin: "0 auto", paddingRight: 160 }}>
+        {rows.map((row, rowIndex) => {
+          const layout = rowIndex % 3; // 0=upright-left+stack-right, 1=stack-left+upright-right, 2=sandwich
+          const plantLeft = SHELF_PLANT_POSITIONS[rowIndex % SHELF_PLANT_POSITIONS.length];
 
-            {/* Books row — only books, no plants */}
-            <div style={{
-              display: "flex",
-              alignItems: "flex-end",
-              gap: 5,
-              padding: "0 8px",
-            }}>
-              {(() => {
-                const pattern = SHELF_PATTERNS[rowIndex % SHELF_PATTERNS.length];
-                let bookIdx = 0;
-                return pattern.map((item, pi) => {
-                  if (item === "b") {
-                    const book = row[bookIdx];
-                    bookIdx++;
-                    if (!book) return null;
-                    return mediaType === "audiobooks" ? (
-                      <CDCase
-                        key={pi}
-                        book={book}
-                        index={bookIdx - 1}
-                        rowIndex={rowIndex}
-                        onClick={setSelectedBook}
-                      />
-                    ) : (
-                      <BookSpine
-                        key={pi}
-                        book={book}
-                        index={bookIdx - 1}
-                        rowIndex={rowIndex}
-                        onClick={setSelectedBook}
-                      />
-                    );
-                  }
-                  return null;
-                });
-              })()}
-            </div>
+          // Split books for each layout
+          const third = Math.max(2, Math.floor(row.length / 3));
+          const half = Math.max(2, Math.floor(row.length / 2));
 
-            {/* Real shelf photo */}
-            <img
-              src="/shelf2.jpg"
-              alt="shelf"
-              style={{
-                width: "100%",
-                height: 28,
-                objectFit: "cover",
-                objectPosition: "center center",
-                display: "block",
-                boxShadow: "0 6px 14px rgba(0,0,0,0.4)",
-              }}
-            />
+          const leftBooks   = layout === 2 ? row.slice(0, third)           : (layout === 0 ? row.slice(0, -Math.min(4, row.length)) : []);
+          const stackBooks  = layout === 2 ? row.slice(third, third * 2)   : row.slice(-Math.min(4, row.length));
+          const rightBooks  = layout === 2 ? row.slice(third * 2)          : (layout === 0 ? [] : row.slice(0, -Math.min(4, row.length)));
+          const hasStack    = row.length >= 6;
 
-            {/* Plants pinned to shelf edge, vines hanging below */}
-            {(() => {
-              const pattern = SHELF_PATTERNS[rowIndex % SHELF_PATTERNS.length];
-              const totalItems = pattern.length;
-              const itemWidth = 60;
-              return pattern.map((item, pi) => {
-                if (!item.startsWith("p")) return null;
-                const pIdx = parseInt(item[1]);
-                const leftPct = (pi / totalItems) * 100;
-                return (
-                  <div key={pi} style={{
-                    position: "absolute",
-                    left: `${leftPct}%`,
-                    top: "100%",
-                    transform: "translateX(25%) translateY(-110px)",
-                    zIndex: 10,
-                    width: itemWidth,
-                  }}>
-                    <ShelfPlant plantIndex={pIdx} />
+          const renderUpright = (books, startIdx) => books.map((book, i) => (
+            mediaType === "audiobooks"
+              ? <CDCase key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
+              : <BookSpine key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
+          ));
+
+          // Calculate plant x based on actual book widths so it lands in the gap
+          const bookW = mediaType === "audiobooks" ? 94 : 62;
+          const stackW = 300;
+          const padL = 24;
+          const containerW = 890;
+          let plantPx;
+          if (layout === 0) {
+            plantPx = padL + leftBooks.length * bookW + 62;
+          } else if (layout === 1) {
+            plantPx = padL + stackW + 880;
+          } else {
+            plantPx = padL + leftBooks.length * bookW + 45;
+          }
+          const plantX = Math.min(plantPx, 950) + "px";
+          // Per-layout bottom offset (lower value = plant sits lower)
+          const plantBottom = layout === 0 ? -90 : layout === 1 ? -100 : -110;
+
+          return (
+            <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
+
+              {/* Books row — overflow hidden, sits in front of plant pot */}
+              <div style={{
+                display: "flex",
+                alignItems: "flex-end",
+                justifyContent: "flex-start",
+                gap: 4,
+                padding: "0 12px",
+                flexWrap: "nowrap",
+                overflow: "hidden",
+                minHeight: 230,
+              }}>
+                {layout === 0 && <>
+                  {renderUpright(leftBooks, 0)}
+                  {hasStack && <div style={{ marginLeft: "auto", marginRight: 60 }}>
+                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
+                  </div>}
+                </>}
+
+                {layout === 1 && <>
+                  {hasStack && <div style={{ marginRight: 8 }}>
+                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={rightBooks.length} onBookClick={setSelectedBook} />
+                  </div>}
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginRight: 60 }}>
+                    {renderUpright(rightBooks, 0)}
                   </div>
-                );
-              });
-            })()}
+                </>}
 
-            <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)" }} />
-          </div>
-        ))}
+                {layout === 2 && <>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>
+                    {renderUpright(leftBooks, 0)}
+                  </div>
+                  {hasStack && <div style={{ marginLeft: "auto" }}>
+                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
+                  </div>}
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginLeft: 16, marginRight: 60 }}>
+                    {renderUpright(rightBooks, leftBooks.length + stackBooks.length)}
+                  </div>
+                </>}
+              </div>
+
+              {/* Plant — absolutely positioned so it can overflow upward freely */}
+              <div style={{
+                position: "absolute",
+                bottom: plantBottom,
+                left: plantX,
+                transform: "translateX(-50%)",
+                zIndex: 15,
+                pointerEvents: "none",
+              }}>
+                <ShelfPlant plantIndex={rowIndex} />
+              </div>
+
+              {/* Shelf photo */}
+              <img
+                src="/shelf2.jpg"
+                alt="shelf"
+                style={{ width: "100%", height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }}
+              />
+
+              {/* Shelf shadow + spacing */}
+              <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 32 }} />
+            </div>
+          );
+        })}
 
         {books.length === 0 && (
           <p style={{
@@ -941,10 +1421,10 @@ function FavoritesShelf({ onClose }) {
     });
   });
 
-  // Split into rows of 6
+  // Split into rows of 12
   const rows = [];
-  for (let i = 0; i < favoritedBooks.length; i += 6) {
-    rows.push(favoritedBooks.slice(i, i + 6));
+  for (let i = 0; i < favoritedBooks.length; i += 12) {
+    rows.push(favoritedBooks.slice(i, i + 12));
   }
 
   return (
@@ -967,18 +1447,20 @@ function FavoritesShelf({ onClose }) {
         onClick={onClose}
         style={{
           position: "fixed",
-          top: 20,
+          top: 60,
           left: 20,
           padding: "8px 18px",
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
           color: "#3A2A1A",
-          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
-          fontSize: 14,
-          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          fontStyle: "italic",
+          fontSize: 15,
+          letterSpacing: "0.5px",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
           zIndex: 201,
         }}
       >
@@ -1007,7 +1489,7 @@ function FavoritesShelf({ onClose }) {
       </div>
 
       {/* Bookshelves */}
-      <div style={{ maxWidth: 780, margin: "0 auto" }}>
+      <div style={{ maxWidth: 1050, margin: "0 auto", paddingRight: 160 }}>
         {favoritedBooks.length === 0 ? (
           <p style={{
             textAlign: "center",
@@ -1020,43 +1502,75 @@ function FavoritesShelf({ onClose }) {
             You haven&apos;t added any favorites yet. Click the ♡ on any book to add it here.
           </p>
         ) : (
-          rows.map((row, rowIndex) => (
-            <div key={rowIndex} style={{ marginBottom: 80, position: "relative" }}>
-              {/* Books row */}
-              <div style={{
-                display: "flex",
-                alignItems: "flex-end",
-                gap: 5,
-                padding: "0 8px",
-              }}>
-                {row.map((book, idx) => (
-                  <BookSpine
-                    key={book.isbn}
-                    book={book}
-                    index={idx}
-                    rowIndex={rowIndex}
-                    onClick={setSelectedBook}
-                  />
-                ))}
+          rows.map((row, rowIndex) => {
+            const layout = rowIndex % 3;
+            const plantLeft = SHELF_PLANT_POSITIONS[rowIndex % SHELF_PLANT_POSITIONS.length];
+            const third = Math.max(2, Math.floor(row.length / 3));
+            const leftBooks  = layout === 2 ? row.slice(0, third)         : (layout === 0 ? row.slice(0, -Math.min(4, row.length)) : []);
+            const stackBooks = layout === 2 ? row.slice(third, third * 2) : row.slice(-Math.min(4, row.length));
+            const rightBooks = layout === 2 ? row.slice(third * 2)        : (layout === 0 ? [] : row.slice(0, -Math.min(4, row.length)));
+            const hasStack   = row.length >= 6;
+            const renderUpright = (books, startIdx) => books.map((book, i) => (
+              <BookSpine key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
+            ));
+            const bookW = 62;
+            const stackW = 300;
+            const padL = 24;
+            const containerW = 890;
+            let plantPx;
+            if (layout === 0) plantPx = padL + leftBooks.length * bookW + 140;
+            else if (layout === 1) plantPx = padL + stackW + 24;
+            else plantPx = padL + leftBooks.length * bookW + stackW + 16;
+            const plantX = Math.min(plantPx, 950) + "px";
+            const plantBottom = layout === 0 ? -90 : layout === 1 ? -100 : -110;
+            return (
+              <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
+                <div style={{
+                  display: "flex",
+                  alignItems: "flex-end",
+                  justifyContent: "flex-start",
+                  gap: 4,
+                  padding: "0 12px",
+                  flexWrap: "nowrap",
+                  overflow: "hidden",
+                  minHeight: 230,
+                }}>
+                  {layout === 0 && <>
+                    {renderUpright(leftBooks, 0)}
+                    {hasStack && <div style={{ marginLeft: "auto", marginRight: 60 }}>
+                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
+                    </div>}
+                  </>}
+                  {layout === 1 && <>
+                    {hasStack && <div style={{ marginRight: 8 }}>
+                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={rightBooks.length} onBookClick={setSelectedBook} />
+                    </div>}
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginRight: 60 }}>
+                      {renderUpright(rightBooks, 0)}
+                    </div>
+                  </>}
+                  {layout === 2 && <>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>{renderUpright(leftBooks, 0)}</div>
+                    {hasStack && <div style={{ marginLeft: "auto" }}>
+                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
+                    </div>}
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginLeft: 16, marginRight: 60 }}>{renderUpright(rightBooks, leftBooks.length + stackBooks.length)}</div>
+                  </>}
+                </div>
+
+                <div style={{ position: "absolute", bottom: plantBottom, left: plantX, transform: "translateX(-50%)", zIndex: 15, pointerEvents: "none" }}>
+                  <ShelfPlant plantIndex={rowIndex} />
+                </div>
+
+                <img
+                  src="/shelf2.jpg"
+                  alt="shelf"
+                  style={{ width: "100%", height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }}
+                />
+                <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 32 }} />
               </div>
-
-              {/* Shelf photo */}
-              <img
-                src="/shelf2.jpg"
-                alt="shelf"
-                style={{
-                  width: "100%",
-                  height: 28,
-                  objectFit: "cover",
-                  objectPosition: "center center",
-                  display: "block",
-                  boxShadow: "0 6px 14px rgba(0,0,0,0.4)",
-                }}
-              />
-
-              <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)" }} />
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -1182,18 +1696,20 @@ function StatsPage({ onClose, mediaType }) {
         onClick={onClose}
         style={{
           position: "fixed",
-          top: 20,
+          top: 60,
           left: 20,
           padding: "8px 18px",
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
           color: "#3A2A1A",
-          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
-          fontSize: 14,
-          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          fontStyle: "italic",
+          fontSize: 15,
+          letterSpacing: "0.5px",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
           zIndex: 201,
         }}
       >
@@ -1467,6 +1983,7 @@ const EBOOK_PLATFORMS = [
   { id: "scribd",     name: "Scribd",            emoji: "📜", desc: "Unlimited reading subscription",  url: "https://www.scribd.com" },
   { id: "bookfunnel", name: "BookFunnel",        emoji: "🎁", desc: "Indie author book delivery",     url: "https://bookfunnel.com" },
   { id: "libby",      name: "Libby / OverDrive", emoji: "🏛️", desc: "Free library ebooks & audio",    url: "https://libbyapp.com" },
+  { id: "goodreads",  name: "Goodreads",         emoji: "🌸", desc: "Import your full Goodreads library", url: "https://www.goodreads.com", csvExport: "https://www.goodreads.com/review/import" },
 ];
 
 const AUDIO_PLATFORMS = [
@@ -1477,7 +1994,635 @@ const AUDIO_PLATFORMS = [
   { id: "graphicaudio", name: "Graphic Audio",  emoji: "🎭", desc: "Full-cast audio productions",  url: "https://www.graphicaudio.net" },
 ];
 
-function PlatformCard({ platform, connected, onConnect, onDisconnect }) {
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+function parseCSV(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
+  return lines.slice(1).map(line => {
+    const vals = parseCSVLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (vals[i] || '').replace(/^=?"?|"?$/g, '').trim(); });
+    return obj;
+  });
+}
+
+function detectGenreFromGoodreads(bookshelves, exclusiveShelf) {
+  const shelves = (bookshelves + ' ' + exclusiveShelf).toLowerCase();
+  if (shelves.includes('dark-romance') || shelves.includes('dark romance')) return 'Dark Romance';
+  if (shelves.includes('cooking') || shelves.includes('cookbook') || shelves.includes('cookbooks') || shelves.includes('recipes') || shelves.includes('baking') || shelves.includes('food')) return 'Cookbooks';
+  if (shelves.includes('historical-fiction') || shelves.includes('historical fiction') || shelves.includes('historical') || shelves.includes('world-war') || shelves.includes('medieval')) return 'Historical Fiction';
+  if (shelves.includes('drama') || shelves.includes('play') || shelves.includes('theatre') || shelves.includes('shakespeare')) return 'Drama';
+  if (shelves.includes('romance') || shelves.includes('love') || shelves.includes('chick-lit')) return 'Romance';
+  if (shelves.includes('fantasy') || shelves.includes('magic') || shelves.includes('dragon') || shelves.includes('wizard')) return 'Fantasy';
+  if (shelves.includes('mystery') || shelves.includes('detective') || shelves.includes('crime') || shelves.includes('cozy')) return 'Mystery';
+  if (shelves.includes('sci-fi') || shelves.includes('science-fiction') || shelves.includes('science fiction') || shelves.includes('scifi') || shelves.includes('space')) return 'Sci-Fi';
+  if (shelves.includes('thriller') || shelves.includes('suspense') || shelves.includes('horror')) return 'Thriller';
+  if (shelves.includes('self-help') || shelves.includes('self help') || shelves.includes('nonfiction') || shelves.includes('non-fiction') || shelves.includes('personal-development') || shelves.includes('business')) return 'Self Help';
+  if (shelves.includes('literary') || shelves.includes('literary-fiction') || shelves.includes('classics') || shelves.includes('fiction')) return 'Fiction';
+  return null;
+}
+
+function ImportModal({ platform, mediaType, onClose, onImport }) {
+  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible"];
+  const showCSV = csvPlatforms.includes(platform.id);
+  const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
+
+  // CSV tab state
+  const [csvBooks, setCsvBooks] = useState([]);
+  const [csvSkipped, setCsvSkipped] = useState(0);
+  const [csvGenres, setCsvGenres] = useState({});
+
+  // Bulk paste state
+  const [bulkText, setBulkText] = useState("");
+  const [bulkSearching, setBulkSearching] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(null); // { done, total }
+  const [bulkPending, setBulkPending] = useState([]);
+  const [bulkGenres, setBulkGenres] = useState({});
+
+  // Search tab state
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [results, setResults] = useState([]);
+  const [pending, setPending] = useState([]);
+  const [pendingGenres, setPendingGenres] = useState({});
+
+  const handleBulkSearch = async () => {
+    const titles = bulkText.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!titles.length) return;
+    setBulkSearching(true);
+    setBulkProgress({ done: 0, total: titles.length });
+    setBulkPending([]);
+    setBulkGenres({});
+
+    const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const allLibraryBooks = Object.values(library).flat();
+    const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.title.toLowerCase().trim()));
+
+    const found = [];
+    for (let i = 0; i < titles.length; i++) {
+      const title = titles[i];
+      setBulkProgress({ done: i + 1, total: titles.length });
+      if (existingTitles.has(title.toLowerCase().trim())) continue;
+      try {
+        // Try Google Books first (better audiobook coverage)
+        const gRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(title)}&maxResults=1`);
+        const gJson = await gRes.json();
+        const vol = gJson.items?.[0]?.volumeInfo;
+        if (vol) {
+          const id13 = vol.industryIdentifiers?.find(i => i.type === "ISBN_13");
+          const id10 = vol.industryIdentifiers?.find(i => i.type === "ISBN_10");
+          const isbn = (id13 || id10)?.identifier || "";
+          const pendingId = `bulk-${i}`;
+          const genre = detectGenre(vol.categories || []);
+          const book = {
+            _pendingId: pendingId,
+            title: vol.title || title,
+            author: (vol.authors || []).join(", "),
+            isbn,
+            coverUrl: vol.imageLinks?.thumbnail?.replace("http://", "https://") || "",
+            description: vol.description || "",
+            genre,
+            type: mediaType,
+            platform: platform.id,
+          };
+          found.push(book);
+          setBulkGenres(prev => ({ ...prev, [pendingId]: genre }));
+          existingTitles.add(book.title.toLowerCase().trim());
+        }
+      } catch { /* skip */ }
+      await new Promise(r => setTimeout(r, 120));
+    }
+    setBulkPending(found);
+    setBulkSearching(false);
+  };
+
+  const handleConfirmBulk = () => {
+    const books = bulkPending.map(b => ({
+      title: b.title, author: b.author, isbn: b.isbn,
+      coverUrl: b.coverUrl, description: b.description,
+      type: mediaType, genre: bulkGenres[b._pendingId] || b.genre,
+      platform: platform.id,
+    }));
+    onImport(books);
+  };
+
+  const handleCSVFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const rows = parseCSV(ev.target.result);
+      const isGoodreads = platform.id === "goodreads";
+
+      // Build duplicate lookup from existing books
+      const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const allLibraryBooks = Object.values(library).flat();
+      const existingIsbns = new Set([
+        ...existingUserBooks.map(b => b.isbn).filter(Boolean),
+        ...allLibraryBooks.map(b => b.isbn).filter(Boolean),
+      ]);
+      const existingTitles = new Set([
+        ...existingUserBooks.map(b => b.title.toLowerCase().trim()),
+        ...allLibraryBooks.map(b => b.title.toLowerCase().trim()),
+      ]);
+
+      const books = rows.map((row, idx) => {
+        const title = row["title"] || row["book title"] || row["asin title"] || "";
+        const author = row["author"] || row["author(s)"] || row["authors"] || row["narrator"] || "";
+        const isbn = (row["isbn13"] || row["isbn"] || row["asin"] || "").replace(/[="]/g, "").replace(/\s/g, "");
+        if (!title) return null;
+
+        // Duplicate check
+        const isDuplicate = (isbn && existingIsbns.has(isbn)) ||
+          existingTitles.has(title.toLowerCase().trim());
+        if (isDuplicate) return null;
+
+        const shelves = isGoodreads ? (row["bookshelves"] || "") : "";
+        const exclusiveShelf = isGoodreads ? (row["exclusive shelf"] || "") : "";
+        const dateRead = isGoodreads ? (row["date read"] || "") : "";
+        const dateAdded = isGoodreads ? (row["date added"] || "") : "";
+
+        // Genre detection
+        const shelfGenre = isGoodreads
+          ? (detectGenreFromGoodreads(shelves, exclusiveShelf) || "Fantasy")
+          : "Fantasy";
+
+        // Status mapping
+        let status = null;
+        if (isGoodreads) {
+          if (exclusiveShelf === "read") status = "finished";
+          else if (exclusiveShelf === "currently-reading") status = "reading";
+          else if (exclusiveShelf === "to-read") status = "want-to-read";
+        }
+
+        return { _csvIdx: idx, title, author, isbn, shelfGenre, status, dateRead, dateAdded };
+      }).filter(Boolean);
+
+      setCsvBooks(books);
+      setCsvSkipped(rows.filter(r => r["title"] || r["book title"]).length - books.length);
+      const genreMap = {};
+      books.forEach(b => { genreMap[b._csvIdx] = b.shelfGenre || "Fantasy"; });
+      setCsvGenres(genreMap);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    setResults([]);
+    try {
+      const res = await fetch(
+        `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8&fields=title,author_name,isbn,subject,cover_i,description`
+      );
+      const data = await res.json();
+      setResults(data.docs || []);
+    } catch {
+      setSearchError("Search failed. Please check your connection and try again.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const addToPending = (result, resultIndex) => {
+    const genre = detectGenre(result.subject || []);
+    const isbn = result.isbn ? result.isbn[0] : null;
+    const coverUrl = result.cover_i ? `https://covers.openlibrary.org/b/id/${result.cover_i}-S.jpg` : "";
+    const title = result.title || "";
+
+    // Duplicate check
+    const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const allLibraryBooks = Object.values(library).flat();
+    const existingIsbns = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.isbn).filter(Boolean));
+    const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.title.toLowerCase().trim()));
+    const alreadyInPending = pending.some(b => b.title.toLowerCase().trim() === title.toLowerCase().trim());
+
+    if ((isbn && existingIsbns.has(isbn)) || existingTitles.has(title.toLowerCase().trim()) || alreadyInPending) {
+      alert(`"${title}" is already in your library!`);
+      return;
+    }
+
+    const book = {
+      _pendingId: `result-${resultIndex}-${pending.length}`,
+      title,
+      author: (result.author_name || []).join(", "),
+      isbn: isbn || "",
+      coverUrl,
+      genre,
+      type: mediaType,
+      platform: platform.id,
+    };
+    setPending(prev => [...prev, book]);
+    setPendingGenres(prev => ({ ...prev, [book._pendingId]: genre }));
+  };
+
+  const removePending = (pendingId) => {
+    setPending(prev => prev.filter(b => b._pendingId !== pendingId));
+    setPendingGenres(prev => { const n = { ...prev }; delete n[pendingId]; return n; });
+  };
+
+  const handleConfirmSearch = () => {
+    const books = pending.map(b => ({
+      title: b.title,
+      author: b.author,
+      isbn: b.isbn,
+      coverUrl: b.coverUrl,
+      type: mediaType,
+      genre: pendingGenres[b._pendingId] || b.genre,
+      platform: platform.id,
+      description: "",
+    }));
+    onImport(books);
+  };
+
+  const handleConfirmCSV = () => {
+    const isGoodreads = platform.id === "goodreads";
+    const books = csvBooks.map(b => ({
+      title: b.title,
+      author: b.author,
+      isbn: b.isbn || "",
+      coverUrl: "",
+      type: mediaType,
+      genre: csvGenres[b._csvIdx] || "Fantasy",
+      platform: platform.id,
+      description: "",
+      // Goodreads extras passed through for status/date handling
+      _status: isGoodreads ? b.status : null,
+      _dateRead: isGoodreads ? b.dateRead : null,
+      _dateAdded: isGoodreads ? b.dateAdded : null,
+    }));
+    onImport(books);
+  };
+
+  const tabBtnStyle = (tab) => ({
+    padding: "8px 18px",
+    borderRadius: 6,
+    border: "1px solid #8B5E3C",
+    cursor: "pointer",
+    fontFamily: '"Palatino Linotype", Palatino, serif',
+    fontSize: 13,
+    fontWeight: activeTab === tab ? 700 : 400,
+    background: activeTab === tab ? "#3A2A1A" : "#F8F1E4",
+    color: activeTab === tab ? "#F8F1E4" : "#3A2A1A",
+    transition: "all 0.15s",
+  });
+
+  const genreSelect = (value, onChange) => (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      style={{
+        fontFamily: "Georgia, serif",
+        fontSize: 12,
+        padding: "3px 6px",
+        borderRadius: 4,
+        border: "1px solid #8B5E3C",
+        background: "#F8F1E4",
+        color: "#3A2A1A",
+        cursor: "pointer",
+      }}
+    >
+      {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+    </select>
+  );
+
+  const csvInstructions = platform.id === "kindle"
+    ? 'Go to amazon.com → Account → Manage Your Content & Devices → the "..." menu → Export library'
+    : platform.id === "kobo"
+    ? 'Go to kobo.com → My Books → Export'
+    : platform.id === "audible"
+    ? 'Install the free "Audible Library Exporter" Chrome extension → visit audible.com/library → click the extension icon → Download CSV'
+    : 'Go to goodreads.com → My Books → Import/Export → Export Library (exports a CSV with all your books, shelves & reading status)';
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 400,
+        background: "rgba(20,14,8,0.72)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          maxWidth: 600,
+          width: "100%",
+          background: "#F8F1E4",
+          border: "1px solid #8B5E3C",
+          borderRadius: 12,
+          padding: 28,
+          position: "relative",
+          boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+          maxHeight: "80vh",
+          overflowY: "auto",
+        }}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          style={{ position: "absolute", top: 14, right: 16, background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#6B4E32", lineHeight: 1, padding: "2px 6px" }}
+          aria-label="Close"
+        >✕</button>
+
+        {/* Header */}
+        <h2 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, color: "#3A2A1A", margin: "0 0 18px 0", paddingRight: 30 }}>
+          {platform.emoji} {platform.name} — Import Library
+        </h2>
+
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+          {showCSV && <button style={tabBtnStyle("csv")} onClick={() => setActiveTab("csv")}>📁 Upload CSV</button>}
+          <button style={tabBtnStyle("bulk")} onClick={() => setActiveTab("bulk")}>📋 Paste Titles</button>
+          <button style={tabBtnStyle("search")} onClick={() => setActiveTab("search")}>🔍 Search &amp; Add</button>
+        </div>
+
+        {/* CSV Tab */}
+        {activeTab === "csv" && showCSV && (
+          <div>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#4B3A2A", marginBottom: 8 }}>
+              Export your library from {platform.name} and upload the CSV file below.
+            </p>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 14 }}>
+              {csvInstructions}
+            </p>
+            <label style={{
+              display: "inline-block",
+              padding: "8px 16px",
+              background: "#3A2A1A",
+              color: "#F8F1E4",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 13,
+              marginBottom: 16,
+            }}>
+              📁 Choose CSV File
+              <input type="file" accept=".csv" onChange={handleCSVFile} style={{ display: "none" }} />
+            </label>
+
+            {csvBooks.length > 0 && (
+              <>
+                <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginBottom: 10 }}>
+                  Found {csvBooks.length} new book{csvBooks.length !== 1 ? "s" : ""}.{csvSkipped > 0 ? ` (${csvSkipped} duplicate${csvSkipped !== 1 ? "s" : ""} skipped)` : ""} Confirm genres:
+                </p>
+                <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 14 }}>
+                  {csvBooks.map(b => (
+                    <div key={b._csvIdx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                        <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
+                      </div>
+                      {genreSelect(csvGenres[b._csvIdx] || "Fantasy", (val) => setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })))}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={handleConfirmCSV}
+                  style={{
+                    padding: "9px 20px",
+                    background: "#3A2A1A",
+                    color: "#F8F1E4",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                    fontSize: 14,
+                    fontWeight: 700,
+                  }}
+                >
+                  📥 Import {csvBooks.length} Book{csvBooks.length !== 1 ? "s" : ""}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Bulk Paste Tab */}
+        {activeTab === "bulk" && (
+          <div>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#4B3A2A", marginBottom: 4 }}>
+              Paste one book title per line. The app will search for each one automatically.
+            </p>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 12 }}>
+              Tip for Audible users without the exporter: go to audible.com/library, copy your book titles from the page, and paste them here.
+            </p>
+            <textarea
+              value={bulkText}
+              onChange={e => setBulkText(e.target.value)}
+              placeholder={"The Name of the Wind\nProject Hail Mary\nDune\n..."}
+              rows={8}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", resize: "vertical", boxSizing: "border-box", marginBottom: 12 }}
+            />
+            <button
+              onClick={handleBulkSearch}
+              disabled={bulkSearching || !bulkText.trim()}
+              style={{ padding: "9px 20px", background: bulkSearching ? "#D8C3A5" : "#3A2A1A", color: bulkSearching ? "#6B4E32" : "#F8F1E4", border: "none", borderRadius: 6, cursor: bulkSearching ? "default" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, marginBottom: 16 }}
+            >
+              {bulkSearching ? `Searching… (${bulkProgress?.done}/${bulkProgress?.total})` : "🔍 Search All Titles"}
+            </button>
+
+            {bulkPending.length > 0 && (
+              <>
+                <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginBottom: 10 }}>
+                  Found {bulkPending.length} book{bulkPending.length !== 1 ? "s" : ""}. Confirm genres before importing:
+                </p>
+                <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 14 }}>
+                  {bulkPending.map(b => (
+                    <div key={b._pendingId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                        <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
+                      </div>
+                      <select
+                        value={bulkGenres[b._pendingId] || b.genre}
+                        onChange={e => setBulkGenres(prev => ({ ...prev, [b._pendingId]: e.target.value }))}
+                        style={{ fontFamily: "Georgia, serif", fontSize: 12, padding: "3px 6px", borderRadius: 4, border: "1px solid #8B5E3C", background: "#F8F1E4", color: "#3A2A1A" }}
+                      >
+                        {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={handleConfirmBulk}
+                  style={{ padding: "9px 20px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+                >
+                  📥 Import {bulkPending.length} Book{bulkPending.length !== 1 ? "s" : ""}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Search Tab */}
+        {activeTab === "search" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <input
+                type="text"
+                placeholder="Search by title or ISBN..."
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleSearch()}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #8B5E3C",
+                  fontFamily: "Georgia, serif",
+                  fontSize: 13,
+                  background: "#FFFDF8",
+                  color: "#3A2A1A",
+                }}
+              />
+              <button
+                onClick={handleSearch}
+                disabled={searching}
+                style={{
+                  padding: "8px 16px",
+                  background: "#3A2A1A",
+                  color: "#F8F1E4",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: searching ? "default" : "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  fontSize: 13,
+                  opacity: searching ? 0.7 : 1,
+                }}
+              >
+                {searching ? "Searching…" : "Search"}
+              </button>
+            </div>
+
+            {searchError && (
+              <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#a00", marginBottom: 12 }}>{searchError}</p>
+            )}
+
+            {/* Search results */}
+            {results.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 8 }}>
+                  {results.length} result{results.length !== 1 ? "s" : ""} found:
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {results.map((r, i) => {
+                    const genre = detectGenre(r.subject || []);
+                    const coverId = r.cover_i;
+                    const alreadyPending = pending.some(b =>
+                      b.title === r.title && b.author === (r.author_name || []).join(", ")
+                    );
+                    return (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px", background: "rgba(255,255,255,0.6)", borderRadius: 6, border: "1px solid #D8C3A5" }}>
+                        {coverId ? (
+                          <img src={`https://covers.openlibrary.org/b/id/${coverId}-S.jpg`} alt={r.title} style={{ width: 36, height: 50, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: 36, height: 50, background: "#D8C3A5", borderRadius: 3, flexShrink: 0 }} />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{r.title}</div>
+                          <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{(r.author_name || []).join(", ")}</div>
+                          <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C" }}>Genre: {genre}</div>
+                        </div>
+                        <button
+                          onClick={() => addToPending(r, i)}
+                          disabled={alreadyPending}
+                          style={{
+                            padding: "5px 10px",
+                            background: alreadyPending ? "#D8C3A5" : "#3A2A1A",
+                            color: alreadyPending ? "#6B4E32" : "#F8F1E4",
+                            border: "none",
+                            borderRadius: 5,
+                            cursor: alreadyPending ? "default" : "pointer",
+                            fontFamily: '"Palatino Linotype", Palatino, serif',
+                            fontSize: 12,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {alreadyPending ? "Added" : "Add"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Pending list */}
+            {pending.length > 0 && (
+              <div>
+                <p style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, color: "#3A2A1A", marginBottom: 8 }}>
+                  Pending ({pending.length}):
+                </p>
+                <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 14 }}>
+                  {pending.map(b => (
+                    <div key={b._pendingId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                        <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
+                      </div>
+                      {genreSelect(pendingGenres[b._pendingId] || b.genre, (val) => setPendingGenres(prev => ({ ...prev, [b._pendingId]: val })))}
+                      <button
+                        onClick={() => removePending(b._pendingId)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#a00", fontSize: 16, lineHeight: 1, padding: 0, flexShrink: 0 }}
+                        aria-label="Remove"
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={handleConfirmSearch}
+                  style={{
+                    padding: "9px 20px",
+                    background: "#3A2A1A",
+                    color: "#F8F1E4",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                    fontSize: 14,
+                    fontWeight: 700,
+                  }}
+                >
+                  📥 Add to Library ({pending.length})
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlatformCard({ platform, connected, onConnect, onDisconnect, onImportClick }) {
   const [hover, setHover] = useState(false);
   return (
     <div style={{
@@ -1495,7 +2640,7 @@ function PlatformCard({ platform, connected, onConnect, onDisconnect }) {
         <>
           <div style={{ color: "#2d6a2d", fontFamily: "Georgia, serif", fontSize: 12, fontWeight: 600, marginBottom: 8 }}>✓ Connected</div>
           <button
-            onClick={() => { alert("Library import coming soon!"); }}
+            onClick={() => onImportClick && onImportClick(platform)}
             style={{
               display: "block",
               width: "100%",
@@ -1552,17 +2697,154 @@ function PlatformCard({ platform, connected, onConnect, onDisconnect }) {
   );
 }
 
-function PlatformPage({ onClose }) {
+function PlatformPage({ onClose, mediaType }) {
   const [connections, setConnections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_connections")) || {}; } catch { return {}; }
   });
+  const [importingPlatform, setImportingPlatform] = useState(null);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichResult, setEnrichResult] = useState(null); // { enriched, skipped }
 
   useEffect(() => {
     localStorage.setItem("sk_connections", JSON.stringify(connections));
   }, [connections]);
 
   const connect = (id) => setConnections((prev) => ({ ...prev, [id]: true }));
-  const disconnect = (id) => setConnections((prev) => { const next = { ...prev }; delete next[id]; return next; });
+  const disconnect = (id) => {
+    // Remove all books imported from this platform
+    const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const removed = allBooks.filter(b => b.platform === id);
+    const remaining = allBooks.filter(b => b.platform !== id);
+    localStorage.setItem("sk_user_books", JSON.stringify(remaining));
+
+    // Clean up statuses, favorites, progress, dates for removed books
+    if (removed.length > 0) {
+      const removedIsbns = new Set(removed.map(b => b.isbn).filter(Boolean));
+      ["ebooks", "audiobooks"].forEach(mt => {
+        ["sk_favorites", "sk_statuses", "sk_progress", "sk_dates"].forEach(key => {
+          const stored = JSON.parse(localStorage.getItem(`${key}_${mt}`) || "{}");
+          removedIsbns.forEach(isbn => { delete stored[isbn]; });
+          localStorage.setItem(`${key}_${mt}`, JSON.stringify(stored));
+        });
+      });
+    }
+
+    setConnections((prev) => { const next = { ...prev }; delete next[id]; return next; });
+  };
+
+  const handleEnrich = async () => {
+    setEnriching(true);
+    setEnrichResult(null);
+    const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const needsEnrich = userBooks.filter(b => !b.description || !b.author || !b.coverUrl);
+    let enriched = 0;
+
+    for (const book of needsEnrich) {
+      try {
+        const idx = userBooks.findIndex(b => b === book);
+        let filled = false;
+
+        // --- Try Open Library by ISBN ---
+        if (book.isbn) {
+          const res = await fetch(
+            `https://openlibrary.org/search.json?isbn=${encodeURIComponent(book.isbn)}&limit=1&fields=title,author_name,isbn,subject,cover_i,description,first_sentence`
+          );
+          const json = await res.json();
+          const data = json.docs?.[0];
+          if (data) {
+            if (!userBooks[idx].author && data.author_name?.length) userBooks[idx].author = data.author_name.join(", ");
+            if (!userBooks[idx].coverUrl && data.cover_i) userBooks[idx].coverUrl = `https://covers.openlibrary.org/b/id/${data.cover_i}-M.jpg`;
+            if (!userBooks[idx].isbn && data.isbn?.length) userBooks[idx].isbn = data.isbn[0];
+            if (!userBooks[idx].description) {
+              const d = data.description?.value || data.description || data.first_sentence?.value || data.first_sentence || "";
+              if (d && typeof d === "string") userBooks[idx].description = d;
+            }
+            if (!userBooks[idx].genre && data.subject?.length) userBooks[idx].genre = detectGenre(data.subject);
+            filled = true;
+          }
+        }
+
+        // Helper to apply Google Books volume data
+        const applyGoogleVol = (vol) => {
+          if (!userBooks[idx].author && vol.authors?.length) userBooks[idx].author = vol.authors.join(", ");
+          if (!userBooks[idx].coverUrl && vol.imageLinks?.thumbnail)
+            userBooks[idx].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://").replace("&zoom=1", "&zoom=2");
+          if (!userBooks[idx].description && vol.description) userBooks[idx].description = vol.description;
+          if (!userBooks[idx].isbn && vol.industryIdentifiers?.length) {
+            const id13 = vol.industryIdentifiers.find(i => i.type === "ISBN_13");
+            const id10 = vol.industryIdentifiers.find(i => i.type === "ISBN_10");
+            userBooks[idx].isbn = (id13 || id10)?.identifier || "";
+          }
+          if (!userBooks[idx].genre && vol.categories?.length) userBooks[idx].genre = detectGenre(vol.categories);
+        };
+
+        // --- Try Open Library by cleaned title ---
+        const stillMissing = !userBooks[idx].author || !userBooks[idx].coverUrl || !userBooks[idx].description;
+        if (stillMissing && book.title) {
+          const cleaned = cleanTitle(book.title);
+          const q = book.author
+            ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(book.author)}`
+            : `title=${encodeURIComponent(cleaned)}`;
+          const res = await fetch(`https://openlibrary.org/search.json?${q}&limit=1&fields=title,author_name,isbn,subject,cover_i,description,first_sentence`);
+          const json = await res.json();
+          const data = json.docs?.[0];
+          if (data) {
+            if (!userBooks[idx].author && data.author_name?.length) userBooks[idx].author = data.author_name.join(", ");
+            if (!userBooks[idx].coverUrl && data.cover_i) userBooks[idx].coverUrl = `https://covers.openlibrary.org/b/id/${data.cover_i}-M.jpg`;
+            if (!userBooks[idx].isbn && data.isbn?.length) userBooks[idx].isbn = data.isbn[0];
+            if (!userBooks[idx].description) {
+              const d = data.description?.value || data.description || data.first_sentence?.value || data.first_sentence || "";
+              if (d && typeof d === "string") userBooks[idx].description = d;
+            }
+            if (!userBooks[idx].genre && data.subject?.length) userBooks[idx].genre = detectGenre(data.subject);
+            filled = true;
+          }
+        }
+
+        // --- Try Google Books by ISBN ---
+        const stillMissing2 = !userBooks[idx].author || !userBooks[idx].coverUrl || !userBooks[idx].description;
+        if (stillMissing2 && userBooks[idx].isbn) {
+          const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${userBooks[idx].isbn}&maxResults=1`);
+          const json = await res.json();
+          const vol = json.items?.[0]?.volumeInfo;
+          if (vol) { applyGoogleVol(vol); filled = true; }
+        }
+
+        // --- Try Google Books by cleaned title + author ---
+        const stillMissing3 = !userBooks[idx].author || !userBooks[idx].coverUrl || !userBooks[idx].description;
+        if (stillMissing3 && book.title) {
+          const cleaned = cleanTitle(book.title);
+          const gq = book.author
+            ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(book.author)}`
+            : `intitle:${encodeURIComponent(cleaned)}`;
+          const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1`);
+          const json = await res.json();
+          const vol = json.items?.[0]?.volumeInfo;
+          if (vol) { applyGoogleVol(vol); filled = true; }
+        }
+
+        // --- Last resort: Google Books title-only search ---
+        const stillMissing4 = !userBooks[idx].coverUrl || !userBooks[idx].description;
+        if (stillMissing4 && book.title) {
+          const cleaned = cleanTitle(book.title);
+          const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleaned)}&maxResults=3`);
+          const json = await res.json();
+          const vol = json.items?.find(item => {
+            const t = item.volumeInfo?.title?.toLowerCase() || "";
+            return t.includes(cleaned.toLowerCase().split(" ")[0]);
+          })?.volumeInfo;
+          if (vol) { applyGoogleVol(vol); filled = true; }
+        }
+
+        if (filled) enriched++;
+      } catch { /* skip on network error */ }
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+    setEnriching(false);
+    setEnrichResult({ enriched, skipped: needsEnrich.length - enriched });
+  };
 
   const sectionTitle = (text) => (
     <h2 style={{
@@ -1591,18 +2873,20 @@ function PlatformPage({ onClose }) {
         onClick={onClose}
         style={{
           position: "fixed",
-          top: 20,
+          top: 60,
           left: 20,
           padding: "8px 18px",
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: "radial-gradient(circle at 30% 30%, #F5E6C8, #D8C3A5 70%)",
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
           color: "#3A2A1A",
-          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
-          fontSize: 14,
-          boxShadow: "0 3px 8px rgba(0,0,0,0.2)",
+          fontStyle: "italic",
+          fontSize: 15,
+          letterSpacing: "0.5px",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
           zIndex: 201,
         }}
       >
@@ -1623,15 +2907,130 @@ function PlatformPage({ onClose }) {
           fontStyle: "italic",
           fontSize: 14,
           color: "#6B4E32",
-          marginBottom: 36,
+          marginBottom: 24,
         }}>Connect your reading platforms to import your library</p>
+
+        {/* Enrich Library */}
+        <div style={{
+          background: "rgba(255,255,255,0.6)",
+          border: "1px solid #D8C3A5",
+          borderRadius: 10,
+          padding: "18px 24px",
+          marginBottom: 36,
+          display: "flex",
+          alignItems: "center",
+          gap: 20,
+          flexWrap: "wrap",
+        }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700, color: "#3A2A1A", marginBottom: 4 }}>
+              ✨ Enrich My Imported Books
+            </div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: "#6B4E32" }}>
+              Fill in missing covers, authors, descriptions, and genres for books imported via CSV.
+            </div>
+            {(() => {
+              const total = JSON.parse(localStorage.getItem("sk_user_books") || "[]").length;
+              const incomplete = JSON.parse(localStorage.getItem("sk_user_books") || "[]").filter(b => !b.description || !b.author || !b.coverUrl).length;
+              if (total === 0) return null;
+              return (
+                <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: incomplete > 0 ? "#8B5E3C" : "#2d6a2d", marginTop: 6 }}>
+                  {incomplete > 0 ? `⚠️ ${incomplete} of ${total} imported books still missing cover, author, or description` : `✅ All ${total} imported books are complete`}
+                </div>
+              );
+            })()}
+            {enrichResult && (
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: enrichResult.enriched > 0 ? "#2d6a2d" : "#6B4E32", marginTop: 6 }}>
+                {enrichResult.enriched > 0
+                  ? `✅ Enriched ${enrichResult.enriched} book${enrichResult.enriched !== 1 ? "s" : ""}${enrichResult.skipped > 0 ? ` · ${enrichResult.skipped} could not be found online` : ""}`
+                  : "All imported books are already up to date."}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleEnrich}
+            disabled={enriching}
+            style={{
+              padding: "10px 22px",
+              background: enriching ? "#D8C3A5" : "#3A2A1A",
+              color: enriching ? "#6B4E32" : "#F8F1E4",
+              border: "none",
+              borderRadius: 8,
+              cursor: enriching ? "default" : "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 14,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              transition: "background 0.15s",
+            }}
+          >
+            {enriching ? "Enriching…" : "✨ Enrich Now"}
+          </button>
+        </div>
+
+        {/* Clear imported books */}
+        <div style={{
+          background: "rgba(255,255,255,0.6)",
+          border: "1px solid #D8C3A5",
+          borderRadius: 10,
+          padding: "18px 24px",
+          marginBottom: 36,
+          display: "flex",
+          alignItems: "center",
+          gap: 20,
+          flexWrap: "wrap",
+        }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700, color: "#3A2A1A", marginBottom: 4 }}>
+              🗑️ Clear Imported Books
+            </div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: "#6B4E32" }}>
+              Remove all books you imported from platforms. Built-in library books and your reading history are kept.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (window.confirm("Remove all imported books and clear the shelves? This cannot be undone.")) {
+                [
+                  "sk_user_books",
+                  "sk_connections",
+                  "sk_favorites_ebooks",
+                  "sk_favorites_audiobooks",
+                  "sk_statuses_ebooks",
+                  "sk_statuses_audiobooks",
+                  "sk_progress_ebooks",
+                  "sk_progress_audiobooks",
+                  "sk_dates_ebooks",
+                  "sk_dates_audiobooks",
+                  "sk_genre_overrides",
+                ].forEach(k => localStorage.removeItem(k));
+                setConnections({});
+                window.location.reload();
+              }
+            }}
+            style={{
+              padding: "10px 22px",
+              background: "transparent",
+              color: "#a00",
+              border: "1px solid #a00",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 14,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+          >
+            🗑️ Clear Now
+          </button>
+        </div>
 
         {/* eBook Platforms */}
         <div style={{ marginBottom: 40 }}>
           {sectionTitle("📚 eBook Platforms")}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
             {EBOOK_PLATFORMS.map((p) => (
-              <PlatformCard key={p.id} platform={p} connected={!!connections[p.id]} onConnect={connect} onDisconnect={disconnect} />
+              <PlatformCard key={p.id} platform={p} connected={!!connections[p.id]} onConnect={connect} onDisconnect={disconnect} onImportClick={setImportingPlatform} />
             ))}
           </div>
         </div>
@@ -1641,10 +3040,199 @@ function PlatformPage({ onClose }) {
           {sectionTitle("🎧 Audiobook Platforms")}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
             {AUDIO_PLATFORMS.map((p) => (
-              <PlatformCard key={p.id} platform={p} connected={!!connections[p.id]} onConnect={connect} onDisconnect={disconnect} />
+              <PlatformCard key={p.id} platform={p} connected={!!connections[p.id]} onConnect={connect} onDisconnect={disconnect} onImportClick={setImportingPlatform} />
             ))}
           </div>
         </div>
+      </div>
+
+      {importingPlatform && (
+        <ImportModal
+          platform={importingPlatform}
+          mediaType={mediaType}
+          onClose={() => setImportingPlatform(null)}
+          onImport={(newBooks) => {
+            const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+            const withIds = newBooks.map(b => ({ ...b, id: `${b.platform}-${Date.now()}-${Math.random()}` }));
+            localStorage.setItem("sk_user_books", JSON.stringify([...existing, ...withIds]));
+
+            // Save Goodreads reading status and dates
+            const statusKey = `sk_statuses_${mediaType}`;
+            const datesKey  = `sk_dates_${mediaType}`;
+            const statuses  = JSON.parse(localStorage.getItem(statusKey) || "{}");
+            const dates     = JSON.parse(localStorage.getItem(datesKey)  || "{}");
+
+            newBooks.forEach(b => {
+              if (!b.isbn) return;
+              if (b._status) statuses[b.isbn] = b._status;
+              if (b._dateRead) {
+                const d = new Date(b._dateRead);
+                if (!isNaN(d)) {
+                  dates[b.isbn] = { ...dates[b.isbn], endDate: d.toISOString() };
+                  if (b._status === "finished") dates[b.isbn].startDate = dates[b.isbn].startDate || d.toISOString();
+                }
+              }
+            });
+
+            localStorage.setItem(statusKey, JSON.stringify(statuses));
+            localStorage.setItem(datesKey,  JSON.stringify(dates));
+
+            setImportingPlatform(null);
+            alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${newBooks.some(b => b._status) ? '\n📊 Reading status also imported from Goodreads!' : ''}`);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SearchBar({ mediaType, onSelectBook }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [focused, setFocused] = useState(false);
+
+  const allBooks = (() => {
+    const base = Object.entries(library).flatMap(([genre, books]) =>
+      books.map(b => ({ ...b, genre }))
+    );
+    try {
+      const user = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      return [...base, ...user];
+    } catch { return base; }
+  })();
+
+  const handleChange = (e) => {
+    const q = e.target.value;
+    setQuery(q);
+    if (!q.trim()) { setResults([]); return; }
+    const lower = q.toLowerCase();
+    setResults(
+      allBooks.filter(b =>
+        b.title.toLowerCase().includes(lower) ||
+        b.author.toLowerCase().includes(lower)
+      ).slice(0, 8)
+    );
+  };
+
+  const handleSelect = (book) => {
+    onSelectBook(book);
+    setQuery("");
+    setResults([]);
+    setFocused(false);
+  };
+
+  const showDropdown = focused && results.length > 0;
+
+  return (
+    <div style={{ display: "flex", justifyContent: "center", marginBottom: 14, position: "relative", zIndex: 50 }}>
+      <div style={{ position: "relative", width: 420, maxWidth: "90vw" }}>
+        {/* Input row */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          background: "linear-gradient(to bottom, #fdf6e3, #f5e6c0)",
+          border: "1px solid #b8893a",
+          borderRadius: showDropdown ? "20px 20px 0 0" : 20,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.18), inset 0 1px 2px rgba(255,255,255,0.6)",
+          padding: "6px 14px",
+          transition: "border-radius 0.15s",
+        }}>
+          <span style={{ fontSize: 15, marginRight: 8, opacity: 0.6, color: "#5a3a1a", userSelect: "none" }}>🔍</span>
+          <input
+            type="text"
+            value={query}
+            onChange={handleChange}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 150)}
+            placeholder="Search titles or authors…"
+            style={{
+              flex: 1,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              fontSize: 14,
+              color: "#3A2A1A",
+              fontStyle: query ? "normal" : "italic",
+            }}
+          />
+          {query && (
+            <button
+              onMouseDown={() => { setQuery(""); setResults([]); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#8B5E3C", fontSize: 14, padding: 0, lineHeight: 1, opacity: 0.7 }}
+            >✕</button>
+          )}
+        </div>
+
+        {/* Dropdown */}
+        {showDropdown && (
+          <div style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            background: "linear-gradient(to bottom, #fdf6e3, #f5e6c0)",
+            border: "1px solid #b8893a",
+            borderTop: "1px solid #d4a84a",
+            borderRadius: "0 0 16px 16px",
+            boxShadow: "0 6px 16px rgba(0,0,0,0.22)",
+            overflow: "hidden",
+          }}>
+            {results.map((book, i) => (
+              <div
+                key={`${book.isbn}-${i}`}
+                onMouseDown={() => handleSelect(book)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 14px",
+                  cursor: "pointer",
+                  borderBottom: i < results.length - 1 ? "1px solid rgba(184,137,58,0.25)" : "none",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(184,137,58,0.15)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+              >
+                {book.isbn ? (
+                  <img
+                    src={`https://covers.openlibrary.org/b/isbn/${book.isbn}-S.jpg`}
+                    alt=""
+                    style={{ width: 28, height: 38, objectFit: "cover", borderRadius: 2, border: "1px solid #c9a96e", flexShrink: 0 }}
+                  />
+                ) : (
+                  <div style={{ width: 28, height: 38, background: "#d8c3a5", borderRadius: 2, flexShrink: 0 }} />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#3A2A1A",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>{book.title}</div>
+                  <div style={{
+                    fontFamily: "Georgia, serif",
+                    fontSize: 11,
+                    fontStyle: "italic",
+                    color: "#6B4E32",
+                  }}>{book.author}</div>
+                </div>
+                <div style={{
+                  fontFamily: "Georgia, serif",
+                  fontSize: 10,
+                  color: "#8B5E3C",
+                  flexShrink: 0,
+                  opacity: 0.8,
+                }}>
+                  {book.type === "audiobooks" ? "🎧" : "📚"} {book.genre}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1661,6 +3249,7 @@ export default function App() {
   const [showPlatforms, setShowPlatforms] = useState(false);
   const [hoverKnot, setHoverKnot] = useState(null); // "toggle" | "stats"
   const [sidebarHover, setSidebarHover] = useState(null);
+  const [searchBook, setSearchBook] = useState(null);
 
   const handleNestClick = (nestGenre) => {
     setGenre(nestGenre);
@@ -1711,7 +3300,7 @@ export default function App() {
       )}
 
       {/* PLATFORMS PAGE */}
-      {showPlatforms && <PlatformPage onClose={() => setShowPlatforms(false)} />}
+      {showPlatforms && <PlatformPage onClose={() => setShowPlatforms(false)} mediaType={mediaType} />}
 
       {/* HAMBURGER BUTTON */}
       <button
@@ -1840,6 +3429,36 @@ export default function App() {
         </div>
       </div>
 
+      {/* SEARCH RESULT MODAL */}
+      {searchBook && (
+        <BookModal
+          book={searchBook}
+          onClose={() => setSearchBook(null)}
+          favorites={(() => { try { return { ...JSON.parse(localStorage.getItem("sk_favorites_ebooks") || "{}"), ...JSON.parse(localStorage.getItem("sk_favorites_audiobooks") || "{}") }; } catch { return {}; } })()}
+          setFavorites={(updater) => {
+            const key = `sk_favorites_${searchBook.type || mediaType}`;
+            const prev = (() => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } })();
+            const next = typeof updater === "function" ? updater(prev) : updater;
+            localStorage.setItem(key, JSON.stringify(next));
+          }}
+          statuses={(() => { try { return { ...JSON.parse(localStorage.getItem("sk_statuses_ebooks") || "{}"), ...JSON.parse(localStorage.getItem("sk_statuses_audiobooks") || "{}") }; } catch { return {}; } })()}
+          setStatuses={(updater) => {
+            const key = `sk_statuses_${searchBook.type || mediaType}`;
+            const prev = (() => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } })();
+            const next = typeof updater === "function" ? updater(prev) : updater;
+            localStorage.setItem(key, JSON.stringify(next));
+          }}
+          progress={(() => { try { return { ...JSON.parse(localStorage.getItem("sk_progress_ebooks") || "{}"), ...JSON.parse(localStorage.getItem("sk_progress_audiobooks") || "{}") }; } catch { return {}; } })()}
+          setProgress={(updater) => {
+            const key = `sk_progress_${searchBook.type || mediaType}`;
+            const prev = (() => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } })();
+            const next = typeof updater === "function" ? updater(prev) : updater;
+            localStorage.setItem(key, JSON.stringify(next));
+          }}
+          mediaType={searchBook.type || mediaType}
+        />
+      )}
+
       {/* BOOKSHELF PAGE */}
       {genre && (
         <BookShelf
@@ -1887,6 +3506,9 @@ export default function App() {
             A living library that grows with each story
           </p>
         </div>
+
+        {/* SEARCH BAR */}
+        <SearchBar mediaType={mediaType} onSelectBook={setSearchBook} />
 
         {/* TREE */}
         <div style={{ display: "flex", justifyContent: "center" }}>
