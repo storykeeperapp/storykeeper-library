@@ -355,7 +355,8 @@ function BookCover({ isbn, coverUrl, title, style }) {
 
 function CDCase({ book, index, rowIndex, onClick }) {
   const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
-  const height = 120 + ((rowIndex * 6 + index) % 4) * 10;
+  const [imgError, setImgError] = useState(false);
+  const hasCover = book.coverUrl && !imgError;
 
   return (
     <div
@@ -363,100 +364,72 @@ function CDCase({ book, index, rowIndex, onClick }) {
       onClick={() => onClick && onClick(book)}
       style={{
         width: 90,
-        height,
-        display: "flex",
-        flexDirection: "row",
+        height: 90,
         position: "relative",
-        borderRadius: "3px 4px 4px 3px",
-        boxShadow: "4px 0 12px rgba(0,0,0,0.7), -1px 0 4px rgba(0,0,0,0.4)",
-        overflow: "hidden",
         flexShrink: 0,
         alignSelf: "flex-end",
         cursor: "pointer",
-        background: `linear-gradient(to right, ${c.dark} 0%, ${c.base} 15%, ${c.mid} 50%, ${c.base} 85%, ${c.dark} 100%)`,
+        borderRadius: 2,
+        boxShadow: "3px 3px 10px rgba(0,0,0,0.6), -1px 0 3px rgba(0,0,0,0.3)",
+        background: "#111",
       }}
     >
-      {/* Leather texture */}
-      <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(175deg, transparent 0px, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px)", pointerEvents: "none" }} />
-
-      {/* Raised bands */}
-      {[12, 28, 72, 88].map((pct, i) => (
-        <div key={i} style={{
-          position: "absolute",
-          top: `${pct}%`, left: 0, right: 0, height: 7,
-          background: `linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, ${c.base} 20%, rgba(255,255,255,0.08) 50%, ${c.mid} 80%, rgba(0,0,0,0.3) 100%)`,
-          boxShadow: "0 1px 2px rgba(0,0,0,0.4), 0 -1px 1px rgba(0,0,0,0.3)",
-          zIndex: 2,
-        }} />
-      ))}
-
-      {/* Top flourish */}
-      <div style={{ position: "absolute", top: "14%", left: "50%", transform: "translateX(-50%)", color: c.text, fontSize: 9, opacity: 0.7, zIndex: 3, lineHeight: 1, textShadow: "0 0 3px rgba(0,0,0,0.5)" }}>❧</div>
-
-      {/* Headphones icon — center */}
+      {/* Outer jewel case shell */}
       <div style={{
-        position: "absolute", top: "38%", left: "50%",
-        transform: "translate(-50%, -50%)",
-        fontSize: 22,
-        zIndex: 3,
-        filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.8))",
-        lineHeight: 1,
-        opacity: 0.85,
-      }}>🎧</div>
+        position: "absolute", inset: 0,
+        borderRadius: 2,
+        border: "2px solid #2a2a2a",
+        background: "linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 50%, rgba(0,0,0,0.3) 100%)",
+        zIndex: 4,
+        pointerEvents: "none",
+      }} />
 
-      {/* Title */}
-      <div style={{
-        position: "absolute",
-        top: "50%", bottom: "12%",
-        left: 4, right: 4,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 3,
-      }}>
+      {/* Cover art or fallback */}
+      {hasCover ? (
+        <img
+          src={book.coverUrl}
+          alt={book.title}
+          onError={() => setImgError(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 1, display: "block" }}
+        />
+      ) : (
         <div style={{
-          writingMode: "vertical-rl",
-          transform: "rotate(180deg)",
-          color: c.text,
-          fontFamily: '"Palatino Linotype", Palatino, serif',
-          fontWeight: 700,
-          fontSize: 10,
-          letterSpacing: "1px",
-          textAlign: "center",
-          textShadow: "0 0 8px rgba(0,0,0,0.8), 0 1px 2px rgba(0,0,0,0.9)",
-          lineHeight: 1.3,
-          overflow: "hidden",
-          maxHeight: "100%",
-          opacity: 0.92,
+          width: "100%", height: "100%",
+          background: `linear-gradient(145deg, ${c.dark} 0%, ${c.base} 40%, ${c.mid} 70%, ${c.dark} 100%)`,
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          padding: 6, boxSizing: "border-box",
         }}>
-          {book.title}
+          <div style={{ fontSize: 18, marginBottom: 4, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.8))" }}>🎧</div>
+          <div style={{
+            color: c.text, fontFamily: '"Palatino Linotype", Palatino, serif',
+            fontWeight: 700, fontSize: 9, textAlign: "center",
+            textShadow: "0 1px 3px rgba(0,0,0,0.9)", lineHeight: 1.3,
+            overflow: "hidden", maxHeight: 42,
+          }}>{book.title}</div>
+          <div style={{
+            color: c.text, fontFamily: "Georgia, serif",
+            fontStyle: "italic", fontSize: 7, textAlign: "center",
+            opacity: 0.7, marginTop: 3, overflow: "hidden", maxHeight: 18,
+          }}>{book.author}</div>
         </div>
-      </div>
+      )}
 
-      {/* Author */}
+      {/* Spine strip on left edge */}
       <div style={{
-        position: "absolute", bottom: "14%", left: 0, right: 0,
-        display: "flex", justifyContent: "center",
-        zIndex: 3,
-      }}>
-        <div style={{
-          writingMode: "vertical-rl",
-          transform: "rotate(180deg)",
-          color: c.text,
-          fontFamily: '"Palatino Linotype", Palatino, serif',
-          fontStyle: "italic",
-          fontSize: 8,
-          opacity: 0.65,
-          textShadow: "0 1px 3px rgba(0,0,0,0.8)",
-          overflow: "hidden",
-          maxHeight: 55,
-        }}>
-          {book.author}
-        </div>
-      </div>
+        position: "absolute", top: 0, left: 0, bottom: 0, width: 8,
+        background: "linear-gradient(to right, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.2) 100%)",
+        borderRadius: "2px 0 0 2px",
+        zIndex: 3, pointerEvents: "none",
+      }} />
 
-      {/* Spine binding edge */}
-      <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: 5, background: "linear-gradient(to right, rgba(0,0,0,0.4), rgba(255,255,255,0.04) 60%, transparent)", borderRadius: "3px 0 0 3px", pointerEvents: "none", zIndex: 4 }} />
-      {/* Right shadow */}
-      <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: 5, background: "linear-gradient(to left, rgba(0,0,0,0.35), transparent)", pointerEvents: "none" }} />
+      {/* Gloss sheen */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, height: "40%",
+        background: "linear-gradient(to bottom, rgba(255,255,255,0.15) 0%, transparent 100%)",
+        borderRadius: "2px 2px 0 0",
+        zIndex: 5, pointerEvents: "none",
+      }} />
     </div>
   );
 }
@@ -1110,8 +1083,9 @@ function LyingBookSpine({ book, index, rowIndex, onClick }) {
   );
 }
 
-function StackedBooks({ books, rowIndex, startColorIndex, onBookClick }) {
-  const count = books && books.length > 0 ? Math.min(books.length, 5) : 4 + (rowIndex % 2);
+function StackedBooks({ books, rowIndex, startColorIndex, onBookClick, mediaType }) {
+  const count = 4;
+  const isAudio = mediaType === "audiobooks";
 
   return (
     <div style={{
@@ -1120,24 +1094,20 @@ function StackedBooks({ books, rowIndex, startColorIndex, onBookClick }) {
       display: "flex",
       flexDirection: "column",
       alignItems: "flex-start",
-      gap: 2,
+      gap: isAudio ? 3 : 2,
       marginLeft: 12,
       marginRight: 12,
     }}>
       {Array.from({ length: count }, (_, i) => {
         const book = books && books[i];
         if (book) {
-          return <LyingBookSpine key={i} book={book} index={startColorIndex + i} rowIndex={rowIndex} onClick={onBookClick} />;
+          return isAudio
+            ? <CDCase key={i} book={book} index={startColorIndex + i} rowIndex={rowIndex} onClick={onBookClick} />
+            : <LyingBookSpine key={i} book={book} index={startColorIndex + i} rowIndex={rowIndex} onClick={onBookClick} />;
         }
-        const c = SPINE_COLORS[(startColorIndex + i) % SPINE_COLORS.length];
-        return (
-          <div key={i} style={{
-            width: 160 + (i % 4) * 12, height: 34,
-            background: `linear-gradient(to right, ${c.dark}, ${c.base} 20%, ${c.mid} 50%, ${c.base} 80%, ${c.dark})`,
-            borderRadius: "2px 2px 3px 3px",
-            boxShadow: "0 3px 8px rgba(0,0,0,0.5)",
-          }} />
-        );
+        return isAudio
+          ? <div key={i} style={{ width: 90, height: 90, flexShrink: 0 }} />
+          : <div key={i} style={{ width: 160 + (i % 4) * 12, height: 34, flexShrink: 0 }} />;
       })}
       <div style={{ width: "85%", height: 4, alignSelf: "center", background: "radial-gradient(ellipse, rgba(0,0,0,0.25) 0%, transparent 100%)", marginTop: 1 }} />
     </div>
@@ -1182,9 +1152,12 @@ function BookShelf({ genre, mediaType, onClose }) {
 
   // Split books into rows of 12
   const rows = [];
-  for (let i = 0; i < books.length; i += 12) {
-    rows.push(books.slice(i, i + 12));
+  const chunkSize = mediaType === "audiobooks" ? 16 : 12;
+  const minRows = 3;
+  for (let i = 0; i < books.length; i += chunkSize) {
+    rows.push(books.slice(i, i + chunkSize));
   }
+  while (rows.length < minRows) rows.push([]);
 
   return (
     <div
@@ -1212,7 +1185,7 @@ function BookShelf({ genre, mediaType, onClose }) {
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
           color: "#3A2A1A",
           fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
@@ -1248,106 +1221,123 @@ function BookShelf({ genre, mediaType, onClose }) {
       </div>
 
       {/* Bookshelves */}
-      <div style={{ maxWidth: 1050, margin: "0 auto", paddingRight: 160 }}>
+      <div style={{ maxWidth: 1050, margin: "0 auto", paddingRight: mediaType === "audiobooks" ? 0 : 160 }}>
         {rows.map((row, rowIndex) => {
-          const layout = rowIndex % 3; // 0=upright-left+stack-right, 1=stack-left+upright-right, 2=sandwich
-          const plantLeft = SHELF_PLANT_POSITIONS[rowIndex % SHELF_PLANT_POSITIONS.length];
+          if (mediaType === "audiobooks") {
+            // Alternate plant position: left, right, middle
+            const audioPlantConfigs = [
+              { x: 870, skipIdx: 8 }, // even rows: plant on right
+              { x: 50,  skipIdx: 0 }, // odd rows: plant on left
+            ];
+            const { x: plantPx, skipIdx } = audioPlantConfigs[rowIndex % 2];
 
-          // Split books for each layout
-          const third = Math.max(2, Math.floor(row.length / 3));
-          const half = Math.max(2, Math.floor(row.length / 2));
+            const renderAudioRow = (source, startIdx, rowMultiplier) => {
+              const slots = [];
+              let bookIdx = 0;
+              for (let slot = 0; slot < 9; slot++) {
+                if (slot === skipIdx) {
+                  slots.push(<div key={`spacer-${slot}`} style={{ width: 96, flexShrink: 0 }} />);
+                } else {
+                  const book = source[bookIdx++];
+                  if (book) {
+                    slots.push(<CDCase key={slot} book={book} index={startIdx + slot} rowIndex={rowMultiplier} onClick={setSelectedBook} />);
+                  } else {
+                    slots.push(<div key={slot} style={{ width: 90, height: 90, flexShrink: 0 }} />);
+                  }
+                }
+              }
+              return slots;
+            };
 
-          const leftBooks   = layout === 2 ? row.slice(0, third)           : (layout === 0 ? row.slice(0, -Math.min(4, row.length)) : []);
-          const stackBooks  = layout === 2 ? row.slice(third, third * 2)   : row.slice(-Math.min(4, row.length));
-          const rightBooks  = layout === 2 ? row.slice(third * 2)          : (layout === 0 ? [] : row.slice(0, -Math.min(4, row.length)));
-          const hasStack    = row.length >= 6;
+            return (
+              <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
+                {/* Top row of CDs */}
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "0 16px", flexWrap: "nowrap", overflow: "hidden", minHeight: 100 }}>
+                  {renderAudioRow(row.slice(0, 8), 0, rowIndex * 2)}
+                </div>
+                {/* Shelf between rows */}
+                <img src="/shelf2.jpg" alt="shelf" style={{ width: 920, height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }} />
+                <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", width: 920 }} />
 
-          const renderUpright = (books, startIdx) => books.map((book, i) => (
-            mediaType === "audiobooks"
-              ? <CDCase key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
-              : <BookSpine key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
-          ));
+                {/* Bottom row of CDs */}
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "0 16px", flexWrap: "nowrap", overflow: "hidden", minHeight: 100 }}>
+                  {renderAudioRow(row.slice(8, 16), 8, rowIndex * 2 + 1)}
+                </div>
 
-          // Calculate plant x based on actual book widths so it lands in the gap
-          const bookW = mediaType === "audiobooks" ? 94 : 62;
-          const stackW = 300;
-          const padL = 24;
-          const containerW = 890;
-          let plantPx;
-          if (layout === 0) {
-            plantPx = padL + leftBooks.length * bookW + 62;
-          } else if (layout === 1) {
-            plantPx = padL + stackW + 880;
-          } else {
-            plantPx = padL + leftBooks.length * bookW + 45;
+                {/* Plant */}
+                <div style={{ position: "absolute", bottom: -90, left: plantPx, transform: "translateX(-50%)", zIndex: 15, pointerEvents: "none" }}>
+                  <ShelfPlant plantIndex={rowIndex} />
+                </div>
+
+                {/* Shelf below */}
+                <img src="/shelf2.jpg" alt="shelf" style={{ width: 920, height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }} />
+                <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 32 }} />
+              </div>
+            );
           }
-          const plantX = Math.min(plantPx, 950) + "px";
-          // Per-layout bottom offset (lower value = plant sits lower)
-          const plantBottom = layout === 0 ? -90 : layout === 1 ? -100 : -110;
+
+          const layout = rowIndex % 3;
+
+          // Fixed slot counts per layout — never changes regardless of book count
+          const UPRIGHT_COUNT = 8;
+          const STACK_COUNT = 4;
+
+          const leftBooks  = layout === 2 ? row.slice(0, STACK_COUNT)                        : (layout === 0 ? row.slice(0, UPRIGHT_COUNT) : []);
+          const stackBooks = layout === 2 ? row.slice(STACK_COUNT, STACK_COUNT * 2)          : row.slice(UPRIGHT_COUNT, UPRIGHT_COUNT + STACK_COUNT);
+          const rightBooks = layout === 2 ? row.slice(STACK_COUNT * 2, STACK_COUNT * 3)      : (layout === 0 ? [] : row.slice(0, UPRIGHT_COUNT));
+
+          // Fixed plant positions based on full-capacity layout
+          const FIXED_PLANT = {
+            0: { x: 582, bottom: -90  }, // 8 upright left, plant in gap, stack right
+            1: { x: 950, bottom: -100 }, // stack left, plant far right
+            2: { x: 317, bottom: -110 }, // 4 upright left, plant in gap, stack + 4 right
+          };
+          const { x: plantPxFixed, bottom: plantBottom } = FIXED_PLANT[layout];
+          const plantX = plantPxFixed + "px";
+
+          const renderUpright = (books, count, startIdx) =>
+            Array.from({ length: count }, (_, i) => {
+              const book = books[i];
+              return book
+                ? <BookSpine key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
+                : <div key={i} style={{ width: 58, height: 200, flexShrink: 0 }} />;
+            });
 
           return (
             <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
-
-              {/* Books row — overflow hidden, sits in front of plant pot */}
-              <div style={{
-                display: "flex",
-                alignItems: "flex-end",
-                justifyContent: "flex-start",
-                gap: 4,
-                padding: "0 12px",
-                flexWrap: "nowrap",
-                overflow: "hidden",
-                minHeight: 230,
-              }}>
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "flex-start", gap: 4, padding: "0 12px", flexWrap: "nowrap", overflow: "hidden", minHeight: 230 }}>
                 {layout === 0 && <>
-                  {renderUpright(leftBooks, 0)}
-                  {hasStack && <div style={{ marginLeft: "auto", marginRight: 60 }}>
-                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
-                  </div>}
-                </>}
-
-                {layout === 1 && <>
-                  {hasStack && <div style={{ marginRight: 8 }}>
-                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={rightBooks.length} onBookClick={setSelectedBook} />
-                  </div>}
-                  <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginRight: 60 }}>
-                    {renderUpright(rightBooks, 0)}
+                  {renderUpright(leftBooks, UPRIGHT_COUNT, 0)}
+                  <div style={{ marginLeft: "auto", marginRight: 60 }}>
+                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={UPRIGHT_COUNT} onBookClick={setSelectedBook} mediaType={mediaType} />
                   </div>
                 </>}
-
+                {layout === 1 && <>
+                  <div style={{ marginRight: 8 }}>
+                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={0} onBookClick={setSelectedBook} mediaType={mediaType} />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginRight: 60 }}>
+                    {renderUpright(rightBooks, UPRIGHT_COUNT, STACK_COUNT)}
+                  </div>
+                </>}
                 {layout === 2 && <>
                   <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>
-                    {renderUpright(leftBooks, 0)}
+                    {renderUpright(leftBooks, STACK_COUNT, 0)}
                   </div>
-                  {hasStack && <div style={{ marginLeft: "auto" }}>
-                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
-                  </div>}
+                  <div style={{ marginLeft: "auto" }}>
+                    <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={STACK_COUNT} onBookClick={setSelectedBook} mediaType={mediaType} />
+                  </div>
                   <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginLeft: 16, marginRight: 60 }}>
-                    {renderUpright(rightBooks, leftBooks.length + stackBooks.length)}
+                    {renderUpright(rightBooks, STACK_COUNT, STACK_COUNT * 2)}
                   </div>
                 </>}
               </div>
 
-              {/* Plant — absolutely positioned so it can overflow upward freely */}
-              <div style={{
-                position: "absolute",
-                bottom: plantBottom,
-                left: plantX,
-                transform: "translateX(-50%)",
-                zIndex: 15,
-                pointerEvents: "none",
-              }}>
+              <div style={{ position: "absolute", bottom: plantBottom, left: plantX, transform: "translateX(-50%)", zIndex: 15, pointerEvents: "none" }}>
                 <ShelfPlant plantIndex={rowIndex} />
               </div>
 
-              {/* Shelf photo */}
-              <img
-                src="/shelf2.jpg"
-                alt="shelf"
-                style={{ width: "100%", height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }}
-              />
-
-              {/* Shelf shadow + spacing */}
+              <img src="/shelf2.jpg" alt="shelf" style={{ width: "100%", height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }} />
               <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 32 }} />
             </div>
           );
@@ -1453,7 +1443,7 @@ function FavoritesShelf({ onClose }) {
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
           color: "#3A2A1A",
           fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
@@ -1538,12 +1528,12 @@ function FavoritesShelf({ onClose }) {
                   {layout === 0 && <>
                     {renderUpright(leftBooks, 0)}
                     {hasStack && <div style={{ marginLeft: "auto", marginRight: 60 }}>
-                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
+                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} mediaType={mediaType} />
                     </div>}
                   </>}
                   {layout === 1 && <>
                     {hasStack && <div style={{ marginRight: 8 }}>
-                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={rightBooks.length} onBookClick={setSelectedBook} />
+                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={rightBooks.length} onBookClick={setSelectedBook} mediaType={mediaType} />
                     </div>}
                     <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginRight: 60 }}>
                       {renderUpright(rightBooks, 0)}
@@ -1552,7 +1542,7 @@ function FavoritesShelf({ onClose }) {
                   {layout === 2 && <>
                     <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>{renderUpright(leftBooks, 0)}</div>
                     {hasStack && <div style={{ marginLeft: "auto" }}>
-                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} />
+                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} mediaType={mediaType} />
                     </div>}
                     <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginLeft: 16, marginRight: 60 }}>{renderUpright(rightBooks, leftBooks.length + stackBooks.length)}</div>
                   </>}
@@ -1702,7 +1692,7 @@ function StatsPage({ onClose, mediaType }) {
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
           color: "#3A2A1A",
           fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
@@ -2043,7 +2033,7 @@ function detectGenreFromGoodreads(bookshelves, exclusiveShelf) {
 }
 
 function ImportModal({ platform, mediaType, onClose, onImport }) {
-  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible"];
+  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp"];
   const showCSV = csvPlatforms.includes(platform.id);
   const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
 
@@ -2051,6 +2041,8 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
   const [csvBooks, setCsvBooks] = useState([]);
   const [csvSkipped, setCsvSkipped] = useState(0);
   const [csvGenres, setCsvGenres] = useState({});
+  const [csvEnriching, setCsvEnriching] = useState(false);
+  const [csvEnrichProgress, setCsvEnrichProgress] = useState(null);
 
   // Bulk paste state
   const [bulkText, setBulkText] = useState("");
@@ -2131,7 +2123,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const rows = parseCSV(ev.target.result);
       const isGoodreads = platform.id === "goodreads";
 
@@ -2184,6 +2176,35 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
       const genreMap = {};
       books.forEach(b => { genreMap[b._csvIdx] = b.shelfGenre || "Fantasy"; });
       setCsvGenres(genreMap);
+
+      if (!isGoodreads && books.length > 0) {
+        setCsvEnriching(true);
+        setCsvEnrichProgress({ done: 0, total: books.length });
+        const updatedGenres = { ...genreMap };
+        const enrichedBooks = books.map(b => ({ ...b }));
+        for (let i = 0; i < books.length; i++) {
+          const b = books[i];
+          try {
+            const q = encodeURIComponent(`${b.title} ${b.author}`);
+            const res = await fetch(`https://openlibrary.org/search.json?q=${q}&limit=1&fields=subject,cover_i,first_sentence`);
+            const data = await res.json();
+            const doc = data.docs?.[0];
+            if (doc) {
+              const subjects = doc.subject || [];
+              const genre = detectGenre(subjects);
+              if (genre) updatedGenres[b._csvIdx] = genre;
+              if (doc.cover_i) enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`;
+              const desc = doc.first_sentence?.value || doc.first_sentence || "";
+              if (desc && typeof desc === "string") enrichedBooks[i].description = desc;
+            }
+          } catch { /* leave defaults */ }
+          setCsvEnrichProgress({ done: i + 1, total: books.length });
+          setCsvGenres({ ...updatedGenres });
+          setCsvBooks([...enrichedBooks]);
+        }
+        setCsvEnriching(false);
+        setCsvEnrichProgress(null);
+      }
     };
     reader.readAsText(file);
   };
@@ -2263,11 +2284,11 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
       title: b.title,
       author: b.author,
       isbn: b.isbn || "",
-      coverUrl: "",
+      coverUrl: b.coverUrl || "",
       type: mediaType,
       genre: csvGenres[b._csvIdx] || "Fantasy",
       platform: platform.id,
-      description: "",
+      description: b.description || "",
       // Goodreads extras passed through for status/date handling
       _status: isGoodreads ? b.status : null,
       _dateRead: isGoodreads ? b.dateRead : null,
@@ -2308,13 +2329,52 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
     </select>
   );
 
-  const csvInstructions = platform.id === "kindle"
-    ? 'Go to amazon.com → Account → Manage Your Content & Devices → the "..." menu → Export library'
-    : platform.id === "kobo"
-    ? 'Go to kobo.com → My Books → Export'
-    : platform.id === "audible"
-    ? 'Install the free "Audible Library Exporter" Chrome extension → visit audible.com/library → click the extension icon → Download CSV'
-    : 'Go to goodreads.com → My Books → Import/Export → Export Library (exports a CSV with all your books, shelves & reading status)';
+  const PLATFORM_CONFIG = {
+    kindle:     { url: "https://www.amazon.com/hz/mycd/myx#/home/content/booksAll/dateDsc/", step1: 'Click the "⋯" menu at the top of your library, then choose "Export library" to download a CSV.' },
+    kobo:       { url: "https://www.kobo.com/ww/en/account/books", step1: 'Go to My Books, click "Export" in the top right to download your library CSV.' },
+    goodreads:  { url: "https://www.goodreads.com/review/import", step1: 'Scroll down to "Export Library" and click the export button. A CSV file will download.' },
+    audible:    { url: "https://www.audible.com/library/titles", step1: 'Install the free "Audible Library Exporter" Chrome extension, then visit your library and click the extension icon to download a CSV.' },
+    chirp:      { url: "https://www.chirpbooks.com/library", step1: 'Open DevTools (F12 or Cmd+Option+J), go to the Console tab, paste the script below, and press Enter. A CSV will download automatically.' },
+  };
+  const platformConfig = PLATFORM_CONFIG[platform.id] || null;
+
+  const chirpScript = `async function exportChirp() {
+  const seen = new Map();
+  async function collectPage() {
+    await new Promise(r => setTimeout(r, 2500));
+    document.querySelectorAll('img[alt^="Book cover for"]').forEach(img => {
+      const match = img.alt.match(/^Book cover for (.+?) by (.+)$/);
+      if (match) seen.set(match[1], match[2]);
+    });
+    console.log('Collected ' + seen.size + ' books so far');
+  }
+  await collectPage();
+  for (let page = 2; page <= 10; page++) {
+    const nextBtn = [...document.querySelectorAll('a, button')].find(el =>
+      el.href?.includes('page=' + page) || el.innerText?.trim() === String(page)
+    );
+    if (!nextBtn) { console.log('Done.'); break; }
+    nextBtn.click();
+    await collectPage();
+  }
+  const books = [...seen.entries()];
+  const csv = ['title,author', ...books.map(([t, a]) =>
+    '"' + t.replace(/"/g, '""') + '","' + a.replace(/"/g, '""') + '"'
+  )].join('\\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'chirp_library.csv';
+  a.click();
+}
+exportChirp();`;
+
+  const [scriptCopied, setScriptCopied] = useState(false);
+  const copyScript = () => {
+    navigator.clipboard.writeText(chirpScript).then(() => {
+      setScriptCopied(true);
+      setTimeout(() => setScriptCopied(false), 2000);
+    });
+  };
 
   return (
     <div
@@ -2357,135 +2417,157 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
           {platform.emoji} {platform.name} — Import Library
         </h2>
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-          {showCSV && <button style={tabBtnStyle("csv")} onClick={() => setActiveTab("csv")}>📁 Upload CSV</button>}
-          <button style={tabBtnStyle("bulk")} onClick={() => setActiveTab("bulk")}>📋 Paste Titles</button>
-          <button style={tabBtnStyle("search")} onClick={() => setActiveTab("search")}>🔍 Search &amp; Add</button>
+        {/* CSV platform: step-by-step flow */}
+        {showCSV && platformConfig && (
+          <div style={{ marginBottom: 20 }}>
+            {/* Step 1 */}
+            <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
+                Step 1 — Open {platform.name}
+              </div>
+              <p style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", margin: "0 0 10px 0" }}>
+                {platformConfig.step1}
+              </p>
+              <a
+                href={platformConfig.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: "inline-block", padding: "7px 16px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, textDecoration: "none" }}
+              >
+                🔗 Open {platform.name} →
+              </a>
+            </div>
+
+            {/* Chirp script step */}
+            {platform.id === "chirp" && (
+              <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
+                  Step 2 — Run the Export Script
+                </div>
+                <p style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", margin: "0 0 8px 0" }}>
+                  Copy the script below, paste it into the Console tab, and press Enter. It will click through your pages and download a CSV automatically.
+                </p>
+                <pre style={{ background: "#2A1A0A", color: "#C9A96E", fontSize: 10, padding: 10, borderRadius: 6, overflowX: "auto", marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflowY: "auto" }}>{chirpScript}</pre>
+                <button
+                  onClick={copyScript}
+                  style={{ padding: "6px 14px", background: scriptCopied ? "#2d6a2d" : "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12 }}
+                >
+                  {scriptCopied ? "✓ Copied!" : "📋 Copy Script"}
+                </button>
+              </div>
+            )}
+
+            {/* Step 2/3: Upload */}
+            <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
+                {platform.id === "chirp" ? "Step 3" : "Step 2"} — Upload Your CSV
+              </div>
+              <label style={{ display: "inline-block", padding: "8px 16px", background: "#3A2A1A", color: "#F8F1E4", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                📁 Choose CSV File
+                <input type="file" accept=".csv" onChange={handleCSVFile} style={{ display: "none" }} />
+              </label>
+
+              {csvBooks.length > 0 && (
+                <>
+                  <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginBottom: 8 }}>
+                    Found {csvBooks.length} book{csvBooks.length !== 1 ? "s" : ""}{csvSkipped > 0 ? ` · ${csvSkipped} duplicate${csvSkipped !== 1 ? "s" : ""} skipped` : ""}.
+                  </p>
+                  {csvEnriching && csvEnrichProgress && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 4 }}>
+                        🔍 Detecting genres… {csvEnrichProgress.done} / {csvEnrichProgress.total}
+                      </div>
+                      <div style={{ background: "#D8C3A5", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                        <div style={{ background: "#8B5E3C", height: "100%", width: `${(csvEnrichProgress.done / csvEnrichProgress.total) * 100}%`, transition: "width 0.3s" }} />
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
+                    {csvBooks.map(b => (
+                      <div key={b._csvIdx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                          <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
+                        </div>
+                        {genreSelect(csvGenres[b._csvIdx] || "Fantasy", (val) => setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })))}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleConfirmCSV}
+                    disabled={csvEnriching}
+                    style={{ padding: "9px 20px", background: csvEnriching ? "#A08060" : "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: csvEnriching ? "not-allowed" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+                  >
+                    {csvEnriching ? "Detecting genres…" : `📥 Import ${csvBooks.length} Book${csvBooks.length !== 1 ? "s" : ""}`}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Divider for CSV platforms */}
+        {showCSV && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0" }}>
+            <div style={{ flex: 1, height: 1, background: "#D8C3A5" }} />
+            <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#8B5E3C", fontStyle: "italic" }}>or add books manually</span>
+            <div style={{ flex: 1, height: 1, background: "#D8C3A5" }} />
+          </div>
+        )}
+
+        {/* Paste Titles */}
+        <div style={{ marginBottom: 20 }}>
+          {!showCSV && (
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 10 }}>
+              Paste one book title per line — the app will look each one up automatically.
+            </p>
+          )}
+          <textarea
+            value={bulkText}
+            onChange={e => setBulkText(e.target.value)}
+            placeholder={"The Name of the Wind\nProject Hail Mary\nDune\n..."}
+            rows={showCSV ? 4 : 8}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", resize: "vertical", boxSizing: "border-box", marginBottom: 10 }}
+          />
+          <button
+            onClick={handleBulkSearch}
+            disabled={bulkSearching || !bulkText.trim()}
+            style={{ padding: "8px 18px", background: bulkSearching ? "#D8C3A5" : "#3A2A1A", color: bulkSearching ? "#6B4E32" : "#F8F1E4", border: "none", borderRadius: 6, cursor: bulkSearching ? "default" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}
+          >
+            {bulkSearching ? `Searching… (${bulkProgress?.done}/${bulkProgress?.total})` : "🔍 Search All Titles"}
+          </button>
+
+          {bulkPending.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginBottom: 8 }}>
+                Found {bulkPending.length} book{bulkPending.length !== 1 ? "s" : ""}. Confirm genres:
+              </p>
+              <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
+                {bulkPending.map(b => (
+                  <div key={b._pendingId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
+                    </div>
+                    <select value={bulkGenres[b._pendingId] || b.genre} onChange={e => setBulkGenres(prev => ({ ...prev, [b._pendingId]: e.target.value }))} style={{ fontFamily: "Georgia, serif", fontSize: 12, padding: "3px 6px", borderRadius: 4, border: "1px solid #8B5E3C", background: "#F8F1E4", color: "#3A2A1A" }}>
+                      {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <button onClick={handleConfirmBulk} style={{ padding: "9px 20px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>
+                📥 Import {bulkPending.length} Book{bulkPending.length !== 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* CSV Tab */}
-        {activeTab === "csv" && showCSV && (
-          <div>
-            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#4B3A2A", marginBottom: 8 }}>
-              Export your library from {platform.name} and upload the CSV file below.
-            </p>
-            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 14 }}>
-              {csvInstructions}
-            </p>
-            <label style={{
-              display: "inline-block",
-              padding: "8px 16px",
-              background: "#3A2A1A",
-              color: "#F8F1E4",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontFamily: '"Palatino Linotype", Palatino, serif',
-              fontSize: 13,
-              marginBottom: 16,
-            }}>
-              📁 Choose CSV File
-              <input type="file" accept=".csv" onChange={handleCSVFile} style={{ display: "none" }} />
-            </label>
-
-            {csvBooks.length > 0 && (
-              <>
-                <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginBottom: 10 }}>
-                  Found {csvBooks.length} new book{csvBooks.length !== 1 ? "s" : ""}.{csvSkipped > 0 ? ` (${csvSkipped} duplicate${csvSkipped !== 1 ? "s" : ""} skipped)` : ""} Confirm genres:
-                </p>
-                <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 14 }}>
-                  {csvBooks.map(b => (
-                    <div key={b._csvIdx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
-                        <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
-                      </div>
-                      {genreSelect(csvGenres[b._csvIdx] || "Fantasy", (val) => setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })))}
-                    </div>
-                  ))}
-                </div>
-                <button
-                  onClick={handleConfirmCSV}
-                  style={{
-                    padding: "9px 20px",
-                    background: "#3A2A1A",
-                    color: "#F8F1E4",
-                    border: "none",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontFamily: '"Palatino Linotype", Palatino, serif',
-                    fontSize: 14,
-                    fontWeight: 700,
-                  }}
-                >
-                  📥 Import {csvBooks.length} Book{csvBooks.length !== 1 ? "s" : ""}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Bulk Paste Tab */}
-        {activeTab === "bulk" && (
-          <div>
-            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#4B3A2A", marginBottom: 4 }}>
-              Paste one book title per line. The app will search for each one automatically.
-            </p>
-            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 12 }}>
-              Tip for Audible users without the exporter: go to audible.com/library, copy your book titles from the page, and paste them here.
-            </p>
-            <textarea
-              value={bulkText}
-              onChange={e => setBulkText(e.target.value)}
-              placeholder={"The Name of the Wind\nProject Hail Mary\nDune\n..."}
-              rows={8}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", resize: "vertical", boxSizing: "border-box", marginBottom: 12 }}
-            />
-            <button
-              onClick={handleBulkSearch}
-              disabled={bulkSearching || !bulkText.trim()}
-              style={{ padding: "9px 20px", background: bulkSearching ? "#D8C3A5" : "#3A2A1A", color: bulkSearching ? "#6B4E32" : "#F8F1E4", border: "none", borderRadius: 6, cursor: bulkSearching ? "default" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, marginBottom: 16 }}
-            >
-              {bulkSearching ? `Searching… (${bulkProgress?.done}/${bulkProgress?.total})` : "🔍 Search All Titles"}
-            </button>
-
-            {bulkPending.length > 0 && (
-              <>
-                <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginBottom: 10 }}>
-                  Found {bulkPending.length} book{bulkPending.length !== 1 ? "s" : ""}. Confirm genres before importing:
-                </p>
-                <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 14 }}>
-                  {bulkPending.map(b => (
-                    <div key={b._pendingId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
-                        <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
-                      </div>
-                      <select
-                        value={bulkGenres[b._pendingId] || b.genre}
-                        onChange={e => setBulkGenres(prev => ({ ...prev, [b._pendingId]: e.target.value }))}
-                        style={{ fontFamily: "Georgia, serif", fontSize: 12, padding: "3px 6px", borderRadius: 4, border: "1px solid #8B5E3C", background: "#F8F1E4", color: "#3A2A1A" }}
-                      >
-                        {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  onClick={handleConfirmBulk}
-                  style={{ padding: "9px 20px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
-                >
-                  📥 Import {bulkPending.length} Book{bulkPending.length !== 1 ? "s" : ""}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Search Tab */}
-        {activeTab === "search" && (
-          <div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {/* Search */}
+        <div>
+          <p style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 10 }}>
+            Search for a specific book to add one at a time.
+          </p>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               <input
                 type="text"
                 placeholder="Search by title or ISBN..."
@@ -2616,7 +2698,6 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
               </div>
             )}
           </div>
-        )}
       </div>
     </div>
   );
@@ -2879,7 +2960,7 @@ function PlatformPage({ onClose, mediaType }) {
           borderRadius: "50px",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover',
+          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
           color: "#3A2A1A",
           fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
@@ -3049,7 +3130,7 @@ function PlatformPage({ onClose, mediaType }) {
       {importingPlatform && (
         <ImportModal
           platform={importingPlatform}
-          mediaType={mediaType}
+          mediaType={AUDIO_PLATFORMS.some(p => p.id === importingPlatform.id) ? "audiobooks" : "ebooks"}
           onClose={() => setImportingPlatform(null)}
           onImport={(newBooks) => {
             const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
@@ -3124,20 +3205,20 @@ function SearchBar({ mediaType, onSelectBook }) {
   const showDropdown = focused && results.length > 0;
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", marginBottom: 14, position: "relative", zIndex: 50 }}>
-      <div style={{ position: "relative", width: 420, maxWidth: "90vw" }}>
+    <div style={{ display: "flex", justifyContent: "center", marginBottom: 6, position: "relative", zIndex: 50 }}>
+      <div style={{ position: "relative", width: "100%", maxWidth: "90vw" }}>
         {/* Input row */}
         <div style={{
           display: "flex",
           alignItems: "center",
           background: "linear-gradient(to bottom, #fdf6e3, #f5e6c0)",
           border: "1px solid #b8893a",
-          borderRadius: showDropdown ? "20px 20px 0 0" : 20,
+          borderRadius: showDropdown ? "14px 14px 0 0" : 14,
           boxShadow: "0 2px 8px rgba(0,0,0,0.18), inset 0 1px 2px rgba(255,255,255,0.6)",
-          padding: "6px 14px",
+          padding: "4px 10px",
           transition: "border-radius 0.15s",
         }}>
-          <span style={{ fontSize: 15, marginRight: 8, opacity: 0.6, color: "#5a3a1a", userSelect: "none" }}>🔍</span>
+          <span style={{ fontSize: 12, marginRight: 6, opacity: 0.6, color: "#5a3a1a", userSelect: "none" }}>🔍</span>
           <input
             type="text"
             value={query}
@@ -3151,7 +3232,7 @@ function SearchBar({ mediaType, onSelectBook }) {
               border: "none",
               outline: "none",
               fontFamily: '"Palatino Linotype", Palatino, serif',
-              fontSize: 14,
+              fontSize: 12,
               color: "#3A2A1A",
               fontStyle: query ? "normal" : "italic",
             }}
@@ -3481,34 +3562,34 @@ export default function App() {
           backgroundSize: "cover",
           backgroundRepeat: "no-repeat",
           backgroundPosition: "center",
+          backgroundAttachment: "fixed",
+          backgroundAttachment: "fixed",
         }}
       >
         {/* HEADER */}
         <div style={{
           textAlign: "center",
-          marginBottom: 10,
-          paddingTop: 20,
-          background: "linear-gradient(to bottom, rgba(248,241,228,0.7), rgba(248,241,228,0))",
+          paddingTop: 10,
+          paddingBottom: 10,
         }}>
           <h1 style={{
             fontFamily: '"Palatino Linotype", Palatino, serif',
             color: "#3A2A1A",
             letterSpacing: "1.5px",
             fontSize: 36,
-            marginBottom: 6,
+            marginBottom: 4,
+            marginTop: 0,
           }}>
             📚 StoryKeeper 🎧
           </h1>
-          <p style={{ color: "#4B3A2A", marginTop: 0 }}>
+          <p style={{ color: "#4B3A2A", marginTop: 0, marginBottom: 2 }}>
             <em>Read here. Listen here. Live here.</em>
           </p>
-          <p style={{ color: "#2A1A0A", marginTop: 4, fontStyle: "italic", fontSize: 15, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+          <p style={{ color: "#2A1A0A", marginTop: 0, fontStyle: "italic", fontSize: 15, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
             A living library that grows with each story
           </p>
         </div>
-
-        {/* SEARCH BAR */}
-        <SearchBar mediaType={mediaType} onSelectBook={setSearchBook} />
+        <div style={{ padding: "0 20px" }}>
 
         {/* TREE */}
         <div style={{ display: "flex", justifyContent: "center" }}>
@@ -3734,6 +3815,11 @@ export default function App() {
           </div>
         </div>
 
+        {/* SEARCH BAR — roots of the tree */}
+        <div style={{ maxWidth: 340, margin: "0 auto", paddingBottom: 4 }}>
+          <SearchBar mediaType={mediaType} onSelectBook={setSearchBook} />
+        </div>
+
         {/* HINT + MODE BADGE near the roots */}
         <div style={{ textAlign: "center", marginTop: 8, paddingBottom: 20 }}>
           <p style={{ color: "#5a3e28", fontSize: 11, fontStyle: "italic", margin: 0 }}>
@@ -3753,6 +3839,7 @@ export default function App() {
             </span>
           </p>
         </div>
+        </div> {/* end padding wrapper */}
       </div>
     </>
   );
