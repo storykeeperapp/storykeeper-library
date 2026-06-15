@@ -7436,11 +7436,39 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   }, [autoOpenBook]);
   const [soundOn, setSoundOn] = useState(false);
   const audioRef = useRef(null);
+  const rainCtxRef = useRef(null);
+  const rainSourceRef = useRef(null);
+
+  const startRain = async () => {
+    if (rainCtxRef.current) return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    rainCtxRef.current = ctx;
+    const buf = await fetch("/sounds/rain-thunder.ogg").then(r => r.arrayBuffer());
+    const decoded = await ctx.decodeAudioData(buf);
+    const src = ctx.createBufferSource();
+    src.buffer = decoded; src.loop = true;
+    const gain = ctx.createGain(); gain.gain.value = 0.85;
+    src.connect(gain); gain.connect(ctx.destination);
+    src.start(0);
+    rainSourceRef.current = src;
+  };
+
+  const stopRain = () => {
+    try { rainSourceRef.current?.stop(); } catch (_) {}
+    rainCtxRef.current?.close();
+    rainCtxRef.current = null; rainSourceRef.current = null;
+  };
 
   const toggleSound = () => {
-    if (!audioRef.current) return;
-    if (soundOn) { audioRef.current.pause(); setSoundOn(false); }
-    else { audioRef.current.play().catch(() => {}); setSoundOn(true); }
+    if (soundOn) {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.volume = 0.08; }
+      stopRain();
+      setSoundOn(false);
+    } else {
+      if (audioRef.current) { audioRef.current.volume = 0.08; audioRef.current.play().catch(() => {}); }
+      startRain();
+      setSoundOn(true);
+    }
   };
 
   const loadMobileBooks = () => {
@@ -7710,7 +7738,29 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   });
   const longPressRef = useRef(null);
   const audioRef = useRef(null);
+  const rainCtxRef = useRef(null);
+  const rainSourceRef = useRef(null);
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+
+  const startRain = async () => {
+    if (rainCtxRef.current) return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    rainCtxRef.current = ctx;
+    const buf = await fetch("/sounds/rain-thunder.ogg").then(r => r.arrayBuffer());
+    const decoded = await ctx.decodeAudioData(buf);
+    const src = ctx.createBufferSource();
+    src.buffer = decoded; src.loop = true;
+    const gain = ctx.createGain(); gain.gain.value = 0.85;
+    src.connect(gain); gain.connect(ctx.destination);
+    src.start(0);
+    rainSourceRef.current = src;
+  };
+
+  const stopRain = () => {
+    try { rainSourceRef.current?.stop(); } catch (_) {}
+    rainCtxRef.current?.close();
+    rainCtxRef.current = null; rainSourceRef.current = null;
+  };
 
   const saveBotanical = (genre, src) => {
     const next = { ...botanicalOverrides, [genre]: src };
@@ -7747,19 +7797,27 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   const bookCount = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]").length; } catch { return 0; } })();
 
   const toggleSound = () => {
-    if (!audioRef.current) return;
-    if (soundOn) { audioRef.current.pause(); setSoundOn(false); }
-    else { audioRef.current.play().catch(() => {}); setSoundOn(true); }
+    if (soundOn) {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.volume = 0.08; }
+      stopRain();
+      setSoundOn(false);
+    } else {
+      if (audioRef.current) { audioRef.current.volume = 0.08; audioRef.current.play().catch(() => {}); }
+      startRain();
+      setSoundOn(true);
+    }
   };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#1A110A", overflow: "hidden" }}>
       {/* Full-screen background video */}
       <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-        <video autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }}
+        <video autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain", filter: "brightness(1)" }}
           src="/reading-nook.mp4" onError={e => e.target.style.display = "none"} />
         {/* Light vignette only at very top and bottom so video stays visible */}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(10,6,2,0.55) 0%, transparent 30%, transparent 55%, rgba(10,6,2,0.75) 100%)" }} />
+        {/* Lamp damper — softens the bright lamp on the left near the bottom */}
+        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 20% 15% at 12% 78%, rgba(0,0,0,0.45) 0%, transparent 100%)", pointerEvents: "none" }} />
       </div>
 
       <audio ref={audioRef} loop src="/sounds/fire.mp3" />
@@ -8204,14 +8262,14 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
     };
 
     const [rainBuf, fireBuf] = await Promise.all([
-      loadBuffer("/sounds/rain.mp3"),
+      loadBuffer("/sounds/rain-thunder.ogg"),
       loadBuffer("/sounds/fire.mp3"),
     ]);
 
     if (soundCancelRef.current) { ctx.close(); return; }
 
-    const rainGain = ctx.createGain(); rainGain.gain.value = 0.22; rainGain.connect(ctx.destination);
-    const fireGain = ctx.createGain(); fireGain.gain.value = 0.18; fireGain.connect(ctx.destination);
+    const rainGain = ctx.createGain(); rainGain.gain.value = 0.85; rainGain.connect(ctx.destination);
+    const fireGain = ctx.createGain(); fireGain.gain.value = 0.08; fireGain.connect(ctx.destination);
 
     const rainNode = ctx.createBufferSource(); rainNode.buffer = rainBuf; rainNode.loop = true; rainNode.connect(rainGain); rainNode.start();
     const fireNode = ctx.createBufferSource(); fireNode.buffer = fireBuf; fireNode.loop = true; fireNode.connect(fireGain); fireNode.start();
@@ -8342,10 +8400,13 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
           <div style={{ position: "relative", aspectRatio: "4/3", maxWidth: "100%", maxHeight: "100%", width: "100%" }}>
           <video
             autoPlay loop muted playsInline
-            style={{ width: "100%", height: "100%", objectFit: "fill", display: "block" }}
+            style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", filter: "brightness(1)" }}
           >
             <source src="/reading-nook.mp4" type="video/mp4" />
           </video>
+
+          {/* Lamp damper — softens the bright lamp on the left near the bottom */}
+          <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 20% 15% at 12% 78%, rgba(0,0,0,0.45) 0%, transparent 100%)", pointerEvents: "none", zIndex: 2 }} />
 
           {/* Dark corner vignette — hides blurry AI spines in lower right */}
           <div style={{
@@ -8642,6 +8703,249 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
   );
 }
 
+const SOCIAL_PLATFORMS = [
+  { id: "instagram", label: "Instagram", emoji: "📸", color: "#E1306C", prefix: "https://instagram.com/", placeholder: "@yourhandle" },
+  { id: "tiktok",    label: "TikTok",    emoji: "🎵", color: "#010101", prefix: "https://tiktok.com/@", placeholder: "@yourhandle" },
+  { id: "facebook",  label: "Facebook",  emoji: "📘", color: "#1877F2", prefix: "https://facebook.com/", placeholder: "your.name or page" },
+  { id: "x_twitter", label: "X",         emoji: "🐦", color: "#14171A", prefix: "https://x.com/", placeholder: "@yourhandle" },
+];
+
+function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookClub, onOpenSubscription }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
+  const canRead = ["storyteller", "librarian", "storykeeper"].includes(userTier);
+  const canPost = ["librarian", "storykeeper"].includes(userTier);
+  const hasBookClub = ["librarian", "storykeeper"].includes(userTier);
+
+  const [memberCounts, setMemberCounts]   = React.useState({});
+  const [socialLinks, setSocialLinks]     = React.useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
+  const [socialEditing, setSocialEditing] = React.useState(false);
+  const [socialInputs, setSocialInputs]   = React.useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
+  const [socialMsg, setSocialMsg]         = React.useState("");
+
+  React.useEffect(() => {
+    if (!supabaseRef.current || !authUser) return;
+    // Load member counts
+    ALL_GENRES.forEach(async (genre) => {
+      const { count } = await supabaseRef.current
+        .from("group_members").select("*", { count: "exact", head: true }).eq("genre", genre);
+      setMemberCounts(prev => ({ ...prev, [genre]: count || 0 }));
+    });
+    // Load social links
+    supabaseRef.current.from("user_social_links").select("*").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          const links = { instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" };
+          setSocialLinks(links);
+          setSocialInputs(links);
+        }
+      });
+    // Check for OAuth success/error in hash
+    const hash = window.location.hash;
+    if (hash.includes("x_connected=")) {
+      const match = hash.match(/x_connected=([^&]+)/);
+      if (match) {
+        const handle = decodeURIComponent(match[1]);
+        setSocialLinks(prev => ({ ...prev, x_twitter: handle }));
+        setSocialInputs(prev => ({ ...prev, x_twitter: handle }));
+        setSocialMsg("X account connected! ✓");
+        setTimeout(() => setSocialMsg(""), 3000);
+        window.location.hash = "#community";
+      }
+    }
+    if (hash.includes("x_error=")) {
+      setSocialMsg("Could not connect X account. Please try again.");
+      window.location.hash = "#community";
+    }
+  }, [authUser]);
+
+  const handleSaveSocial = async () => {
+    if (!authUser || !supabaseRef.current) return;
+    const sb = supabaseRef.current;
+    const { data: username } = await sb.from("usernames").select("username").eq("user_id", authUser.id).single();
+    const payload = {
+      user_id: authUser.id,
+      username: username?.username || "",
+      instagram: socialInputs.instagram.replace(/^@/, "").trim(),
+      tiktok: socialInputs.tiktok.replace(/^@/, "").trim(),
+      facebook: socialInputs.facebook.trim(),
+      x_twitter: socialInputs.x_twitter.replace(/^@/, "").trim(),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await sb.from("user_social_links").upsert(payload, { onConflict: "user_id" });
+    if (error) { setSocialMsg("Error saving."); return; }
+    setSocialLinks({ instagram: payload.instagram, tiktok: payload.tiktok, facebook: payload.facebook, x_twitter: payload.x_twitter });
+    setSocialEditing(false);
+    setSocialMsg("Saved! ✓");
+    setTimeout(() => setSocialMsg(""), 2000);
+  };
+
+  const cardStyle = { background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 12, padding: 14, marginBottom: 10 };
+  const inputStyle = { width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, boxSizing: "border-box", outline: "none" };
+  const btnStyle = (color, text = "#fff") => ({ background: color, border: "none", borderRadius: 8, padding: "8px 18px", color: text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer", fontWeight: 600 });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: th.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0" }}>‹</button>
+          <h2 style={{ margin: 0, fontSize: 22, color: th.text, flex: 1 }}>👥 Community</h2>
+        </div>
+        <p style={{ color: th.textSoft, fontSize: 14, marginBottom: 20, marginLeft: 32 }}>
+          Connect with other readers — join genre groups, discuss books, and join monthly book clubs.
+        </p>
+
+        {/* Tier notice */}
+        {!authUser ? (
+          <div style={{ ...cardStyle, textAlign: "center", padding: 24, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: th.textSoft }}>Sign in to join groups and participate in the community.</div>
+          </div>
+        ) : !canRead ? (
+          <div style={{ ...cardStyle, textAlign: "center", padding: 24, marginBottom: 20, background: th.accent + "12", borderColor: th.accent + "40" }}>
+            <div style={{ fontSize: 14, color: th.text, marginBottom: 8, fontWeight: 600 }}>Upgrade to access Community features</div>
+            <div style={{ fontSize: 13, color: th.textSoft, marginBottom: 12 }}>All paid plans include access to genre groups. Librarian and StoryKeeper plans include full posting access and Book Club.</div>
+            <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>View Plans</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+            <div style={{ background: canPost ? "#6B8C5E22" : th.bgMuted, border: `1px solid ${canPost ? "#6B8C5E" : th.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: canPost ? "#3A5C2E" : th.textSoft }}>
+              {canPost ? "✓ Full group access" : "👁 Read-only access"}
+            </div>
+            <div style={{ background: hasBookClub ? "#8C5E6B22" : th.bgMuted, border: `1px solid ${hasBookClub ? "#8C5E6B" : th.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: hasBookClub ? "#5C2E3A" : th.textSoft }}>
+              {hasBookClub ? "✓ Book Club included" : "🔒 Book Club — Librarian+"}
+            </div>
+          </div>
+        )}
+
+        {/* Social Media Links */}
+        {authUser && (
+          <div style={{ ...cardStyle, marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, color: th.text, fontSize: 16 }}>🔗 My Social Media</h3>
+              {!socialEditing && (
+                <button onClick={() => { setSocialEditing(true); setSocialInputs(socialLinks); }} style={btnStyle(th.bgMuted, th.text)}>
+                  Edit
+                </button>
+              )}
+            </div>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: th.textSoft }}>
+              Add your handles so other readers can find and follow you.
+            </p>
+
+            {socialEditing ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {SOCIAL_PLATFORMS.map(p => (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{p.emoji}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 3 }}>{p.label}</div>
+                      {p.id === "x_twitter" ? (
+                        socialLinks.x_twitter ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ color: "#14171A", fontSize: 14, fontWeight: 600 }}>@{socialLinks.x_twitter}</span>
+                            <button onClick={async () => {
+                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, x_twitter: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+                              setSocialLinks(prev => ({ ...prev, x_twitter: "" }));
+                              setSocialInputs(prev => ({ ...prev, x_twitter: "" }));
+                            }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => window.location.href = `/api/oauth/x/start?user_id=${authUser.id}`}
+                            style={{ background: "#14171A", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+                            🐦 Connect with X
+                          </button>
+                        )
+                      ) : p.id === "tiktok" ? (
+                        socialLinks.tiktok ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ color: "#010101", fontSize: 14, fontWeight: 600 }}>@{socialLinks.tiktok}</span>
+                            <button onClick={async () => {
+                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, tiktok: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+                              setSocialLinks(prev => ({ ...prev, tiktok: "" }));
+                              setSocialInputs(prev => ({ ...prev, tiktok: "" }));
+                            }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => window.location.href = `/api/oauth/tiktok/start?user_id=${authUser.id}`}
+                            style={{ background: "#010101", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+                            🎵 Connect with TikTok
+                          </button>
+                        )
+                      ) : (
+                        <input
+                          style={inputStyle}
+                          placeholder={p.placeholder}
+                          value={socialInputs[p.id]}
+                          onChange={e => setSocialInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                  <button onClick={() => setSocialEditing(false)} style={btnStyle(th.bgMuted, th.text)}>Cancel</button>
+                  <button onClick={handleSaveSocial} style={btnStyle(th.accent)}>Save</button>
+                </div>
+                {socialMsg && <div style={{ fontSize: 13, color: socialMsg.includes("Error") || socialMsg.includes("Could not") ? "#c0392b" : "#6B8C5E" }}>{socialMsg}</div>}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {SOCIAL_PLATFORMS.map(p => {
+                  const handle = socialLinks[p.id];
+                  return (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{p.emoji}</span>
+                      <span style={{ fontSize: 13, color: th.textSoft, width: 72 }}>{p.label}</span>
+                      {handle ? (
+                        <a href={p.prefix + handle} target="_blank" rel="noopener noreferrer"
+                          style={{ color: p.color, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
+                          @{handle}
+                        </a>
+                      ) : (
+                        <span style={{ color: th.textSoft, fontSize: 13, fontStyle: "italic" }}>Not connected</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {socialMsg && <div style={{ fontSize: 13, color: "#6B8C5E" }}>{socialMsg}</div>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Genre list */}
+        <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>Genre Groups & Book Clubs</h3>
+        {ALL_GENRES.map(genre => (
+          <div key={genre} style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: th.text, fontSize: 15 }}>{genre}</div>
+                <div style={{ fontSize: 12, color: th.textSoft, marginTop: 2 }}>
+                  {memberCounts[genre] !== undefined ? `${memberCounts[genre]} ${memberCounts[genre] === 1 ? "member" : "members"}` : "…"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => onOpenGroup(genre)} style={{
+                  background: "rgba(94,107,140,0.15)", border: "1px solid rgba(94,107,140,0.5)",
+                  borderRadius: 20, padding: "6px 12px", color: "#2E3A5C", cursor: "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600,
+                }}>👥 Group</button>
+                <button onClick={() => onOpenBookClub(genre)} style={{
+                  background: "rgba(107,140,94,0.15)", border: "1px solid rgba(107,140,94,0.5)",
+                  borderRadius: 20, padding: "6px 12px", color: "#3A5C2E", cursor: "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600,
+                }}>📚 Club</button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const POST_TYPES = [
   { id: "discussion",  label: "💬 Discussion",          short: "Discussion" },
   { id: "reading",     label: "📖 Currently Reading",    short: "Reading" },
@@ -8780,8 +9084,15 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   };
 
   const loadMembers = async () => {
-    const { data } = await supabaseRef.current.from("group_members").select("username, joined_at").eq("genre", genre).order("joined_at");
-    setMembers(data || []);
+    const { data: mems } = await supabaseRef.current.from("group_members").select("username, joined_at").eq("genre", genre).order("joined_at");
+    if (mems && mems.length > 0) {
+      const usernames = mems.map(m => m.username);
+      const { data: socials } = await supabaseRef.current.from("user_social_links").select("username, instagram, tiktok, facebook, x_twitter").in("username", usernames);
+      const socialMap = Object.fromEntries((socials || []).map(s => [s.username, s]));
+      setMembers(mems.map(m => ({ ...m, socials: socialMap[m.username] || {} })));
+    } else {
+      setMembers([]);
+    }
     setShowMembers(true);
   };
 
@@ -8985,8 +9296,14 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
               <button onClick={() => setShowMembers(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
             </div>
             {members.map(m => (
-              <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}`, color: th.text, fontSize: 14 }}>
-                @{m.username}
+              <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}` }}>
+                <div style={{ color: th.text, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>@{m.username}</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {m.socials?.instagram && <a href={`https://instagram.com/${m.socials.instagram}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#E1306C", textDecoration: "none" }}>📸 @{m.socials.instagram}</a>}
+                  {m.socials?.tiktok    && <a href={`https://tiktok.com/@${m.socials.tiktok}`}    target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#010101", textDecoration: "none" }}>🎵 @{m.socials.tiktok}</a>}
+                  {m.socials?.facebook  && <a href={`https://facebook.com/${m.socials.facebook}`}  target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#1877F2", textDecoration: "none" }}>📘 {m.socials.facebook}</a>}
+                  {m.socials?.x_twitter && <a href={`https://x.com/${m.socials.x_twitter}`}        target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#14171A", textDecoration: "none" }}>🐦 @{m.socials.x_twitter}</a>}
+                </div>
               </div>
             ))}
           </div>
@@ -9370,6 +9687,10 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
   const [newPassword, setNewPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [accountMsg, setAccountMsg] = React.useState("");
+  const [bio, setBio] = React.useState(() => authUser?.user_metadata?.bio || "");
+  const [editingBio, setEditingBio] = React.useState(false);
+  const [bioInput, setBioInput] = React.useState("");
+  const [bioMsg, setBioMsg] = React.useState("");
   const fileRef = React.useRef(null);
 
   // Book stats
@@ -9516,6 +9837,45 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
           <div style={{ fontSize: 20, fontWeight: 700, color: th.text, marginBottom: 2 }}>{displayName}</div>
           <div style={{ fontSize: 13, color: th.textSoft }}>{authUser?.email}</div>
           {!repositioning && <div style={{ fontSize: 11, color: th.textSoft, marginTop: 4, fontStyle: "italic" }}>Tap photo to edit</div>}
+        </div>
+
+        {/* Bio */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>My Bio</div>
+          {editingBio ? (
+            <div>
+              <textarea
+                value={bioInput}
+                onChange={e => { if (e.target.value.length <= 300) setBioInput(e.target.value); }}
+                placeholder="Tell other readers a little about yourself..."
+                style={{
+                  width: "100%", boxSizing: "border-box", minHeight: 100, borderRadius: 8,
+                  border: `1px solid ${th.border}`, background: th.bgMuted, color: th.text,
+                  fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+                  padding: "10px 12px", resize: "vertical", outline: "none",
+                }}
+              />
+              <div style={{ fontSize: 11, color: th.textSoft, textAlign: "right", marginBottom: 8 }}>{bioInput.length}/300</div>
+              {bioMsg && <div style={{ fontSize: 12, color: th.accent, marginBottom: 8 }}>{bioMsg}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { setEditingBio(false); setBioMsg(""); }} style={{ flex: 1, padding: "9px", borderRadius: 8, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+                <button onClick={async () => {
+                  const { error } = await supabaseRef.current.auth.updateUser({ data: { bio: bioInput } });
+                  if (error) { setBioMsg("Could not save. Try again."); return; }
+                  setBio(bioInput);
+                  setEditingBio(false);
+                  setBioMsg("");
+                }} style={{ flex: 1, padding: "9px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={() => { setBioInput(bio); setEditingBio(true); setBioMsg(""); }}
+              style={{ background: th.bgMuted, borderRadius: 8, padding: "12px 14px", fontSize: 13, color: bio ? th.text : th.textSoft, fontStyle: bio ? "normal" : "italic", cursor: "pointer", minHeight: 48, lineHeight: 1.6 }}
+            >
+              {bio || "Tap to add a bio..."}
+            </div>
+          )}
         </div>
 
         {/* Book Stats */}
@@ -9951,6 +10311,10 @@ export default function App() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#profile" || localStorage.getItem("sk_current_page") === "profile";
   });
+  const [showCommunity, setShowCommunity] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#community" || localStorage.getItem("sk_current_page") === "community";
+  });
   const [showGroup, setShowGroup] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h.startsWith("#group=") || localStorage.getItem("sk_current_page")?.startsWith("group:");
@@ -9988,7 +10352,8 @@ export default function App() {
   // Persist current page to localStorage so refresh (including iOS pull-to-refresh) restores position
   useEffect(() => {
     let page = "home";
-    if (showGroup && groupGenre) page = "group:" + groupGenre;
+    if (showCommunity) page = "community";
+    else if (showGroup && groupGenre) page = "group:" + groupGenre;
     else if (showBookClub && bookClubGenre) page = "bookclub:" + bookClubGenre;
     else if (genre) page = "genre:" + genre;
     else if (showStats) page = "stats";
@@ -9999,7 +10364,7 @@ export default function App() {
     else if (showSettings) page = "settings";
     localStorage.setItem("sk_current_page", page);
     localStorage.setItem("sk_last_hash", window.location.hash);
-  }, [genre, showStats, showPlatforms, showFavorites, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre]);
+  }, [genre, showStats, showPlatforms, showFavorites, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre, showCommunity]);
 
   // Save hash right before unload (catches pull-to-refresh on iOS)
   useEffect(() => {
@@ -10023,6 +10388,7 @@ export default function App() {
       setShowSubscription(h === "#subscription");
       setShowProfile(h === "#profile");
       setShowSettings(h === "#settings");
+      setShowCommunity(h === "#community");
       if (h.startsWith("#group=")) {
         setShowGroup(true);
         setGroupGenre(decodeURIComponent(h.slice(7)));
@@ -10117,6 +10483,18 @@ export default function App() {
 
       {/* SUBSCRIPTION PAGE */}
       {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; }} />}
+
+      {/* COMMUNITY PAGE */}
+      {showCommunity && (
+        <CommunityPage
+          authUser={authUser}
+          supabaseRef={supabaseRef}
+          onClose={() => { setShowCommunity(false); window.location.hash = ""; }}
+          onOpenGroup={(g) => { setShowCommunity(false); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
+          onOpenBookClub={(g) => { setShowCommunity(false); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
+          onOpenSubscription={() => { setShowCommunity(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
+        />
+      )}
 
       {/* GENRE GROUP PAGE */}
       {showGroup && groupGenre && (
@@ -10340,6 +10718,7 @@ export default function App() {
 
         {/* Menu items */}
         {[
+          { key: "community",     label: "👥 Community",             action: () => { setShowSidebar(false); setShowCommunity(true); window.location.hash = "#community"; } },
           { key: "profile",       label: "👤 My Profile",            action: () => { setShowSidebar(false); setShowProfile(true); window.location.hash = "#profile"; } },
           { key: "platforms",     label: "🔗 Platform Connections", action: () => { setShowSidebar(false); setShowPlatforms(true); window.location.hash = "#platforms"; } },
           { key: "favorites",     label: "❤️ My Favorites",         action: () => { setShowSidebar(false); setShowFavorites(true); window.location.hash = "#favorites"; } },
