@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // Module-level background task bus — survives component unmounts
@@ -64,10 +64,10 @@ const SK_THEMES = {
 };
 
 const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
 const needsDesc = (b) => !b.description && b.genre !== "Cookbooks";
 function getSupabase() {
-  const key = localStorage.getItem("sk_supabase_key");
-  if (!key) return null;
+  const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
   return createClient(SUPABASE_URL, key);
 }
 
@@ -117,6 +117,14 @@ function KnotScrollTooltip({ text, left, top }) {
   );
 }
 
+function isBadCover(url) {
+  if (!url) return true;
+  const u = url.toLowerCase();
+  return u.includes("20years") || u.includes("nophoto") || u.includes("nocover") ||
+    u.includes("no_cover") || u.includes("placeholder") || u.includes("default_cover") ||
+    u.includes("missing_cover") || u.includes("no-cover") || u.includes("blank");
+}
+
 function cleanTitle(title) {
   return title
     .replace(/\s*[\(\[].*?[\)\]]/g, "") // remove (Book 1), [Unabridged], etc.
@@ -143,6 +151,7 @@ const ALL_GENRES = [
   "Fantasy", "Mystery & Thriller", "Sci-Fi", "Romance",
   "Self Help", "Dark Romance", "Fiction", "Historical Fiction",
   "Cookbooks", "Drama", "True Crime", "Gardening & Landscaping",
+  "Health & Wellness", "Home & DIY", "Classics", "Sewing & Crafts", "Cozy Mystery", "Horror", "Miscellaneous",
 ];
 
 // Map Open Library / Google Books subjects to our genres
@@ -223,6 +232,8 @@ function detectGenreFromTitle(title = "") {
       (t.includes("villain") && t.includes("romance"))) return "Dark Romance";
 
   // Mystery & Thriller — title signals
+  if (t.includes("cozy mystery") || t.includes("amateur sleuth") || t.includes("cozy crime")) return "Cozy Mystery";
+
   if (t.includes("thriller") || t.includes("suspense") || t.includes("mystery") ||
       t.includes("detective") || t.includes("fbi") || t.includes("psychological suspense") ||
       t.includes("serial killer") || t.includes("cold case") || t.includes("murder") ||
@@ -302,17 +313,39 @@ function detectGenre(subjects = [], title = "") {
 
   if (s.includes("self-help") || s.includes("self help") || s.includes("personal development") ||
       s.includes("personal growth") || s.includes("motivation") || s.includes("productivity") ||
-      s.includes("mindfulness") || s.includes("habit") || s.includes("success") ||
+      s.includes("habit") || s.includes("success") ||
       s.includes("leadership") || s.includes("business") || s.includes("entrepreneurship") ||
       s.includes("finance") || s.includes("investing") || s.includes("psychology") ||
-      s.includes("mental health") || s.includes("wellness") || s.includes("meditation") ||
       s.includes("spirituality") || s.includes("religion") || s.includes("philosophy") ||
       s.includes("biography") || s.includes("autobiography") || s.includes("memoir") ||
       s.includes("nonfiction") || s.includes("non-fiction") ||
-      s.includes("health") || s.includes("fitness") || s.includes("diet") || s.includes("nutrition") ||
       s.includes("parenting") || s.includes("education") || s.includes("travel") ||
       s.includes("history") || s.includes("politics") || s.includes("economics") ||
       s.includes("science") || s.includes("nature") || s.includes("technology")) return "Self Help";
+
+  if (s.includes("health") || s.includes("fitness") || s.includes("wellness") ||
+      s.includes("nutrition") || s.includes("diet") || s.includes("mental health") ||
+      s.includes("meditation") || s.includes("yoga") || s.includes("exercise") ||
+      s.includes("weight loss") || s.includes("gut health") || s.includes("hormones") ||
+      s.includes("sleep") || s.includes("stress") || s.includes("anxiety") ||
+      s.includes("mindfulness") || s.includes("self-care") || s.includes("healing")) return "Health & Wellness";
+
+  if (s.includes("home improvement") || s.includes("home repair") || s.includes("diy") ||
+      s.includes("woodworking") || s.includes("carpentry") || s.includes("plumbing") ||
+      s.includes("electrical wiring") || s.includes("renovation") || s.includes("remodeling") ||
+      s.includes("interior design") || s.includes("decorating") || s.includes("organizing") ||
+      s.includes("declutter") || s.includes("home decor")) return "Home & DIY";
+
+  if (s.includes("sewing") || s.includes("knitting") || s.includes("crochet") ||
+      s.includes("quilting") || s.includes("embroidery") || s.includes("needlework") ||
+      s.includes("cross-stitch") || s.includes("crafts") || s.includes("paper crafts") ||
+      s.includes("scrapbook") || s.includes("macrame") || s.includes("weaving") ||
+      s.includes("fiber arts") || s.includes("hand lettering") || s.includes("calligraphy")) return "Sewing & Crafts";
+
+  if (s.includes("classic literature") || s.includes("literary classic") ||
+      s.includes("19th century literature") || s.includes("18th century literature") ||
+      s.includes("victorian literature") || s.includes("ancient literature") ||
+      s.includes("greek literature") || s.includes("roman literature")) return "Classics";
 
   // --- Dark Romance before regular Romance ---
   if (s.includes("dark romance") || (s.includes("dark") && s.includes("romance")) ||
@@ -372,8 +405,13 @@ function detectGenre(subjects = [], title = "") {
       s.includes("star-cursed") || s.includes("nyaxia") || s.includes("hierarchy") ||
       s.includes("kiss of iron")) return "Fantasy";
 
+  if (s.includes("cozy mystery") || s.includes("cozy crime") || s.includes("amateur sleuth") ||
+      s.includes("tea shop mystery") || s.includes("bakery mystery") || s.includes("cat mystery") ||
+      s.includes("book club mystery") || s.includes("knitting mystery") || s.includes("quilting mystery") ||
+      s.includes("cozy") && s.includes("mystery")) return "Cozy Mystery";
+
   if (s.includes("mystery") || s.includes("detective") || s.includes("whodunit") ||
-      s.includes("cozy mystery") || s.includes("police procedural") || s.includes("noir") ||
+      s.includes("police procedural") || s.includes("noir") ||
       s.includes("private investigator") || s.includes("cold case") ||
       s.includes("crime") || s.includes("thriller") || s.includes("suspense") ||
       s.includes("psychological thriller") || s.includes("legal thriller") ||
@@ -413,6 +451,7 @@ const DEFAULT_ASSIGNMENTS = [
   { id: 10, left: "34%", top: "40%", genre: "Drama"                   },
   { id: 11, left: "51%", top: "32%", genre: "True Crime"              },
   { id: 12, left: "44%", top: "55%", genre: "Gardening & Landscaping" },
+  { id: 13, left: "55%", top: "45%", genre: "Classics" },
 ];
 
 const library = {
@@ -523,8 +562,9 @@ const SPINE_COLORS = [
   { base: "#3a2240", mid: "#2c1830", dark: "#1c1020", text: "#c0a8c0" }, // faded plum
 ];
 
-function BookSpine({ book, index, rowIndex, onClick }) {
+function BookSpine({ book, index, rowIndex, onClick, spineWidth }) {
   const c = SPINE_COLORS[(rowIndex * 6 + index) % SPINE_COLORS.length];
+  const w = spineWidth || 58;
   const height = 180 + ((rowIndex * 6 + index) % 4) * 20;
   // Raised bands positions as % of height
   const bands = [12, 28, 72, 88];
@@ -534,7 +574,7 @@ function BookSpine({ book, index, rowIndex, onClick }) {
       title={`${book.title} — ${book.author}`}
       onClick={() => onClick && onClick(book)}
       style={{
-        width: 58,
+        width: w,
         height,
         borderRadius: "2px 3px 3px 2px",
         background: `linear-gradient(to right, ${c.dark} 0%, ${c.base} 15%, ${c.mid} 50%, ${c.base} 85%, ${c.dark} 100%)`,
@@ -760,14 +800,111 @@ function CDCase({ book, index, rowIndex, onClick }) {
   );
 }
 
+function DatePickerModal({ label, value, onSelect, onClose, themeAccent, themeBg, themeText }) {
+  const initial = value ? new Date(value) : new Date();
+  const [viewMonth, setViewMonth] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1));
+  const [selected, setSelected] = useState(value ? new Date(value) : null);
+
+  const year = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = new Date();
+  const monthName = viewMonth.toLocaleString("default", { month: "long" });
+  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+  const isSameDay = (d1, d2) => d1 && d2 && d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
+  const isToday = (day) => isSameDay(today, new Date(year, month, day));
+  const isSelected = (day) => selected && isSameDay(selected, new Date(year, month, day));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: themeBg || "#F8F1E4", border: "2px solid #8B5E3C", borderRadius: 14, padding: 20, width: 320, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
+        {/* Header */}
+        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, color: themeText || "#3A2A1A", textAlign: "center", marginBottom: 14, fontWeight: 700 }}>
+          {label}
+        </div>
+        {/* Month nav */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <button onClick={() => setViewMonth(new Date(year, month - 1, 1))}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: themeAccent || "#8B5E3C", padding: "0 8px" }}>‹</button>
+          <span style={{ fontFamily: "Georgia, serif", fontSize: 14, color: themeText || "#3A2A1A", fontWeight: 700 }}>{monthName} {year}</span>
+          <button onClick={() => setViewMonth(new Date(year, month + 1, 1))}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: themeAccent || "#8B5E3C", padding: "0 8px" }}>›</button>
+        </div>
+        {/* Day labels */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 4 }}>
+          {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => (
+            <div key={d} style={{ textAlign: "center", fontFamily: "Georgia, serif", fontSize: 10, color: themeAccent || "#8B5E3C", fontWeight: 700, padding: "2px 0" }}>{d}</div>
+          ))}
+        </div>
+        {/* Days grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+          {cells.map((day, i) => day === null ? <div key={`e-${i}`} /> : (
+            <button key={day} onClick={() => setSelected(new Date(year, month, day))}
+              style={{
+                padding: "6px 0", borderRadius: 6, border: "none", cursor: "pointer", textAlign: "center",
+                fontFamily: "Georgia, serif", fontSize: 12,
+                background: isSelected(day) ? (themeAccent || "#8B5E3C") : isToday(day) ? "rgba(139,94,60,0.15)" : "transparent",
+                color: isSelected(day) ? "#F8F1E4" : isToday(day) ? (themeAccent || "#8B5E3C") : (themeText || "#3A2A1A"),
+                fontWeight: isToday(day) || isSelected(day) ? 700 : 400,
+                outline: isToday(day) && !isSelected(day) ? `1px solid ${themeAccent || "#8B5E3C"}` : "none",
+              }}>{day}</button>
+          ))}
+        </div>
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, padding: "8px 0", background: "transparent", border: "1px solid #8B5E3C", borderRadius: 8, cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13, color: themeText || "#3A2A1A" }}>
+            Cancel
+          </button>
+          {selected && (
+            <button onClick={() => { onSelect(selected.toISOString()); onClose(); }}
+              style={{ flex: 2, padding: "8px 0", background: themeAccent || "#8B5E3C", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700, color: "#F8F1E4" }}>
+              Set {selected.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType, onBookEdited, onDelete }) {
+  const ebookProgressMode = localStorage.getItem("sk_ebook_progress_mode") || "page";
+  const audiobookProgressMode = localStorage.getItem("sk_audiobook_progress_mode") || "chapter";
+  const progressMode = mediaType === "audiobooks" ? audiobookProgressMode : ebookProgressMode;
+  const modalTheme = SK_THEMES[localStorage.getItem("sk_theme") || "cozy"] || SK_THEMES.cozy;
+  const thAccent = modalTheme.accent;
   const [imgError, setImgError] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showProgressPrompt, setShowProgressPrompt] = useState(false);
+  const [promptPercent, setPromptPercent] = useState(null);
+  const [rating, setRating] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_ratings") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [spice, setSpice] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_spice") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [notes, setNotes] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_notes") || "{}")[isbn] || ""; } catch { return ""; } });
+  const [hoverRating, setHoverRating] = useState(0);
+  const [hoverSpice, setHoverSpice] = useState(0);
+  const [lightsOut, setLightsOut] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_lights_out") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [hoverLightsOut, setHoverLightsOut] = useState(0);
+  const [cryFactor, setCryFactor] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_cry_factor") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [hoverCry, setHoverCry] = useState(0);
+  const [skullFactor, setSkullFactor] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_skull_factor") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [hoverSkull, setHoverSkull] = useState(0);
+  const [worldBuilding, setWorldBuilding] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_world_building") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [hoverWorld, setHoverWorld] = useState(0);
+  const [darkFactor, setDarkFactor] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_dark_factor") || "{}")[isbn] || 0; } catch { return 0; } });
+  const [hoverDark, setHoverDark] = useState(0);
+  const isThriller = ["Mystery & Thriller", "Cozy Mystery"].includes(book.genre);
+  const popupRef = useRef(null);
+  const popupPollRef = useRef(null);
   const [editFields, setEditFields] = useState({ title: book.title, author: book.author || "", description: book.description || "", genre: book.genre || "Fiction", coverUrl: book.coverUrl || "", mediaType: book.mediaType || "ebook" });
   const [dates, setDates] = useState(() => {
     try { return JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`)) || {}; } catch { return {}; }
   });
+  const [datePickerOpen, setDatePickerOpen] = useState(null); // "start" | "end" | null
 
   // --- Timer state ---
   const timerKey = `sk_active_timer_${mediaType}`;
@@ -781,6 +918,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const [elapsed, setElapsed] = useState(0);
   const [currentPage, setCurrentPage] = useState(() => {
     try { return JSON.parse(localStorage.getItem(pagesKey) || "{}")[isbn] || ""; } catch { return ""; }
+  });
+  const [currentChapter, setCurrentChapter] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`sk_chapters_ebooks`) || "{}")[isbn] || ""; } catch { return ""; }
   });
   const [sessionSaved, setSessionSaved] = useState(false);
 
@@ -823,11 +963,30 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
       title: book.title,
       date: new Date().toISOString(),
       minutes,
-      pages: currentPage ? parseInt(currentPage) || 0 : 0,
+      pages: mediaType === "ebooks" ? (currentPage ? parseInt(currentPage) || 0 : 0) : 0,
+      chapters: mediaType === "audiobooks" ? (currentPage ? parseInt(currentPage) || 0 : 0) : (currentChapter ? parseInt(currentChapter) || 0 : 0),
     };
     const sessions = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
     sessions.unshift(session);
     localStorage.setItem(sessionsKey, JSON.stringify(sessions));
+
+    // Lifetime counters — only ever increment, never reset
+    const ltMinKey = `sk_lifetime_minutes_${mediaType}`;
+    const prevMin = parseInt(localStorage.getItem(ltMinKey) || "0");
+    localStorage.setItem(ltMinKey, String(prevMin + minutes));
+    if (mediaType === "ebooks" && session.pages > 0) {
+      const ltPgKey = "sk_lifetime_pages";
+      localStorage.setItem(ltPgKey, String(parseInt(localStorage.getItem(ltPgKey) || "0") + session.pages));
+    }
+    if (mediaType === "ebooks" && session.chapters > 0) {
+      const ltChEKey = "sk_lifetime_chapters_ebooks";
+      localStorage.setItem(ltChEKey, String(parseInt(localStorage.getItem(ltChEKey) || "0") + session.chapters));
+    }
+    if (mediaType === "audiobooks" && session.chapters > 0) {
+      const ltChKey = "sk_lifetime_chapters";
+      localStorage.setItem(ltChKey, String(parseInt(localStorage.getItem(ltChKey) || "0") + session.chapters));
+    }
+
     localStorage.removeItem(timerKey);
     setActiveTimer(null);
     setElapsed(0);
@@ -842,13 +1001,18 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     setCurrentPage(val);
   };
 
-  // Total time logged for this book
+  // Total time logged for this book (from session history)
   const totalMinutes = (() => {
     try {
       const sessions = JSON.parse(localStorage.getItem(sessionsKey) || "[]");
       return sessions.filter(s => s.isbn === isbn).reduce((acc, s) => acc + (s.minutes || 0), 0);
     } catch { return 0; }
   })();
+  // Lifetime totals across all books (dedicated counters)
+  const lifetimePages = parseInt(localStorage.getItem("sk_lifetime_pages") || "0");
+  const lifetimeChapters = parseInt(localStorage.getItem("sk_lifetime_chapters") || "0");
+  const lifetimeChaptersEbooks = parseInt(localStorage.getItem("sk_lifetime_chapters_ebooks") || "0");
+  const lifetimeMinutes = parseInt(localStorage.getItem(`sk_lifetime_minutes_${mediaType}`) || "0");
 
   const isUserBook = (() => {
     try {
@@ -864,22 +1028,33 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     } catch { return book.genre || ""; }
   })();
   const [selectedGenre, setSelectedGenre] = useState(currentGenre);
+  const activeGenre = selectedGenre || book.genre;
+  const isDrama = ["Drama", "Fiction", "Historical Fiction", "Romance"].includes(activeGenre);
+  const isHorror = activeGenre === "Horror";
+  const isFantasy = ["Fantasy", "Sci-Fi"].includes(activeGenre);
+  const isDarkRomance = activeGenre === "Dark Romance";
 
   const handleGenreChange = (newGenre) => {
     setSelectedGenre(newGenre);
-    if (isUserBook) {
-      try {
-        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-        const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
-        if (idx !== -1) { all[idx].genre = newGenre; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
-      } catch { /* ignore */ }
-    } else {
-      try {
-        const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
-        overrides[isbn] = newGenre;
-        localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
-      } catch { /* ignore */ }
-    }
+    // Always save to overrides — this is the most reliable store and works for all book types
+    try {
+      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+      overrides[isbn] = newGenre;
+      localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
+    } catch { /* ignore */ }
+    // Also update sk_user_books directly if it's a user book
+    try {
+      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const idx = all.findIndex(b =>
+        (book.isbn && b.isbn === book.isbn) ||
+        b.title?.trim() === book.title?.trim()
+      );
+      if (idx !== -1) {
+        all[idx].genre = newGenre;
+        localStorage.setItem("sk_user_books", JSON.stringify(all));
+      }
+    } catch { /* ignore */ }
+    if (onBookEdited) onBookEdited({ ...book, genre: newGenre });
   };
 
   const handleSaveEdit = () => {
@@ -990,8 +1165,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     fontFamily: '"Palatino Linotype", Palatino, serif',
     fontSize: 12,
     fontWeight: status === s ? 700 : 400,
-    background: status === s ? "#3A2A1A" : "#F8F1E4",
-    color: status === s ? "#F8F1E4" : "#3A2A1A",
+    background: status === s ? modalTheme.text : modalTheme.bg,
+    color: status === s ? modalTheme.bg : modalTheme.text,
     flex: 1,
     transition: "all 0.15s",
   });
@@ -1019,14 +1194,15 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
         style={{
           maxWidth: 700,
           width: "100%",
-          background: "#F8F1E4",
+          background: modalTheme.bg,
           border: "1px solid #8B5E3C",
           borderRadius: 12,
-          padding: 30,
+          padding: "30px 20px",
           position: "relative",
           boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
           maxHeight: "90vh",
           overflowY: "auto",
+          boxSizing: "border-box",
         }}
       >
         {/* Close button */}
@@ -1040,7 +1216,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             border: "none",
             fontSize: 22,
             cursor: "pointer",
-            color: "#6B4E32",
+            color: modalTheme.textSoft,
             lineHeight: 1,
             padding: "2px 6px",
           }}
@@ -1061,7 +1237,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               border: "none",
               fontSize: 16,
               cursor: "pointer",
-              color: "#8B5E3C",
+              color: modalTheme.accent,
               lineHeight: 1,
               padding: "2px 6px",
               opacity: 0.7,
@@ -1078,7 +1254,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
         {/* Edit form */}
         {editing && (
           <div>
-            <h2 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, color: "#3A2A1A", margin: "0 0 16px 0", paddingRight: 30 }}>
+            <h2 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, color: modalTheme.text, margin: "0 0 16px 0", paddingRight: 30 }}>
               ✏️ Edit Book
             </h2>
             {[
@@ -1087,56 +1263,56 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               { label: "Cover URL", field: "coverUrl", placeholder: "https://..." },
             ].map(({ label, field, placeholder }) => (
               <div key={field} style={{ marginBottom: 12 }}>
-                <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>{label}</label>
+                <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>{label}</label>
                 <input
                   type="text"
                   value={editFields[field]}
                   placeholder={placeholder || ""}
                   onChange={e => setEditFields(p => ({ ...p, [field]: e.target.value }))}
-                  style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", boxSizing: "border-box" }}
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text, boxSizing: "border-box" }}
                 />
               </div>
             ))}
             <div style={{ marginBottom: 12 }}>
-              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>Genre</label>
+              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>Genre</label>
               <select
                 value={editFields.genre}
                 onChange={e => setEditFields(p => ({ ...p, genre: e.target.value }))}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A" }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }}
               >
                 {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>Media Type</label>
+              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>Media Type</label>
               <select
                 value={editFields.mediaType}
                 onChange={e => setEditFields(p => ({ ...p, mediaType: e.target.value }))}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A" }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }}
               >
                 <option value="ebook">📚 eBook</option>
                 <option value="audiobook">🎧 Audiobook</option>
               </select>
             </div>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", display: "block", marginBottom: 4 }}>Description</label>
+              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>Description</label>
               <textarea
                 value={editFields.description}
                 onChange={e => setEditFields(p => ({ ...p, description: e.target.value }))}
                 rows={4}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A", resize: "vertical", boxSizing: "border-box" }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text, resize: "vertical", boxSizing: "border-box" }}
               />
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button
                 onClick={handleSaveEdit}
-                style={{ padding: "8px 20px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+                style={{ padding: "8px 20px", background: modalTheme.text, color: modalTheme.bg, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
               >
                 Save
               </button>
               <button
                 onClick={() => setEditing(false)}
-                style={{ padding: "8px 16px", background: "none", border: "1px solid #8B5E3C", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, color: "#3A2A1A" }}
+                style={{ padding: "8px 16px", background: "none", border: "1px solid #8B5E3C", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, color: modalTheme.text }}
               >
                 Cancel
               </button>
@@ -1146,9 +1322,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
         {/* Two-column layout */}
         {!editing && <>
-        <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
           {/* Left column — book cover */}
-          <div style={{ width: "35%", flexShrink: 0 }}>
+          <div style={{ width: 140, flexShrink: 0, margin: "0 auto" }}>
             {!imgError ? (
               <img
                 src={book.coverUrl || (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg` : "")}
@@ -1183,7 +1359,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   justifyContent: "center",
                   padding: 12,
                   textAlign: "center",
-                  color: "#F8F1E4",
+                  color: modalTheme.bg,
                   fontFamily: '"Palatino Linotype", Palatino, serif',
                   fontSize: 13,
                   fontWeight: 700,
@@ -1196,12 +1372,12 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
           </div>
 
           {/* Right column */}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: 260, width: "100%" }}>
             <h2 style={{
               fontFamily: '"Palatino Linotype", Palatino, serif',
               fontSize: 22,
               fontWeight: 700,
-              color: "#3A2A1A",
+              color: modalTheme.text,
               margin: "0 0 4px 0",
               lineHeight: 1.3,
               paddingRight: 30,
@@ -1212,7 +1388,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               fontFamily: "Georgia, serif",
               fontStyle: "italic",
               fontSize: 14,
-              color: "#6B4E32",
+              color: modalTheme.textSoft,
               margin: "0 0 12px 0",
             }}>
               {book.author}
@@ -1223,7 +1399,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             <p style={{
               fontFamily: "Georgia, serif",
               fontSize: 13,
-              color: "#4B3A2A",
+              color: modalTheme.textMid,
               lineHeight: 1.7,
               margin: "0 0 4px 0",
             }}>
@@ -1233,8 +1409,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             {/* Read / Listen button */}
             {(() => {
               const PLATFORM_URLS = {
-                kindle:    book.readUrl || (book.isbn ? `https://read.amazon.com/reader?asin=${book.isbn}` : "https://read.amazon.com"),
-                audible:   book.readUrl || (book.isbn ? `https://www.audible.com/pd/${book.isbn}` : "https://www.audible.com/library/titles"),
+                kindle:    book.readUrl || (book.asin ? `https://read.amazon.com/?asin=${book.asin}` : book.isbn ? `https://read.amazon.com/reader?asin=${book.isbn}` : "https://read.amazon.com"),
+                audible:   book.readUrl || (book.asin ? `https://www.audible.com/pd/${book.asin}` : book.isbn ? `https://www.audible.com/pd/${book.isbn}` : "https://www.audible.com/library/titles"),
                 chirp:     book.readUrl || "https://www.chirpbooks.com/library",
                 apple:     book.storeId ? `https://books.apple.com/us/book/id${book.storeId}` : book.readUrl || "https://books.apple.com/library",
                 kobo:      book.readUrl || "https://www.kobo.com/ww/en/account/books",
@@ -1247,39 +1423,164 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               const isAudio = mediaType === "audiobooks";
               const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel" };
               const name = platformNames[book.platform] || book.platform;
+              const openInPopup = () => {
+                if (!statuses[isbn] || statuses[isbn] === "want-to-read") handleStatus("reading");
+                setPromptPercent(null);
+                setShowProgressPrompt(false);
+                if (popupPollRef.current) clearInterval(popupPollRef.current);
+                const openedAt = Date.now();
+                const popup = window.open(url, "sk_reader", "width=1200,height=800,noopener");
+                popupRef.current = popup;
+                popupPollRef.current = setInterval(() => {
+                  if (!popupRef.current || popupRef.current.closed) {
+                    clearInterval(popupPollRef.current);
+                    popupRef.current = null;
+                    // Auto-log session from popup open→close time
+                    const minutes = Math.max(1, Math.round((Date.now() - openedAt) / 60000));
+                    const session = {
+                      isbn,
+                      title: book.title,
+                      date: new Date().toISOString(),
+                      minutes,
+                      pages: 0,
+                      chapters: 0,
+                      platform: name,
+                    };
+                    const allSessions = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
+                    allSessions.unshift(session);
+                    localStorage.setItem(sessionsKey, JSON.stringify(allSessions));
+                    // Increment lifetime minute counter
+                    const ltMinKey = `sk_lifetime_minutes_${mediaType}`;
+                    localStorage.setItem(ltMinKey, String(parseInt(localStorage.getItem(ltMinKey) || "0") + minutes));
+                    setShowProgressPrompt(true);
+                  }
+                }, 800);
+              };
               return (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => {
-                    // Auto-mark as reading when user taps to open the platform
-                    if (!statuses[isbn] || statuses[isbn] === "want-to-read") {
-                      handleStatus("reading");
-                    }
-                  }}
+                <button
+                  onClick={openInPopup}
                   style={{
                     display: "inline-block",
                     margin: "10px 0 12px",
                     padding: "8px 20px",
-                    background: "#8B5E3C",
-                    color: "#F8F1E4",
+                    background: modalTheme.accent,
+                    color: modalTheme.bg,
+                    border: "none",
                     borderRadius: 8,
                     fontFamily: '"Palatino Linotype", Palatino, serif',
                     fontSize: 14,
                     fontWeight: 700,
-                    textDecoration: "none",
+                    cursor: "pointer",
                     boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
                   }}
                 >
                   {isAudio ? "🎧" : "📖"} {isAudio ? "Listen" : "Read"} on {name} →
-                </a>
+                </button>
               );
             })()}
 
+            {/* Progress prompt — shown after popup closes */}
+            {showProgressPrompt && (
+              <div style={{ background: modalTheme.bgMuted, border: "2px solid #8B5E3C", borderRadius: 10, padding: "14px 18px", margin: "8px 0 14px", boxShadow: "0 2px 10px rgba(0,0,0,0.12)" }}>
+                <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, color: modalTheme.text, marginBottom: 10 }}>
+                  Welcome back! {progressMode === "percent" ? "How far did you get?" : mediaType === "audiobooks" ? "Which chapter are you on?" : "What page are you on?"}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  {progressMode === "percent" ? (
+                    <>
+                      <input type="range" min={0} max={100} step={1}
+                        value={promptPercent ?? (progress[isbn] || 0)}
+                        onChange={e => setPromptPercent(Number(e.target.value))}
+                        style={{ flex: 1, accentColor: modalTheme.accent }}
+                      />
+                      <span style={{ fontFamily: "Georgia, serif", fontSize: 14, fontWeight: 700, color: modalTheme.accent, minWidth: 38, textAlign: "right" }}>
+                        {promptPercent ?? (progress[isbn] || 0)}%
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type="number" min={0}
+                        value={promptPercent ?? (book._currentPage || "")}
+                        placeholder={mediaType === "audiobooks" ? "Chapter #" : "Page #"}
+                        onChange={e => setPromptPercent(Math.max(0, Number(e.target.value) || 0))}
+                        style={{ width: 90, padding: "6px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 14, background: modalTheme.bgDeep, color: modalTheme.text }}
+                      />
+                      <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: modalTheme.textSoft }}>
+                        {mediaType === "audiobooks" ? "of " + (book._totalChapters || "?") + " chapters" : "of " + (book._totalPages || "?") + " pages"}
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => {
+                      let pct;
+                      if (progressMode === "percent") {
+                        pct = promptPercent ?? (progress[isbn] || 0);
+                      } else {
+                        const pageNum = promptPercent ?? (book._currentPage || 0);
+                        const total = mediaType === "audiobooks" ? (book._totalChapters || 0) : (book._totalPages || 0);
+                        pct = total > 0 ? Math.min(100, Math.round((pageNum / total) * 100)) : (pageNum > 0 ? 50 : 0);
+                        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                        const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+                        if (idx !== -1) { all[idx]._currentPage = pageNum; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+                        // Update lifetime page/chapter counter and patch the auto-logged session
+                        if (pageNum > 0) {
+                          if (mediaType === "ebooks") {
+                            const ltPgKey = "sk_lifetime_pages";
+                            localStorage.setItem(ltPgKey, String(parseInt(localStorage.getItem(ltPgKey) || "0") + pageNum));
+                          } else {
+                            const ltChKey = "sk_lifetime_chapters";
+                            localStorage.setItem(ltChKey, String(parseInt(localStorage.getItem(ltChKey) || "0") + pageNum));
+                          }
+                          // Patch the most recent auto-logged session with the page/chapter number
+                          const allSess = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
+                          if (allSess.length > 0 && allSess[0].platform) {
+                            if (mediaType === "ebooks") allSess[0].pages = pageNum;
+                            else allSess[0].chapters = pageNum;
+                            localStorage.setItem(sessionsKey, JSON.stringify(allSess));
+                          }
+                        }
+                      }
+                      setProgress(prev => {
+                        const updated = { ...prev, [isbn]: pct };
+                        localStorage.setItem(`sk_progress_${mediaType}`, JSON.stringify(updated));
+                        return updated;
+                      });
+                      setShowProgressPrompt(false);
+                    }}
+                    style={{ flex: 1, padding: "7px 0", background: modalTheme.accent, color: modalTheme.bg, border: "none", borderRadius: 7, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Save Progress
+                  </button>
+                  <button
+                    onClick={() => {
+                      setProgress(prev => {
+                        const updated = { ...prev, [isbn]: 100 };
+                        localStorage.setItem(`sk_progress_${mediaType}`, JSON.stringify(updated));
+                        return updated;
+                      });
+                      handleStatus("finished");
+                      setShowProgressPrompt(false);
+                    }}
+                    style={{ flex: 1, padding: "7px 0", background: "#3A6B3A", color: modalTheme.bg, border: "none", borderRadius: 7, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    ✓ Finished!
+                  </button>
+                  <button
+                    onClick={() => setShowProgressPrompt(false)}
+                    style={{ padding: "7px 12px", background: "none", color: modalTheme.accent, border: "1px solid #8B5E3C", borderRadius: 7, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, cursor: "pointer" }}
+                  >
+                    Skip
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Genre row */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0 4px" }}>
-              <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic", whiteSpace: "nowrap" }}>
+              <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textSoft, fontStyle: "italic", whiteSpace: "nowrap" }}>
                 Genre:
               </span>
               <select
@@ -1291,8 +1592,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   padding: "4px 8px",
                   borderRadius: 6,
                   border: "1px solid #8B5E3C",
-                  background: "#F8F1E4",
-                  color: "#3A2A1A",
+                  background: modalTheme.bg,
+                  color: modalTheme.text,
                   cursor: "pointer",
                   flex: 1,
                 }}
@@ -1300,7 +1601,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
               {selectedGenre !== currentGenre && (
-                <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>
+                <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.textSoft, fontStyle: "italic" }}>
                   ✓ saved
                 </span>
               )}
@@ -1321,36 +1622,113 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               </button>
             </div>
 
-            {/* Progress bar — only when reading */}
+            {/* Editable start / finish dates */}
+            {(status === "reading" || status === "finished") && (
+              <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                <button onClick={() => setDatePickerOpen("start")}
+                  style={{ flex: 1, minWidth: 150, padding: "6px 10px", borderRadius: 8, border: `1px solid ${modalTheme.accent || "#8B5E3C"}`, background: dates[isbn]?.startDate ? (modalTheme.bgDeep || modalTheme.bg) : "transparent", color: modalTheme.text, fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>📅</span>
+                  <span style={{ flex: 1, color: dates[isbn]?.startDate ? modalTheme.text : (modalTheme.textSoft || "#8B7355") }}>
+                    {dates[isbn]?.startDate
+                      ? new Date(dates[isbn].startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                      : "Set start date"}
+                  </span>
+                </button>
+                {status === "finished" && (
+                  <button onClick={() => setDatePickerOpen("end")}
+                    style={{ flex: 1, minWidth: 150, padding: "6px 10px", borderRadius: 8, border: `1px solid ${modalTheme.accent || "#8B5E3C"}`, background: dates[isbn]?.endDate ? (modalTheme.bgDeep || modalTheme.bg) : "transparent", color: modalTheme.text, fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 6 }}>
+                    <span>✅</span>
+                    <span style={{ flex: 1, color: dates[isbn]?.endDate ? modalTheme.text : (modalTheme.textSoft || "#8B7355") }}>
+                      {dates[isbn]?.endDate
+                        ? new Date(dates[isbn].endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                        : "Set finish date"}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
+            {datePickerOpen === "start" && (
+              <DatePickerModal
+                label="📅 When did you start?"
+                value={dates[isbn]?.startDate}
+                onSelect={iso => setDates(prev => ({ ...prev, [isbn]: { ...prev[isbn], startDate: iso } }))}
+                onClose={() => setDatePickerOpen(null)}
+                themeAccent={modalTheme.accent}
+                themeBg={modalTheme.bgDeep || modalTheme.bg}
+                themeText={modalTheme.text}
+              />
+            )}
+            {datePickerOpen === "end" && (
+              <DatePickerModal
+                label="✅ When did you finish?"
+                value={dates[isbn]?.endDate}
+                onSelect={iso => setDates(prev => ({ ...prev, [isbn]: { ...prev[isbn], endDate: iso } }))}
+                onClose={() => setDatePickerOpen(null)}
+                themeAccent={modalTheme.accent}
+                themeBg={modalTheme.bgDeep || modalTheme.bg}
+                themeText={modalTheme.text}
+              />
+            )}
+
+            {/* Progress — page number for ebooks, chapter for audiobooks */}
             {status === "reading" && (
               <div style={{ marginBottom: 14 }}>
-                <label style={{
-                  fontFamily: "Georgia, serif",
-                  fontSize: 12,
-                  color: "#4B3A2A",
-                  display: "block",
-                  marginBottom: 6,
-                }}>
-                  {mediaType === "audiobooks" ? "Listening Progress" : "Reading Progress"}: {prog}%
-                </label>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={prog}
-                  onChange={handleProgress}
-                  style={{
-                    width: "100%",
-                    accentColor: "#8B5E3C",
-                    cursor: "pointer",
-                  }}
-                />
+                {progressMode === "percent" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap" }}>
+                      {mediaType === "audiobooks" ? "Listening Progress:" : "Reading Progress:"}
+                    </label>
+                    <input type="range" min={0} max={100} value={prog} onChange={handleProgress} style={{ flex: 1, accentColor: modalTheme.accent, cursor: "pointer" }} />
+                    <span style={{ fontFamily: "Georgia, serif", fontSize: 13, fontWeight: 700, color: modalTheme.accent, minWidth: 36, textAlign: "right" }}>{prog}%</span>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap" }}>
+                      {mediaType === "audiobooks" ? "Current Chapter:" : "Current Page:"}
+                    </label>
+                    <input
+                      type="number" min={0}
+                      value={book._currentPage || ""}
+                      placeholder={mediaType === "audiobooks" ? "Ch. #" : "Pg. #"}
+                      onChange={e => {
+                        const val = Math.max(0, Number(e.target.value) || 0);
+                        const total = mediaType === "audiobooks" ? (book._totalChapters || 0) : (book._totalPages || 0);
+                        const pct = total > 0 ? Math.min(100, Math.round((val / total) * 100)) : 0;
+                        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                        const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+                        if (idx !== -1) { all[idx]._currentPage = val; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+                        if (pct > 0) setProgress(prev => ({ ...prev, [isbn]: pct }));
+                        if (pct >= 100) handleStatus("finished");
+                        else if (val > 0 && (!statuses[isbn] || statuses[isbn] === "want-to-read")) handleStatus("reading");
+                      }}
+                      style={{ width: 75, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }}
+                    />
+                    {mediaType === "audiobooks" ? (
+                      <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textSoft }}>
+                        of <input type="number" min={0} value={book._totalChapters || ""} placeholder="Total" onChange={e => {
+                          const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                          const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+                          if (idx !== -1) { all[idx]._totalChapters = Number(e.target.value) || 0; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+                        }} style={{ width: 55, padding: "4px 6px", borderRadius: 6, border: "1px solid #C9A96E", fontFamily: "Georgia, serif", fontSize: 12, background: modalTheme.bgDeep, color: modalTheme.text }} /> ch.
+                      </span>
+                    ) : (
+                      <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textSoft }}>
+                        of <input type="number" min={0} value={book._totalPages || ""} placeholder="Total" onChange={e => {
+                          const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                          const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+                          if (idx !== -1) { all[idx]._totalPages = Number(e.target.value) || 0; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+                        }} style={{ width: 55, padding: "4px 6px", borderRadius: 6, border: "1px solid #C9A96E", fontFamily: "Georgia, serif", fontSize: 12, background: modalTheme.bgDeep, color: modalTheme.text }} /> pg.
+                      </span>
+                    )}
+                    {prog > 0 && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.accent, fontStyle: "italic" }}>{prog}%</span>}
+                  </div>
+                )}
               </div>
             )}
 
             {/* ── Session Timer & Pages ── */}
             <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>
-              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 10 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: modalTheme.text, marginBottom: 10 }}>
                 {mediaType === "audiobooks" ? "🎧 Listening Session" : "📖 Reading Session"}
               </div>
 
@@ -1358,65 +1736,156 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                 {isTimerActive ? (
                   <>
-                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 22, fontWeight: 700, color: "#8B5E3C", minWidth: 90 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 22, fontWeight: 700, color: modalTheme.accent, minWidth: 90 }}>
                       🔴 {formatTime(elapsed)}
                     </div>
-                    <button onClick={stopTimer} style={{ padding: "7px 16px", background: "#7A2A2A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                    <button onClick={stopTimer} style={{ padding: "7px 16px", background: "#7A2A2A", color: modalTheme.bg, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
                       ⏹ Stop & Save
                     </button>
                   </>
                 ) : (
                   <>
-                    <button onClick={startTimer} style={{ padding: "7px 16px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                    <button onClick={startTimer} style={{ padding: "7px 16px", background: modalTheme.text, color: modalTheme.bg, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
                       ▶ Start Session
                     </button>
                     {sessionSaved && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2d6a2d", fontStyle: "italic" }}>✓ Session saved!</span>}
                   </>
                 )}
-                {totalMinutes > 0 && (
-                  <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic", marginLeft: "auto" }}>
-                    {totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m` : `${totalMinutes}m`} total logged
-                  </span>
-                )}
+                <div style={{ marginLeft: "auto", textAlign: "right", flexShrink: 0 }}>
+                    {totalMinutes > 0 && (
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.textSoft, fontStyle: "italic" }}>
+                        ⏱ {totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m` : `${totalMinutes}m`} this book
+                      </div>
+                    )}
+                    {mediaType === "ebooks" && lifetimePages > 0 && (
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.accent, fontStyle: "italic" }}>
+                        📖 {lifetimePages.toLocaleString()} pages lifetime
+                      </div>
+                    )}
+                    {mediaType === "ebooks" && lifetimeChaptersEbooks > 0 && (
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.accent, fontStyle: "italic" }}>
+                        🔖 {lifetimeChaptersEbooks.toLocaleString()} chapters lifetime
+                      </div>
+                    )}
+                    {mediaType === "audiobooks" && lifetimeChapters > 0 && (
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.accent, fontStyle: "italic" }}>
+                        🎧 {lifetimeChapters.toLocaleString()} chapters lifetime
+                      </div>
+                    )}
+                    {lifetimeMinutes > 0 && (
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.accent, fontStyle: "italic" }}>
+                        🕰 {lifetimeMinutes >= 60 ? `${Math.floor(lifetimeMinutes / 60)}h ${lifetimeMinutes % 60}m` : `${lifetimeMinutes}m`} lifetime
+                      </div>
+                    )}
+                  </div>
               </div>
 
-              {/* Pages — only for ebooks */}
-              {mediaType === "ebooks" && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", whiteSpace: "nowrap" }}>Current page:</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={currentPage}
-                    onChange={e => savePage(e.target.value)}
-                    placeholder="e.g. 142"
-                    style={{ width: 80, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: "#FFFDF8", color: "#3A2A1A" }}
-                  />
-                </div>
-              )}
+              {/* Pages / Chapter reached — logged with session */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {mediaType === "audiobooks" ? (
+                  <>
+                    <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap" }}>Chapter reached:</label>
+                    <input type="number" min={0} value={currentPage} onChange={e => savePage(e.target.value)} placeholder="e.g. 12"
+                      style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }} />
+                  </>
+                ) : (
+                  <>
+                    <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap" }}>Page reached:</label>
+                    <input type="number" min={0} value={currentPage} onChange={e => savePage(e.target.value)} placeholder="e.g. 142"
+                      style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }} />
+                    <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap", marginLeft: 6 }}>Chapter:</label>
+                    <input type="number" min={0} value={currentChapter} onChange={e => {
+                      const val = e.target.value;
+                      setCurrentChapter(val);
+                      const all = (() => { try { return JSON.parse(localStorage.getItem("sk_chapters_ebooks") || "{}"); } catch { return {}; } })();
+                      all[isbn] = val;
+                      localStorage.setItem("sk_chapters_ebooks", JSON.stringify(all));
+                    }} placeholder="e.g. 5"
+                      style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }} />
+                  </>
+                )}
+                <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B7355", fontStyle: "italic" }}>(saved with session)</span>
+              </div>
             </div>
 
-            {/* Find Cover & Info — for imported books missing data */}
-            {isUserBook && (!book.coverUrl || !book.description) && (
-              <div style={{ marginBottom: 12 }}>
-                <button
-                  onClick={handleFetchInfo}
-                  disabled={fetching}
-                  style={{
-                    padding: "6px 14px",
-                    background: fetching ? "#D8C3A5" : "transparent",
-                    border: "1px solid #8B5E3C",
-                    borderRadius: 6,
-                    cursor: fetching ? "default" : "pointer",
-                    fontFamily: '"Palatino Linotype", Palatino, serif',
-                    fontSize: 12,
-                    color: "#3A2A1A",
-                  }}
-                >
-                  {fetching ? "Searching…" : "🔍 Find Cover & Info"}
-                </button>
+            {/* Find Cover & Info — for imported books */}
+            {isUserBook && (
+              <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                {(!book.coverUrl || !book.description) && (
+                  <button
+                    onClick={handleFetchInfo}
+                    disabled={fetching}
+                    style={{
+                      padding: "6px 14px",
+                      background: fetching ? modalTheme.border : "transparent",
+                      border: "1px solid #8B5E3C",
+                      borderRadius: 6,
+                      cursor: fetching ? "default" : "pointer",
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                      fontSize: 12,
+                      color: modalTheme.text,
+                    }}
+                  >
+                    {fetching ? "Searching…" : "🔍 Find Cover & Info"}
+                  </button>
+                )}
+                {book.coverUrl && (
+                  <button
+                    onClick={async () => {
+                      setFetching(true);
+                      setFetchMsg(null);
+                      try {
+                        const cleaned = cleanTitle(book.title);
+                        const queries = [
+                          book.isbn ? `https://www.googleapis.com/books/v1/volumes?q=isbn:${book.isbn}&maxResults=1&langRestrict=en` : null,
+                          book.author ? `https://www.googleapis.com/books/v1/volumes?q=intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(book.author)}&maxResults=1&langRestrict=en` : null,
+                          `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleaned)}&maxResults=1&langRestrict=en`,
+                        ].filter(Boolean);
+                        let newCover = null;
+                        for (const url of queries) {
+                          const res = await fetch(url);
+                          const json = await res.json();
+                          const vol = json.items?.[0]?.volumeInfo;
+                          if (vol?.imageLinks?.thumbnail) {
+                            newCover = vol.imageLinks.thumbnail.replace("http://", "https://").replace("&zoom=1", "&zoom=2");
+                            break;
+                          }
+                        }
+                        if (newCover) {
+                          const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                          const idx = all.findIndex(b => (book.isbn && b.isbn === book.isbn) || b.title?.trim() === book.title?.trim());
+                          if (idx !== -1) {
+                            all[idx].coverUrl = newCover;
+                            localStorage.setItem("sk_user_books", JSON.stringify(all));
+                            // Also update genre overrides store so shelf stays correct
+                            if (onBookEdited) onBookEdited({ ...all[idx] });
+                            setFetchMsg("✅ Cover refreshed! Reopen to see the new cover.");
+                          }
+                        } else {
+                          setFetchMsg("No alternative cover found online.");
+                        }
+                      } catch {
+                        setFetchMsg("Network error — please try again.");
+                      }
+                      setFetching(false);
+                    }}
+                    disabled={fetching}
+                    style={{
+                      padding: "6px 14px",
+                      background: "transparent",
+                      border: "1px solid #8B5E3C",
+                      borderRadius: 6,
+                      cursor: fetching ? "default" : "pointer",
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                      fontSize: 12,
+                      color: modalTheme.text,
+                    }}
+                  >
+                    {fetching ? "Searching…" : "🖼 Refresh Cover"}
+                  </button>
+                )}
                 {fetchMsg && (
-                  <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic", marginTop: 5 }}>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.textSoft, fontStyle: "italic", width: "100%", marginTop: 2 }}>
                     {fetchMsg}
                   </div>
                 )}
@@ -1424,7 +1893,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             )}
 
             {/* Favorites row */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
               <button
                 onClick={handleFav}
                 style={{
@@ -1432,7 +1901,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   border: "none",
                   fontSize: 22,
                   cursor: "pointer",
-                  color: isFav ? "#8B2020" : "#8B5E3C",
+                  color: isFav ? "#8B2020" : modalTheme.accent,
                   padding: 0,
                   lineHeight: 1,
                 }}
@@ -1443,12 +1912,117 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               <span style={{
                 fontFamily: "Georgia, serif",
                 fontSize: 13,
-                color: isFav ? "#8B2020" : "#6B4E32",
+                color: isFav ? "#8B2020" : modalTheme.textSoft,
                 fontStyle: "italic",
               }}>
                 {isFav ? "Favorited" : "Add to Favorites"}
               </span>
             </div>
+
+            {/* Rating, Spice & Notes — excluded for non-fiction reference genres */}
+            {!["Cookbooks", "Self Help", "Gardening & Landscaping", "Home & DIY", "Health & Wellness", "Sewing & Crafts"].includes(book.genre) && (
+            <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>
+
+              {/* Star Rating */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap", minWidth: 60 }}>My Rating:</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[1,2,3,4,5].map(n => (
+                    <button key={n}
+                      onMouseEnter={() => setHoverRating(n)}
+                      onMouseLeave={() => setHoverRating(0)}
+                      onClick={() => {
+                        const val = rating === n ? 0 : n;
+                        setRating(val);
+                        const all = (() => { try { return JSON.parse(localStorage.getItem("sk_ratings") || "{}"); } catch { return {}; } })();
+                        if (val === 0) delete all[isbn]; else all[isbn] = val;
+                        localStorage.setItem("sk_ratings", JSON.stringify(all));
+                      }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 22, lineHeight: 1, color: (hoverRating || rating) >= n ? thAccent : thAccent + "55" }}
+                    >★</button>
+                  ))}
+                </div>
+                {rating > 0 && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.accent, fontStyle: "italic" }}>{rating} of 5</span>}
+              </div>
+
+              {/* Spice Level (non-thriller) / Lights Out (thriller) */}
+              {(() => {
+                const ratingRow = (icon, label, value, setter, hover, setHover, storageKey, labels, labelColor) => (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                    <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap", minWidth: 60 }}>{label}</span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[1,2,3,4,5].map(n => (
+                        <button key={n}
+                          onMouseEnter={() => setHover(n)}
+                          onMouseLeave={() => setHover(0)}
+                          onClick={() => {
+                            const val = value === n ? 0 : n;
+                            setter(val);
+                            const all = (() => { try { return JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch { return {}; } })();
+                            if (val === 0) delete all[isbn]; else all[isbn] = val;
+                            localStorage.setItem(storageKey, JSON.stringify(all));
+                          }}
+                          style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 20, lineHeight: 1, opacity: (hover || value) >= n ? 1 : 0.25 }}
+                        >{icon}</button>
+                      ))}
+                    </div>
+                    {value > 0 && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: labelColor, fontStyle: "italic" }}>{labels[value - 1]}</span>}
+                  </div>
+                );
+                if (isDrama) return ratingRow("💧","Cry Factor:",cryFactor,setCryFactor,hoverCry,setHoverCry,"sk_cry_factor",["Dry Eye","Misty","Full Cry","Ugly Cry","Destroyed"],"#4A6B8B");
+                if (isHorror) return ratingRow("💀","Scare Factor:",skullFactor,setSkullFactor,hoverSkull,setHoverSkull,"sk_skull_factor",["Spooked","Creepy","Frightening","Terrifying","Nightmare Fuel"],"#5A2A2A");
+                if (isFantasy) return ratingRow("🌍","World Building:",worldBuilding,setWorldBuilding,hoverWorld,setHoverWorld,"sk_world_building",["Surface","Layered","Rich","Immersive","Universe"],"#2A5A3A");
+                if (isDarkRomance) return ratingRow("🖤","Dark Factor:",darkFactor,setDarkFactor,hoverDark,setHoverDark,"sk_dark_factor",["Soft","Moody","Intense","Twisted","Unhinged"],"#3A2A4A");
+                if (isThriller) return (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap", minWidth: 60 }}>Lights Out:</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {[1,2,3,4,5].map(n => (
+                      <button key={n}
+                        onMouseEnter={() => setHoverLightsOut(n)}
+                        onMouseLeave={() => setHoverLightsOut(0)}
+                        onClick={() => {
+                          const val = lightsOut === n ? 0 : n;
+                          setLightsOut(val);
+                          const all = (() => { try { return JSON.parse(localStorage.getItem("sk_lights_out") || "{}"); } catch { return {}; } })();
+                          if (val === 0) delete all[isbn]; else all[isbn] = val;
+                          localStorage.setItem("sk_lights_out", JSON.stringify(all));
+                        }}
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 20, lineHeight: 1, opacity: (hoverLightsOut || lightsOut) >= n ? 1 : 0.25 }}
+                      >🔦</button>
+                    ))}
+                  </div>
+                  {lightsOut > 0 && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#5A3A6B", fontStyle: "italic" }}>{["Nightlight","Flickering","Dim","Dark","Total Blackout"][lightsOut - 1]}</span>}
+                </div>
+                );
+                return ratingRow("🌶️","Spice Level:",spice,setSpice,hoverSpice,setHoverSpice,"sk_spice",["Mild","Warm","Medium","Hot","🔥 Fiery"],modalTheme.accent);
+              })()}
+
+              {/* My Notes */}
+              <div>
+                <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, marginBottom: 6 }}>My Notes:</div>
+                <textarea
+                  value={notes}
+                  onChange={e => {
+                    setNotes(e.target.value);
+                    const all = (() => { try { return JSON.parse(localStorage.getItem("sk_notes") || "{}"); } catch { return {}; } })();
+                    all[isbn] = e.target.value;
+                    localStorage.setItem("sk_notes", JSON.stringify(all));
+                  }}
+                  placeholder="Your thoughts, quotes, favourite moments…"
+                  rows={4}
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    padding: "8px 10px", borderRadius: 8,
+                    border: "1px solid #C9A96E",
+                    fontFamily: "Georgia, serif", fontSize: 13,
+                    background: modalTheme.bgDeep, color: modalTheme.text,
+                    resize: "vertical", lineHeight: 1.6,
+                  }}
+                />
+              </div>
+            </div>
+            )}
           </div>
         </div>
 
@@ -1480,7 +2054,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
         {confirmDelete && (
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #D8C3A5", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
-            <span style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: "#3A2A1A" }}>
+            <span style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: modalTheme.text }}>
               Delete from library?
             </span>
             <button
@@ -1491,7 +2065,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             </button>
             <button
               onClick={() => setConfirmDelete(false)}
-              style={{ padding: "6px 16px", background: "#E8D9C0", color: "#3A2A1A", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13 }}
+              style={{ padding: "6px 16px", background: "#E8D9C0", color: modalTheme.text, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13 }}
             >
               Cancel
             </button>
@@ -1686,29 +2260,59 @@ function StackedBooks({ books, rowIndex, startColorIndex, onBookClick, mediaType
 function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [filterQuery, setFilterQuery] = useState("");
+  const [sortBy, setSortBy] = useState(() => localStorage.getItem("sk_shelf_sort") || "default");
 
-  const genreOverrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
-  const hiddenBooks = (() => { try { return new Set(JSON.parse(localStorage.getItem("sk_hidden_books") || "[]")); } catch { return new Set(); } })();
-  const allBooks = (library[genre] || [])
-    .filter(b => b.type === mediaType)
-    .filter(b => (genreOverrides[b.isbn] || genre) === genre)
-    .filter(b => !hiddenBooks.has(b.isbn || b.title));
-  const overriddenToHere = Object.values(library).flat()
-    .filter(b => b.type === mediaType && genreOverrides[b.isbn] === genre && !(library[genre] || []).some(lb => lb.isbn === b.isbn))
-    .filter(b => !hiddenBooks.has(b.isbn || b.title));
-  const userBooks = (() => {
-    try {
-      const all = JSON.parse(localStorage.getItem("sk_user_books")) || [];
-      return all.filter(b => b.genre === genre && b.type === mediaType);
-    } catch { return []; }
-  })();
-  const allShelfBooks = [...allBooks, ...overriddenToHere, ...userBooks];
-  const books = filterQuery.trim()
+  const loadBooks = () => {
+    const genreOverrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
+    const hiddenBooks = (() => { try { return new Set(JSON.parse(localStorage.getItem("sk_hidden_books") || "[]")); } catch { return new Set(); } })();
+    const allBooks = (library[genre] || [])
+      .filter(b => b.type === mediaType)
+      .filter(b => (genreOverrides[b.isbn] || genre) === genre)
+      .filter(b => !hiddenBooks.has(b.isbn || b.title));
+    const overriddenToHere = Object.values(library).flat()
+      .filter(b => b.type === mediaType && genreOverrides[b.isbn] === genre && !(library[genre] || []).some(lb => lb.isbn === b.isbn))
+      .filter(b => !hiddenBooks.has(b.isbn || b.title));
+    const userBooks = (() => {
+      try {
+        const all = JSON.parse(localStorage.getItem("sk_user_books")) || [];
+        return all.filter(b => {
+          const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
+          const effectiveGenre = genreOverrides[b.isbn || b.title] || b.genre;
+          return effectiveGenre === genre && bookMedia === mediaType;
+        });
+      } catch { return []; }
+    })();
+    return [...allBooks, ...overriddenToHere, ...userBooks];
+  };
+
+  const [allShelfBooks, setAllShelfBooks] = useState(() => loadBooks());
+
+  useEffect(() => {
+    setAllShelfBooks(loadBooks());
+  }, [refreshKey, genre, mediaType]);
+  const sortBooks = (arr) => {
+    if (sortBy === "title") return [...arr].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    if (sortBy === "author") return [...arr].sort((a, b) => {
+      const aLast = (a.author || "").split(" ").pop().toLowerCase();
+      const bLast = (b.author || "").split(" ").pop().toLowerCase();
+      return aLast.localeCompare(bLast);
+    });
+    if (sortBy === "series") return [...arr].sort((a, b) => {
+      const aS = (a.series || "").toLowerCase() || "zzz";
+      const bS = (b.series || "").toLowerCase() || "zzz";
+      if (aS !== bS) return aS.localeCompare(bS);
+      return (a.title || "").localeCompare(b.title || "");
+    });
+    return arr;
+  };
+
+  const filtered = filterQuery.trim()
     ? allShelfBooks.filter(b =>
         b.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         (b.author || "").toLowerCase().includes(filterQuery.toLowerCase())
       )
     : allShelfBooks;
+  const books = sortBooks(filtered);
 
   const handleDelete = (book) => {
     const bookKey = book.isbn || book.title;
@@ -1863,12 +2467,12 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           {mediaType === "ebooks" ? "📘" : "🎧"} {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : "Audiobooks"} in this collection
         </p>
 
-        {/* Filter bar */}
-        <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
+        {/* Filter + Sort bar */}
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <div style={{
             display: "flex", alignItems: "center", gap: 6,
             background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
-            borderRadius: 20, padding: "5px 14px", width: "100%", maxWidth: 380,
+            borderRadius: 20, padding: "5px 14px", flex: "1 1 220px", maxWidth: 340,
           }}>
             <span style={{ fontSize: 13, opacity: 0.5, color: "#5a3a1a" }}>🔍</span>
             <input
@@ -1885,6 +2489,29 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
             {filterQuery && (
               <button onMouseDown={() => setFilterQuery("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#8B5E3C", fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
             )}
+          </div>
+          {/* Sort buttons */}
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["default", "Default"], ["title", "A–Z Title"], ["author", "A–Z Author"], ["series", "Series"]].map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => { setSortBy(val); localStorage.setItem("sk_shelf_sort", val); }}
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: 14,
+                  border: `1px solid ${sortBy === val ? "#8B5E3C" : "#C4A882"}`,
+                  background: sortBy === val ? "#8B5E3C" : "rgba(255,255,255,0.7)",
+                  color: sortBy === val ? "#F8F1E4" : "#5a3a1a",
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontWeight: sortBy === val ? 700 : 400,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -2041,6 +2668,9 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           setProgress={setProgress}
           mediaType={mediaType}
           onDelete={handleDelete}
+          onBookEdited={() => {
+            setRefreshKey(k => k + 1);
+          }}
         />
       )}
     </div>
@@ -2327,9 +2957,14 @@ function FavoritesShelf({ onClose }) {
   );
 }
 
-function StatsPage({ onClose, mediaType }) {
+function StatsPage({ onClose, mediaType: initialMediaType }) {
+  const [mediaType, setMediaType] = useState(initialMediaType || "ebooks");
   const [calMonth, setCalMonth] = useState(new Date());
   const [selectedTallyMonth, setSelectedTallyMonth] = useState(null); // { yr, mi }
+  const [calendarBook, setCalendarBook] = useState(null);
+  const [calFavorites, setCalFavorites] = useState(() => { try { return JSON.parse(localStorage.getItem(`sk_favorites_${initialMediaType}`) || "{}"); } catch { return {}; } });
+  const [calStatuses, setCalStatuses] = useState(() => { try { return JSON.parse(localStorage.getItem(`sk_statuses_${initialMediaType}`) || "{}"); } catch { return {}; } });
+  const [calProgress, setCalProgress] = useState(() => { try { return JSON.parse(localStorage.getItem(`sk_progress_${initialMediaType}`) || "{}"); } catch { return {}; } });
 
   const statuses = (() => { try { return JSON.parse(localStorage.getItem(`sk_statuses_${mediaType}`)) || {}; } catch { return {}; } })();
   const favorites = (() => { try { return JSON.parse(localStorage.getItem(`sk_favorites_${mediaType}`)) || {}; } catch { return {}; } })();
@@ -2340,8 +2975,11 @@ function StatsPage({ onClose, mediaType }) {
   const sessions = (() => { try { return JSON.parse(localStorage.getItem(`sk_sessions_${mediaType}`) || "[]"); } catch { return []; } })();
   const now = new Date();
   const thisMonth = sessions.filter(s => { const d = new Date(s.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); });
-  const totalMinutesAllTime = sessions.reduce((a, s) => a + (s.minutes || 0), 0);
+  const totalMinutesAllTime = parseInt(localStorage.getItem(`sk_lifetime_minutes_${mediaType}`) || "0") || sessions.reduce((a, s) => a + (s.minutes || 0), 0);
   const totalMinutesThisMonth = thisMonth.reduce((a, s) => a + (s.minutes || 0), 0);
+  const totalPagesAllTime = parseInt(localStorage.getItem("sk_lifetime_pages") || "0");
+  const totalChaptersAllTime = parseInt(localStorage.getItem("sk_lifetime_chapters") || "0");
+  const totalChaptersEbooksAllTime = parseInt(localStorage.getItem("sk_lifetime_chapters_ebooks") || "0");
   const formatMins = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 
   // Flatten all books
@@ -2400,9 +3038,8 @@ function StatsPage({ onClose, mediaType }) {
     background: "rgba(255,255,255,0.7)",
     border: "1px solid #D8C3A5",
     borderRadius: 10,
-    padding: "16px 24px",
+    padding: "16px 12px",
     textAlign: "center",
-    minWidth: 130,
   };
 
   const sectionTitle = (text) => (
@@ -2429,7 +3066,7 @@ function StatsPage({ onClose, mediaType }) {
     <div style={{
       position: "fixed",
       inset: 0,
-      zIndex: 550,
+      zIndex: 700,
       backgroundColor: "#F8F1E4",
       backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
       backgroundSize: "cover",
@@ -2496,20 +3133,37 @@ function StatsPage({ onClose, mediaType }) {
       <div
         ref={scrollRef}
         onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
-        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "60px 40px 30px" }}
+        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "80px 40px 30px" }}
       >
-      <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 10 }}>
+      <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 20 }}>
         {/* Header */}
         <h1 style={{
           fontFamily: '"Palatino Linotype", Palatino, serif',
           fontSize: 32,
           color: "#3A2A1A",
           textAlign: "center",
-          marginBottom: 30,
-        }}>{mediaType === "audiobooks" ? "🎧 My Listening Journey" : "📊 My Reading Journey"}</h1>
+          marginBottom: 16,
+        }}>{mediaType === "audiobooks" ? "🎧 My Story So Far" : "📖 My Story So Far"}</h1>
+
+        {/* eBooks / Audiobooks toggle */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 30 }}>
+          {["ebooks", "audiobooks"].map(t => (
+            <button key={t} onClick={() => setMediaType(t)}
+              style={{
+                padding: "8px 24px", borderRadius: 20, cursor: "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700,
+                border: mediaType === t ? "2px solid #8B5E3C" : "1px solid #C4A870",
+                background: mediaType === t ? "#8B5E3C" : "transparent",
+                color: mediaType === t ? "#F8F1E4" : "#6B4E32",
+                transition: "all 0.2s",
+              }}>
+              {t === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
+            </button>
+          ))}
+        </div>
 
         {/* Section 1 — Summary Cards */}
-        <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginBottom: 40 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, marginBottom: 40 }}>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{finishedBooks.length}</div>
             <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Books Listened To" : "📚 Books Read"}</div>
@@ -2532,45 +3186,35 @@ function StatsPage({ onClose, mediaType }) {
           </div>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{totalMinutesAllTime > 0 ? formatMins(totalMinutesAllTime) : "—"}</div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 All Time" : "📖 All Time"}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Lifetime Listening Time" : "📖 Lifetime Reading Time"}</div>
           </div>
+          {mediaType === "ebooks" && (
+            <div style={cardStyle}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{totalChaptersEbooksAllTime > 0 ? totalChaptersEbooksAllTime.toLocaleString() : "—"}</div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>🔖 Lifetime Chapters Read</div>
+            </div>
+          )}
+          {mediaType === "ebooks" && (
+            <div style={cardStyle}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{totalPagesAllTime > 0 ? totalPagesAllTime.toLocaleString() : "—"}</div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>📄 Lifetime Pages Read</div>
+            </div>
+          )}
+          {mediaType === "audiobooks" && (
+            <div style={cardStyle}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{totalChaptersAllTime > 0 ? totalChaptersAllTime.toLocaleString() : "—"}</div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>🔖 Lifetime Chapters Listened</div>
+            </div>
+          )}
         </div>
 
         {divider}
 
-        {/* Session Log */}
-        {sessions.length > 0 && (
-          <div style={{ marginBottom: 40 }}>
-            {sectionTitle(mediaType === "audiobooks" ? "🎧 Listening Sessions" : "📖 Reading Sessions")}
-            <div style={{ border: "1px solid #D8C3A5", borderRadius: 10, overflow: "hidden" }}>
-              {/* Header */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px", gap: 0, background: "#3A2A1A", padding: "8px 14px" }}>
-                {["Date", "Book", "Time", "Page"].map(h => (
-                  <div key={h} style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: "#F8F1E4" }}>{h}</div>
-                ))}
-              </div>
-              {sessions.slice(0, 30).map((s, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px", gap: 0, padding: "8px 14px", background: i % 2 === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.3)", borderTop: "1px solid #E8D9C5" }}>
-                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32" }}>{new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
-                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
-                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#3A2A1A" }}>{formatMins(s.minutes)}</div>
-                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32" }}>{s.pages > 0 ? `p. ${s.pages}` : "—"}</div>
-                </div>
-              ))}
-              {sessions.length > 30 && (
-                <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#8B5E3C", textAlign: "center" }}>
-                  Showing 30 most recent sessions of {sessions.length} total
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {divider}
-
         {/* Section 2 — Monthly Reading Calendar */}
-        <div style={{ marginBottom: 40 }}>
+        <div style={{ marginBottom: 40, marginLeft: -40, marginRight: -40 }}>
+          <div style={{ paddingLeft: 40, paddingRight: 40 }}>
           {sectionTitle(mediaType === "audiobooks" ? "📅 Monthly Listening Calendar" : "📅 Monthly Reading Calendar")}
+          </div>
 
           {/* Month navigation */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 20, marginBottom: 12 }}>
@@ -2587,7 +3231,9 @@ function StatsPage({ onClose, mediaType }) {
             >›</button>
           </div>
 
-          {/* Day headers */}
+          {/* Day headers + grid — horizontally scrollable so tiles stay a useful size */}
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <div style={{ minWidth: 490 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
             {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
               <div key={d} style={{ textAlign: "center", fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontWeight: 700, padding: "4px 0" }}>{d}</div>
@@ -2602,7 +3248,7 @@ function StatsPage({ onClose, mediaType }) {
               const single = books.length === 1;
               return (
                 <div key={day} style={{
-                  minHeight: 90,
+                  aspectRatio: "1/1",
                   border: isToday(day) ? "2px solid #8B5E3C" : "1px solid #D8C3A5",
                   borderRadius: 6,
                   padding: single ? 0 : 5,
@@ -2627,7 +3273,8 @@ function StatsPage({ onClose, mediaType }) {
                       src={books[0].coverUrl || (books[0].isbn ? `https://covers.openlibrary.org/b/isbn/${books[0].isbn}-M.jpg` : "")}
                       alt={books[0].title}
                       title={books[0].title}
-                      style={{ width: "100%", height: "100%", minHeight: 84, objectFit: "cover", display: "block", borderRadius: 5 }}
+                      onClick={() => setCalendarBook(books[0])}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: 5, cursor: "pointer" }}
                     />
                   )}
 
@@ -2640,7 +3287,8 @@ function StatsPage({ onClose, mediaType }) {
                           src={b.coverUrl || (b.isbn ? `https://covers.openlibrary.org/b/isbn/${b.isbn}-M.jpg` : "")}
                           alt={b.title}
                           title={b.title}
-                          style={{ width: 30, height: 42, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", boxShadow: "1px 1px 4px rgba(0,0,0,0.2)" }}
+                          onClick={() => setCalendarBook(b)}
+                          style={{ width: 30, height: 42, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", boxShadow: "1px 1px 4px rgba(0,0,0,0.2)", cursor: "pointer" }}
                         />
                       ))}
                     </div>
@@ -2648,6 +3296,8 @@ function StatsPage({ onClose, mediaType }) {
                 </div>
               );
             })}
+          </div>
+            </div>
           </div>
         </div>
 
@@ -2764,6 +3414,42 @@ function StatsPage({ onClose, mediaType }) {
 
         {divider}
 
+        {/* Session Log */}
+        {sessions.length > 0 && (
+          <div style={{ marginBottom: 40 }}>
+            {sectionTitle(mediaType === "audiobooks" ? "🎧 Listening Sessions" : "📖 Reading Sessions")}
+            <div style={{ border: "1px solid #D8C3A5", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px", gap: 0, background: "#3A2A1A", padding: "8px 14px" }}>
+                {["Date", "Book", "Time", mediaType === "audiobooks" ? "Chapter" : "Page"].map(h => (
+                  <div key={h} style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: "#F8F1E4" }}>{h}</div>
+                ))}
+              </div>
+              {sessions.slice(0, 30).map((s, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px", gap: 0, padding: "8px 14px", background: i % 2 === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.3)", borderTop: "1px solid #E8D9C5" }}>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32" }}>{new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#3A2A1A" }}>
+                    {formatMins(s.minutes)}
+                    {s.platform && <span style={{ fontSize: 10, color: "#8B7355", marginLeft: 4 }}>via {s.platform}</span>}
+                  </div>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32" }}>
+                    {mediaType === "audiobooks"
+                      ? (s.chapters > 0 ? `ch. ${s.chapters}` : "—")
+                      : (s.pages > 0 ? `p. ${s.pages}` : "—")}
+                  </div>
+                </div>
+              ))}
+              {sessions.length > 30 && (
+                <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#8B5E3C", textAlign: "center" }}>
+                  Showing 30 most recent sessions of {sessions.length} total
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {divider}
+
         {/* Section 3 — Currently Reading */}
         <div style={{ marginBottom: 40 }}>
           {sectionTitle(mediaType === "audiobooks" ? "🎧 Currently Listening" : "📖 Currently Reading")}
@@ -2816,6 +3502,25 @@ function StatsPage({ onClose, mediaType }) {
 
       </div>
       </div>{/* end scrollable content */}
+
+      {/* Book modal launched from calendar */}
+      {calendarBook && (
+        <BookModal
+          book={calendarBook}
+          onClose={() => setCalendarBook(null)}
+          favorites={calFavorites} setFavorites={(v) => { setCalFavorites(v); localStorage.setItem(`sk_favorites_${mediaType}`, JSON.stringify(v)); }}
+          statuses={calStatuses} setStatuses={(v) => { setCalStatuses(v); localStorage.setItem(`sk_statuses_${mediaType}`, JSON.stringify(v)); }}
+          progress={calProgress} setProgress={(v) => { setCalProgress(v); localStorage.setItem(`sk_progress_${mediaType}`, JSON.stringify(v)); }}
+          mediaType={mediaType}
+          onBookEdited={(updated) => {
+            const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+            const idx = userBooks.findIndex(b => (b.isbn && b.isbn === calendarBook.isbn) || b.title === calendarBook.title);
+            if (idx >= 0) { userBooks[idx] = { ...userBooks[idx], ...updated }; localStorage.setItem("sk_user_books", JSON.stringify(userBooks)); }
+            setCalendarBook(prev => ({ ...prev, ...updated }));
+          }}
+          onDelete={() => setCalendarBook(null)}
+        />
+      )}
     </div>
   );
 }
@@ -3103,6 +3808,22 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
         } else if (isApple && appleProgress !== null) {
           if (appleProgress >= 0.95) status = "finished";
           else if (appleProgress > 0) status = "reading";
+        } else if (isAudible) {
+          const pctRaw = row["percent complete"] || row["percentcomplete"] || row["listening progress"] || row["progress"] || "";
+          const pct = parseFloat(pctRaw);
+          if (!isNaN(pct)) {
+            if (pct >= 95) status = "finished";
+            else if (pct > 0) status = "reading";
+          }
+          const audibleStatus = (row["status"] || "").toLowerCase();
+          if (audibleStatus === "finished" || audibleStatus === "completed") status = "finished";
+          else if (audibleStatus === "started" || audibleStatus === "in progress") status = "reading";
+        } else {
+          // Generic fallback for any platform that exports a status column
+          const rawStatus = (row["status"] || row["read status"] || row["reading status"] || "").toLowerCase();
+          if (rawStatus === "read" || rawStatus === "finished" || rawStatus === "completed") status = "finished";
+          else if (rawStatus === "reading" || rawStatus === "in progress" || rawStatus === "currently reading") status = "reading";
+          else if (rawStatus === "to read" || rawStatus === "want to read") status = "want-to-read";
         }
 
         const mediaType = isAudible ? "audiobook" : isChirp ? "audiobook" : isBookFunnel ? (row["mediatype"] || "ebook") : appleMediaType;
@@ -3127,38 +3848,88 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
             const cleaned = cleanTitle(b.title);
             const normAuthor = normalizeAuthor(b.author);
 
-            const applyDoc = (doc) => {
-              if (!enrichedBooks[i].coverUrl && doc.cover_i)
-                enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`;
-              if (!enrichedBooks[i].description) {
-                const d = doc.description?.value || doc.description || doc.first_sentence?.value || doc.first_sentence || "";
-                if (d && typeof d === "string") enrichedBooks[i].description = d;
-              }
-              const subjects = doc.subject || [];
+            const applySubjects = (subjects) => {
               const genre = detectGenre(subjects, b.title);
-              // Never overwrite a genre the user manually changed, and never downgrade to Fiction
               if (genre && !csvUserEditedRef.current.has(b._csvIdx)) {
-                if (updatedGenres[b._csvIdx] === "Fiction" || !updatedGenres[b._csvIdx] || genre !== "Fiction") {
+                if (updatedGenres[b._csvIdx] === "Fiction" || !updatedGenres[b._csvIdx] || genre !== "Fiction")
                   updatedGenres[b._csvIdx] = genre;
-                }
               }
             };
 
-            // Step 1: OL by ISBN
-            if (b.isbn) {
-              const res = await fetch(`https://openlibrary.org/search.json?isbn=${encodeURIComponent(b.isbn)}&limit=1&fields=title,author_name,isbn,subject,cover_i,description,first_sentence`);
-              const doc = (await res.json()).docs?.[0];
-              if (doc) applyDoc(doc);
+            const applyOLWork = async (workKey) => {
+              if (!workKey) return;
+              try {
+                const res = await fetch(`https://openlibrary.org${workKey}.json`);
+                const work = await res.json();
+                if (!enrichedBooks[i].description) {
+                  const d = work.description?.value || work.description || work.first_sentence?.value || "";
+                  if (d && typeof d === "string" && d.length > 20) enrichedBooks[i].description = d;
+                }
+                if (!enrichedBooks[i].coverUrl && work.covers?.length) {
+                  const coverId = work.covers.find(c => c > 0);
+                  if (coverId) enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`;
+                }
+                if (work.subjects?.length) applySubjects(work.subjects);
+                if (!enrichedBooks[i].coverUrl) {
+                  try {
+                    const edRes = await fetch(`https://openlibrary.org${workKey}/editions.json?limit=10`);
+                    const edData = await edRes.json();
+                    for (const ed of (edData.entries || [])) {
+                      if (ed.covers?.length && ed.covers[0] > 0) {
+                        enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${ed.covers[0]}-M.jpg`;
+                        break;
+                      }
+                    }
+                  } catch { /* ignore */ }
+                }
+              } catch { /* ignore */ }
+            };
+
+            const applyOLSearchDoc = async (doc) => {
+              if (!enrichedBooks[i].coverUrl && doc.cover_i)
+                enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`;
+              if (doc.subject?.length) applySubjects(doc.subject);
+              if (doc.key && (!enrichedBooks[i].description || !enrichedBooks[i].coverUrl))
+                await applyOLWork(doc.key);
+            };
+
+            // Step 1: OL edition by ISBN (direct — richest data)
+            if (b.isbn && (!enrichedBooks[i].description || !enrichedBooks[i].coverUrl)) {
+              try {
+                const res = await fetch(`https://openlibrary.org/isbn/${b.isbn}.json`);
+                if (res.ok) {
+                  const ed = await res.json();
+                  if (!enrichedBooks[i].coverUrl && ed.covers?.length && ed.covers[0] > 0)
+                    enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${ed.covers[0]}-M.jpg`;
+                  if (!enrichedBooks[i].description) {
+                    const d = ed.description?.value || ed.description || "";
+                    if (d && typeof d === "string" && d.length > 20) enrichedBooks[i].description = d;
+                  }
+                  const workKey = ed.works?.[0]?.key;
+                  if (workKey) await applyOLWork(workKey);
+                }
+              } catch { /* ignore */ }
             }
 
-            // Step 2: OL by title + author if still missing cover or description
+            // Step 2: OL search by ISBN
+            if (b.isbn && (!enrichedBooks[i].description || !enrichedBooks[i].coverUrl)) {
+              try {
+                const res = await fetch(`https://openlibrary.org/search.json?isbn=${encodeURIComponent(b.isbn)}&limit=1&fields=key,title,author_name,isbn,subject,cover_i`);
+                const doc = (await res.json()).docs?.[0];
+                if (doc) await applyOLSearchDoc(doc);
+              } catch { /* ignore */ }
+            }
+
+            // Step 3: OL by title + author if still missing cover or description
             if (!enrichedBooks[i].coverUrl || !enrichedBooks[i].description) {
-              const q = normAuthor
-                ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(normAuthor)}`
-                : `q=${encodeURIComponent(cleaned)}`;
-              const res = await fetch(`https://openlibrary.org/search.json?${q}&limit=1&fields=title,author_name,isbn,subject,cover_i,description,first_sentence`);
-              const doc = (await res.json()).docs?.[0];
-              if (doc) applyDoc(doc);
+              try {
+                const q = normAuthor
+                  ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(normAuthor)}`
+                  : `q=${encodeURIComponent(cleaned)}`;
+                const res = await fetch(`https://openlibrary.org/search.json?${q}&limit=1&fields=key,title,author_name,isbn,subject,cover_i`);
+                const doc = (await res.json()).docs?.[0];
+                if (doc) await applyOLSearchDoc(doc);
+              } catch { /* ignore */ }
             }
 
             // Step 3: Google Books fallback if still no description or genre
@@ -3285,7 +4056,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
       platform: platform.id,
       description: b.description || "",
       storeId: isApple ? (b.storeId || "") : undefined,
-      _status: (isGoodreads || isApple) ? b.status : null,
+      _status: b.status || null,
       _dateRead: isGoodreads ? b.dateRead : null,
       _dateAdded: isGoodreads ? b.dateAdded : null,
     }));
@@ -4462,6 +5233,12 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
         }}>
           Cancel anytime. No hidden fees. Your library data is always yours. 🗝️
         </p>
+
+        {/* Secure payment badge */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 }}>
+          <span style={{ fontSize: 16 }}>🔒</span>
+          <span style={{ fontSize: 12, color: "#8B6A50" }}>Payments are secure and encrypted via Stripe. We never store your card details.</span>
+        </div>
       </div>
     </div>
   );
@@ -4473,6 +5250,15 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   const [connections, setConnections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_connections")) || {}; } catch { return {}; }
   });
+
+  // Re-read connections from localStorage after a cloud sync
+  useEffect(() => {
+    const onSync = () => {
+      try { setConnections(JSON.parse(localStorage.getItem("sk_connections")) || {}); } catch {}
+    };
+    window.addEventListener("sk-cloud-synced", onSync);
+    return () => window.removeEventListener("sk-cloud-synced", onSync);
+  }, []);
   const [importingPlatform, setImportingPlatform] = useState(null);
   const [enriching, setEnriching] = useState(false);
   const [enrichResult, setEnrichResult] = useState(null);
@@ -4511,6 +5297,25 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   useEffect(() => {
     if (!localStorage.getItem("sk_supabase_url")) localStorage.setItem("sk_supabase_url", "https://elmoftpybhfxqzkrhkwe.supabase.co");
     if (!localStorage.getItem("sk_supabase_key")) localStorage.setItem("sk_supabase_key", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM");
+    // One-time cleanup: strip LibraryThing placeholder descriptions already stored
+    if (!localStorage.getItem("sk_lt_desc_cleaned")) {
+      try {
+        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+        let cleaned = 0;
+        const updated = all.map(b => {
+          if (b.description && (b.description.includes("LibraryThing") || b.description.includes("catalogs your") || b.description.length < 30)) {
+            cleaned++;
+            return { ...b, description: "" };
+          }
+          return b;
+        });
+        if (cleaned > 0) {
+          localStorage.setItem("sk_user_books", JSON.stringify(updated));
+          console.log("Cleaned " + cleaned + " LibraryThing placeholder descriptions");
+        }
+        localStorage.setItem("sk_lt_desc_cleaned", "1");
+      } catch(e) {}
+    }
   }, []);
 
   const connect = (id) => setConnections((prev) => ({ ...prev, [id]: true }));
@@ -4563,8 +5368,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   const writeToCache = async (isbn, title, author, description, coverUrl, genre) => {
     const url = localStorage.getItem("sk_supabase_url") || "";
     if (!url || !description) return;
-    const badCover = coverUrl && (coverUrl.includes("20years") || coverUrl.includes("nophoto") || coverUrl.includes("nocover"));
-    const safeCoverUrl = badCover ? null : (coverUrl || null);
+    const safeCoverUrl = isBadCover(coverUrl) ? null : (coverUrl || null);
     try {
       await fetch(sbBase(), {
         method: "POST",
@@ -4607,26 +5411,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           } catch { /* ignore */ }
         }
 
-        // Try Google Books (1,000/day with key)
-        if (!isbn && !quotaHit) {
-          const gq = normAuthor
-            ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(normAuthor)}`
-            : `intitle:${encodeURIComponent(cleaned)}`;
-          const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKeySuffix}`);
-          const json = await res.json();
-          if (json.error?.code === 429 || json.error?.status === "RESOURCE_EXHAUSTED") {
-            quotaHit = true;
-          } else {
-            const vol = json.items?.[0]?.volumeInfo;
-            if (vol?.industryIdentifiers?.length) {
-              const id13 = vol.industryIdentifiers.find(id => id.type === "ISBN_13");
-              const id10 = vol.industryIdentifiers.find(id => id.type === "ISBN_10");
-              isbn = (id13 || id10)?.identifier || null;
-            }
-          }
-        }
-
-        // Last resort: Open Library (no quota, less complete)
+        // Open Library fallback (no quota — Google Books quota reserved for Enrich Now)
         if (!isbn) {
           const queries = normAuthor
             ? [
@@ -4681,32 +5466,87 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
         const hadCover = !!userBooks[idx].coverUrl;
         const hadAuthor = !!userBooks[idx].author;
 
-        // Helper: fetch OL work detail to get description (search results rarely include it)
-        const fetchOLDescription = async (workKey) => {
-          if (!workKey || userBooks[idx].description || userBooks[idx].genre === "Cookbooks") return;
+        // Helper: fetch full OL work — description, covers, subjects
+        const fetchOLWork = async (workKey) => {
+          if (!workKey) return;
           try {
             const res = await fetch(`https://openlibrary.org${workKey}.json`);
             const work = await res.json();
-            const d = work.description?.value || work.description || "";
-            if (d && typeof d === "string" && d.length > 20) userBooks[idx].description = d;
+            // Description
+            if (!userBooks[idx].description && userBooks[idx].genre !== "Cookbooks") {
+              const d = work.description?.value || work.description || work.first_sentence?.value || work.first_sentence || "";
+              if (d && typeof d === "string" && d.length > 20) userBooks[idx].description = d;
+            }
+            // Cover from work covers array
+            if (!userBooks[idx].coverUrl && work.covers?.length) {
+              const coverId = work.covers.find(c => c > 0);
+              const url = coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : null;
+              if (url && !isBadCover(url)) userBooks[idx].coverUrl = url;
+            }
+            // Subjects for genre detection
+            if (!userBooks[idx].genre && work.subjects?.length) {
+              userBooks[idx].genre = detectGenre(work.subjects, userBooks[idx].title);
+            }
+            // If still missing cover, try editions
+            if (!userBooks[idx].coverUrl) {
+              try {
+                const edRes = await fetch(`https://openlibrary.org${workKey}/editions.json?limit=10`);
+                const edData = await edRes.json();
+                for (const ed of (edData.entries || [])) {
+                  if (ed.covers?.length && ed.covers[0] > 0) {
+                    const url = `https://covers.openlibrary.org/b/id/${ed.covers[0]}-M.jpg`;
+                    if (!isBadCover(url)) { userBooks[idx].coverUrl = url; break; }
+                  }
+                }
+              } catch { /* ignore */ }
+            }
+          } catch { /* ignore */ }
+        };
+
+        // Helper: fetch OL edition by ISBN directly
+        const fetchOLByIsbn = async (isbn) => {
+          if (!isbn) return;
+          try {
+            const res = await fetch(`https://openlibrary.org/isbn/${isbn}.json`);
+            if (!res.ok) return;
+            const ed = await res.json();
+            if (!userBooks[idx].coverUrl && ed.covers?.length && ed.covers[0] > 0) {
+              const url = `https://covers.openlibrary.org/b/id/${ed.covers[0]}-M.jpg`;
+              if (!isBadCover(url)) userBooks[idx].coverUrl = url;
+            }
+            if (!userBooks[idx].description && userBooks[idx].genre !== "Cookbooks") {
+              const d = ed.description?.value || ed.description || "";
+              if (d && typeof d === "string" && d.length > 20) userBooks[idx].description = d;
+            }
+            if (!userBooks[idx]._totalPages && ed.number_of_pages > 0) userBooks[idx]._totalPages = ed.number_of_pages;
+            // Follow work key for richer data
+            const workKey = ed.works?.[0]?.key;
+            if (workKey && (!userBooks[idx].description || !userBooks[idx].coverUrl))
+              await fetchOLWork(workKey);
           } catch { /* ignore */ }
         };
 
         // Helper: apply Open Library search doc
         const applyOLDoc = async (data) => {
           if (!userBooks[idx].author && data.author_name?.length) userBooks[idx].author = data.author_name.join(", ");
-          if (!userBooks[idx].coverUrl && data.cover_i) userBooks[idx].coverUrl = `https://covers.openlibrary.org/b/id/${data.cover_i}-M.jpg`;
+          if (!userBooks[idx].coverUrl && data.cover_i) {
+            const url = `https://covers.openlibrary.org/b/id/${data.cover_i}-M.jpg`;
+            if (!isBadCover(url)) userBooks[idx].coverUrl = url;
+          }
           if (!userBooks[idx].isbn && data.isbn?.length) userBooks[idx].isbn = data.isbn[0];
           if (!userBooks[idx].genre && data.subject?.length) userBooks[idx].genre = detectGenre(data.subject, userBooks[idx].title);
-          // Fetch work detail for description — search results almost never include it
-          if (!userBooks[idx].description && data.key) await fetchOLDescription(data.key);
+          // Fetch full work for description, better covers, editions
+          if (data.key && (!userBooks[idx].description || !userBooks[idx].coverUrl))
+            await fetchOLWork(data.key);
         };
 
         // Helper: apply Google Books volume
         const applyGoogleVol = (vol) => {
           if (!userBooks[idx].author && vol.authors?.length) userBooks[idx].author = vol.authors.join(", ");
-          if (!userBooks[idx].coverUrl && vol.imageLinks?.thumbnail)
-            userBooks[idx].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://").replace("&zoom=1", "&zoom=2");
+          if (!userBooks[idx].coverUrl && vol.imageLinks?.thumbnail) {
+            const url = vol.imageLinks.thumbnail.replace("http://", "https://").replace("&zoom=1", "&zoom=2");
+            if (!isBadCover(url)) userBooks[idx].coverUrl = url;
+          }
           if (!userBooks[idx].description && vol.description && userBooks[idx].genre !== "Cookbooks") userBooks[idx].description = vol.description;
           if (!userBooks[idx].isbn && vol.industryIdentifiers?.length) {
             const id13 = vol.industryIdentifiers.find(i => i.type === "ISBN_13");
@@ -4714,6 +5554,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
             userBooks[idx].isbn = (id13 || id10)?.identifier || "";
           }
           if (!userBooks[idx].genre && vol.categories?.length) userBooks[idx].genre = detectGenre(vol.categories, userBooks[idx].title);
+          if (!userBooks[idx]._totalPages && vol.pageCount > 0) userBooks[idx]._totalPages = vol.pageCount;
         };
 
         // --- Step 0: Community cache (Supabase) ---
@@ -4722,9 +5563,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           if (cached) {
             if (!userBooks[idx].description && cached.description && userBooks[idx].genre !== "Cookbooks") userBooks[idx].description = cached.description;
             const cachedCoverOk = cached.cover_url &&
-              !cached.cover_url.includes("20years") &&
-              !cached.cover_url.includes("nophoto") &&
-              !cached.cover_url.includes("nocover") &&
+              !isBadCover(cached.cover_url) &&
               !cached.cover_url.includes("covers.openlibrary.org/b/isbn/");
             if (!userBooks[idx].coverUrl && cachedCoverOk) userBooks[idx].coverUrl = cached.cover_url;
             if (!userBooks[idx].author && cached.author) userBooks[idx].author = cached.author;
@@ -4749,7 +5588,12 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           } catch { /* ignore */ }
         }
 
-        // --- Step 2: Open Library by ISBN ---
+        // --- Step 2: Open Library edition by ISBN (direct, richest data) ---
+        if (book.isbn && (!userBooks[idx].description || !userBooks[idx].coverUrl)) {
+          await fetchOLByIsbn(book.isbn);
+        }
+
+        // --- Step 3: Open Library search by ISBN (fallback for work key + subjects) ---
         if (book.isbn && (!userBooks[idx].description || !userBooks[idx].coverUrl)) {
           try {
             const res = await fetch(`https://openlibrary.org/search.json?isbn=${encodeURIComponent(book.isbn)}&limit=1&fields=key,title,author_name,isbn,subject,cover_i`);
@@ -4758,7 +5602,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           } catch { /* ignore */ }
         }
 
-        // --- Step 3: Open Library by title + author ---
+        // --- Step 4: Open Library by title + author ---
         if (!userBooks[idx].coverUrl || !userBooks[idx].description) {
           try {
             const q = normAuthor
@@ -4770,7 +5614,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           } catch { /* ignore */ }
         }
 
-        // --- Step 4: Google Books by title+author — only if still missing description and no quota ---
+        // --- Step 5: Google Books by title+author — only if still missing description and no quota ---
         if (!userBooks[idx].description && !googleQuotaHit) {
           try {
             const gq = normAuthor
@@ -5011,39 +5855,55 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
             </div>
 
             {/* Google API Key */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-              <input
-                type="password"
-                placeholder="Google Books API key (optional but recommended)"
-                value={apiKeyInput}
-                onChange={e => setApiKeyInput(e.target.value)}
-                style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
-              />
-              <button
-                onClick={() => { localStorage.setItem("sk_google_api_key", apiKeyInput); setGoogleApiKey(apiKeyInput); }}
-                style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
-              >
-                Save Key
-              </button>
-              {googleApiKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: th.text, marginBottom: 3 }}>
+                📚 Google Books API Key
+              </div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: th.textSoft, marginBottom: 6 }}>
+                Used for covers, descriptions, page counts, and genres during Enrich Now. Without a key: ~100 requests/day. With a key: 1,000+/day. Request a higher quota at console.cloud.google.com → Books API → Quotas.
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  type="password"
+                  placeholder="Paste Google Books API key…"
+                  value={apiKeyInput}
+                  onChange={e => setApiKeyInput(e.target.value)}
+                  style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
+                />
+                <button
+                  onClick={() => { localStorage.setItem("sk_google_api_key", apiKeyInput); setGoogleApiKey(apiKeyInput); }}
+                  style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+                >
+                  Save Key
+                </button>
+                {googleApiKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
+              </div>
             </div>
 
             {/* ISBNdb API Key */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-              <input
-                type="password"
-                placeholder="ISBNdb API key (optional — used for finding missing ISBNs)"
-                value={isbndbKeyInput}
-                onChange={e => setIsbndbKeyInput(e.target.value)}
-                style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
-              />
-              <button
-                onClick={() => { localStorage.setItem("sk_isbndb_key", isbndbKeyInput); setIsbndbKey(isbndbKeyInput); }}
-                style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
-              >
-                Save Key
-              </button>
-              {isbndbKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: th.text, marginBottom: 3 }}>
+                🔢 ISBNdb API Key
+              </div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: th.textSoft, marginBottom: 6 }}>
+                Used by Find ISBNs (first priority). Finds ISBNs by title + author, especially for audiobooks and titles Google Books misses. Get a key at isbndb.com.
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  type="password"
+                  placeholder="Paste ISBNdb API key…"
+                  value={isbndbKeyInput}
+                  onChange={e => setIsbndbKeyInput(e.target.value)}
+                  style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
+                />
+                <button
+                  onClick={() => { localStorage.setItem("sk_isbndb_key", isbndbKeyInput); setIsbndbKey(isbndbKeyInput); }}
+                  style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+                >
+                  Save Key
+                </button>
+                {isbndbKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
+              </div>
             </div>
 
             {/* Community Cache (Supabase) */}
@@ -5366,7 +6226,160 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           </div>
         </div>
 
-        {/* LibraryThing Description Scraper */}
+        {/* Kindle Documents Importer */}
+        {(() => {
+          const handleUploadKindleDocs = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+              try {
+                const docs = JSON.parse(ev.target.result);
+                const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const existingByTitle = new Map(existing.map((b, i) => [(b.title || "").toLowerCase().trim(), i]));
+                let added = 0, patched = 0, statusSet = 0;
+                const newBooks = [];
+                const statusUpdates = {};
+
+                const kindleStatusMap = { READ: "finished", READING: "reading" };
+
+                for (const doc of docs) {
+                  if (!doc.title) continue;
+                  const key = doc.title.toLowerCase().trim();
+                  const skStatus = kindleStatusMap[doc.readStatus] || null;
+
+                  if (existingByTitle.has(key)) {
+                    const idx = existingByTitle.get(key);
+                    if (doc.asin && !existing[idx].asin) { existing[idx].asin = doc.asin; patched++; }
+                    // Apply read status to existing book using its isbn or title as key
+                    if (skStatus) {
+                      const statusKey = existing[idx].isbn || existing[idx].title;
+                      if (statusKey) { statusUpdates[statusKey] = skStatus; statusSet++; }
+                    }
+                    continue;
+                  }
+                  existingByTitle.set(key, existing.length + newBooks.length);
+                  newBooks.push({
+                    title: doc.title,
+                    author: doc.author || "",
+                    isbn: "",
+                    genre: "",
+                    description: "",
+                    coverUrl: doc.cover || "",
+                    asin: doc.asin || "",
+                    mediaType: "ebook",
+                    platform: "kindle",
+                    source: "kindle-docs",
+                    dateAdded: new Date().toISOString(),
+                  });
+                  added++;
+                  if (skStatus) {
+                    const statusKey = doc.asin || doc.title;
+                    if (statusKey) { statusUpdates[statusKey] = skStatus; statusSet++; }
+                  }
+                }
+
+                const merged = [...existing, ...newBooks];
+                localStorage.setItem("sk_user_books", JSON.stringify(merged));
+
+                // Save status updates
+                if (Object.keys(statusUpdates).length > 0) {
+                  const statusKey = "sk_statuses_ebooks";
+                  const statuses = JSON.parse(localStorage.getItem(statusKey) || "{}");
+                  Object.assign(statuses, statusUpdates);
+                  localStorage.setItem(statusKey, JSON.stringify(statuses));
+                }
+
+                alert(`✅ Imported ${added} new books and linked ${patched} existing books to Kindle.${statusSet > 0 ? `\n📊 ${statusSet} books marked as finished/reading from your Kindle read status.` : ""}\nRun Enrich Now to fetch covers and descriptions.`);
+                e.target.value = "";
+                refreshBookCounts();
+              } catch {
+                alert("❌ Could not read the file. Make sure it's the sk_kindle_docs.json from the Kindle scraper.");
+              }
+            };
+            reader.readAsText(file);
+          };
+
+          const kindleDocsScript = `(async function() {
+  const books = [];
+  console.log('StoryKeeper Kindle Scraper starting...');
+  const csrfToken = window.csrfToken || '';
+  async function fetchBatch(startIndex, totalCount) {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/hz/mycd/digital-console/ajax', true);
+      xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.setRequestHeader('anti-csrftoken-a2z', csrfToken);
+      xhr.onload = function() { try { resolve(JSON.parse(this.responseText)); } catch(e) { resolve({}); } };
+      xhr.onerror = () => resolve({});
+      const activityInput = JSON.stringify({
+        contentType: 'KindlePDoc',
+        contentCategoryReference: 'pdocs',
+        itemStatusList: ['Active'],
+        isExtendedMYK: false,
+        fetchCriteria: {
+          sortOrder: 'DESCENDING', sortIndex: 'DATE',
+          startIndex, batchSize: 25, totalContentCount: totalCount || 1200,
+        }
+      });
+      xhr.send('activity=GetContentOwnershipData&activityInput=' + encodeURIComponent(activityInput) + '&csrfToken=' + encodeURIComponent(csrfToken));
+    });
+  }
+  console.log('Fetching KindlePDoc...');
+  let startIndex = 0, total = null;
+  do {
+    const json = await fetchBatch(startIndex, total);
+    const data = json.GetContentOwnershipData;
+    if (!data || !data.items) { console.warn('No data returned'); break; }
+    if (total === null) total = data.numberOfItems || 0;
+    const items = data.items || [];
+    for (const item of items) {
+      const title = item.title || '';
+      const author = item.author || (item.sortableAuthors || '').split(',').map(s => s.trim()).reverse().join(' ');
+      const asin = item.asin || '';
+      const readStatus = item.readStatus || '';
+      if (title) books.push({ title, author, asin, readStatus });
+    }
+    console.log('[' + startIndex + '-' + (startIndex+items.length) + '/' + total + '] collected: ' + books.length);
+    startIndex += items.length;
+    if (!items.length || items.length < 25) break;
+    await new Promise(r => setTimeout(r, 300));
+  } while (startIndex < (total || 0));
+  const seen = new Set();
+  const unique = books.filter(b => { const k = b.title.toLowerCase().trim(); if (seen.has(k)) return false; seen.add(k); return true; });
+  console.log('Done! Found ' + unique.length + ' unique books.');
+  const blob = new Blob([JSON.stringify(unique, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sk_kindle_docs.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  console.log('Upload sk_kindle_docs.json back in StoryKeeper.');
+})();`;
+
+          return (
+            <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 10, padding: "18px 24px", marginBottom: 20 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700, color: th.text, marginBottom: 4 }}>
+                📱 Kindle Documents Importer
+              </div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: th.textSoft, marginBottom: 12 }}>
+                Import sideloaded books from your Kindle Documents library. Run this script on <strong>amazon.com/hz/mycd/digital-console/contentlist/pdocs/dateDsc/</strong> while logged in.
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => navigator.clipboard.writeText(kindleDocsScript).then(() => alert("Script copied!\n\n1. Go to amazon.com/hz/mycd/digital-console/contentlist/pdocs/dateDsc/\n2. Open console (F12)\n3. Paste and press Enter"))}
+                  style={{ padding: "8px 16px", background: th.accent, color: th.bg, border: "none", borderRadius: 7, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}
+                >
+                  📋 Step 1 — Copy Script
+                </button>
+                <label style={{ padding: "8px 16px", background: th.accentLight || th.accent, color: th.bg, border: "none", borderRadius: 7, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                  📥 Step 2 — Upload sk_kindle_docs.json
+                  <input type="file" accept=".json" onChange={handleUploadKindleDocs} style={{ display: "none" }} />
+                </label>
+              </div>
+            </div>
+          );
+        })()}
+
+                {/* LibraryThing Description Scraper */}
         {(() => {
           const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
           const eligible = allBooks
@@ -6189,7 +7202,8 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
 
             setImportingPlatform(null);
             refreshBookCounts();
-            alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${newBooks.some(b => b._status) ? '\n📊 Reading status also imported from Goodreads!' : ''}`);
+            const statusCount = newBooks.filter(b => b._status).length;
+            alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${statusCount > 0 ? `\n📊 ${statusCount} books imported with reading status (finished/reading).` : ''}`);
           }}
         />
       )}
@@ -6349,6 +7363,579 @@ function SearchBar({ mediaType, onSelectBook }) {
   );
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
+
+const MOBILE_BOTANICAL_POOL = [
+  { label: "Iridescent Hibiscus",  src: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+  { label: "Red Poppy",            src: "/botanicals/mystery-red-poppy.jpg" },
+  { label: "Tropical Bloom",       src: "/botanicals/scifi-tropical-bloom.jpg" },
+  { label: "Peach Rose",           src: "/botanicals/romance-peach-rose.jpg" },
+  { label: "Daisies",              src: "/botanicals/selfhelp-daisies.png" },
+  { label: "Black Hibiscus",       src: "/botanicals/dark-romance-black-hibiscus.jpg" },
+  { label: "Watercolor Bouquet",   src: "/botanicals/fiction-watercolor-bouquet.jpg" },
+  { label: "Vintage Bouquet",      src: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+  { label: "Rosemary",             src: "/botanicals/cookbooks-rosemary.png" },
+  { label: "Blue Hydrangea",       src: "/botanicals/drama-blue-hydrangea.png" },
+  { label: "Purple Dahlia",        src: "/botanicals/truecrime-purple-dahlia.jpg" },
+  { label: "Caladium Leaf",        src: "/botanicals/gardening-caladium-leaf.jpg" },
+  { label: "Yellow Rose",          src: "/botanicals/rpx-10209439.jpg" },
+  { label: "Flowering Cactus",     src: "/botanicals/rpx-2098047.jpg" },
+  { label: "White Lily",           src: "/botanicals/rpx-2613484.jpg" },
+  { label: "Mixed Bouquet",        src: "/botanicals/rpx-263623.jpg" },
+  { label: "Strawberries",         src: "/botanicals/rpx-263717.jpg" },
+  { label: "Amaryllis",            src: "/botanicals/rpx-2771351.jpg" },
+  { label: "Pansies",              src: "/botanicals/rpx-2771543.jpg" },
+  { label: "Sunflower",            src: "/botanicals/rpx-2771544.jpg" },
+  { label: "Blue Columbine",       src: "/botanicals/rpx-2772162.jpg" },
+  { label: "Pineapple",            src: "/botanicals/rpx-2805512.jpg" },
+  { label: "Yellow Roses",         src: "/botanicals/rpx-2869859.jpg" },
+  { label: "Lilac",                src: "/botanicals/rpx-2870676.jpg" },
+  { label: "Clematis",             src: "/botanicals/rpx-2872051.jpg" },
+  { label: "Skull & Flowers",      src: "/botanicals/rpx-2880154.jpg" },
+  { label: "Citrus Branch",        src: "/botanicals/rpx-2880305.jpg" },
+  { label: "Ranunculus Bouquet",   src: "/botanicals/rpx-2880345.jpg" },
+  { label: "Tiger & White Lily",   src: "/botanicals/rpx-2880374.jpg" },
+  { label: "Pink Azalea",          src: "/botanicals/rpx-2880380.jpg" },
+  { label: "Cherry Blossoms",      src: "/botanicals/rpx-2880457.jpg" },
+  { label: "White Poppies",        src: "/botanicals/rpx-2880603.jpg" },
+  { label: "Dahlias",              src: "/botanicals/rpx-2880608.jpg" },
+  { label: "Victorian Bouquet",    src: "/botanicals/rpx-50881.jpg" },
+  { label: "Dichorisandra",        src: "/botanicals/rpx-569504.jpg" },
+  { label: "Pelargonium",          src: "/botanicals/rpx-574479.jpg" },
+  { label: "Panicum Leaves",       src: "/botanicals/rpx-574635.jpg" },
+  { label: "Dark Red Foliage",     src: "/botanicals/rpx-6264355.jpg" },
+  { label: "Blue Flower",          src: "/botanicals/rpx-6437436.jpg" },
+  { label: "Rosa Damascena",       src: "/botanicals/rpx-6437442.jpg" },
+  { label: "Roses & Butterflies",  src: "/botanicals/rpx-6441864.jpg" },
+  { label: "Carnations",           src: "/botanicals/rpx-843203.jpg" },
+  { label: "Alternanthera",        src: "/botanicals/rpx-8543996.jpg" },
+  { label: "Pink Peony",           src: "/botanicals/rpx-15249963.png" },
+  { label: "Peonies Bouquet",      src: "/botanicals/rpx-16415935.png" },
+  { label: "Colorful Bouquet",     src: "/botanicals/rpx-16666974.png" },
+];
+
+function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenSettings, onOpenStats, onOpenProfile, onOpenBookClub, onOpenGroup, autoOpenBook, onAutoOpenDone }) {
+  const [filterQuery, setFilterQuery] = useState("");
+  const [sortBy, setSortBy] = useState(() => localStorage.getItem("sk_shelf_sort") || "default");
+  const [selectedBook, setSelectedBook] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (autoOpenBook) {
+      setSelectedBook(autoOpenBook);
+      if (onAutoOpenDone) onAutoOpenDone();
+    }
+  }, [autoOpenBook]);
+  const [soundOn, setSoundOn] = useState(false);
+  const audioRef = useRef(null);
+
+  const toggleSound = () => {
+    if (!audioRef.current) return;
+    if (soundOn) { audioRef.current.pause(); setSoundOn(false); }
+    else { audioRef.current.play().catch(() => {}); setSoundOn(true); }
+  };
+
+  const loadMobileBooks = () => {
+    const genreOverrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
+    const hiddenBooks = (() => { try { return new Set(JSON.parse(localStorage.getItem("sk_hidden_books") || "[]")); } catch { return new Set(); } })();
+    const lib = (() => { try { return JSON.parse(localStorage.getItem("sk_library") || "{}"); } catch { return {}; } })();
+    const allBooks = (lib[genre] || [])
+      .filter(b => b.type === mediaType)
+      .filter(b => (genreOverrides[b.isbn] || genre) === genre)
+      .filter(b => !hiddenBooks.has(b.isbn || b.title));
+    const overriddenToHere = Object.values(lib).flat()
+      .filter(b => b.type === mediaType && genreOverrides[b.isbn] === genre && !(lib[genre] || []).some(lb => lb.isbn === b.isbn))
+      .filter(b => !hiddenBooks.has(b.isbn || b.title));
+    const userBooks = (() => {
+      try {
+        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+        return all.filter(b => {
+          const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
+          const effectiveGenre = genreOverrides[b.isbn || b.title] || b.genre;
+          return effectiveGenre === genre && bookMedia === mediaType;
+        });
+      } catch { return []; }
+    })();
+    return [...allBooks, ...overriddenToHere, ...userBooks];
+  };
+
+  const [allShelfBooks, setAllShelfBooks] = useState(() => loadMobileBooks());
+
+  useEffect(() => {
+    setAllShelfBooks(loadMobileBooks());
+  }, [refreshKey, genre, mediaType]);
+
+  const sortBooks = (arr) => {
+    if (sortBy === "title") return [...arr].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    if (sortBy === "author") return [...arr].sort((a, b) => (a.author || "").split(" ").pop().localeCompare((b.author || "").split(" ").pop()));
+    return arr;
+  };
+  const filtered = filterQuery.trim()
+    ? allShelfBooks.filter(b => b.title.toLowerCase().includes(filterQuery.toLowerCase()) || (b.author || "").toLowerCase().includes(filterQuery.toLowerCase()))
+    : allShelfBooks;
+  const books = sortBooks(filtered);
+
+  const favKey = `sk_favorites_${mediaType}`;
+  const statusKey = `sk_statuses_${mediaType}`;
+  const progressKey = `sk_progress_${mediaType}`;
+  const [favorites, setFavorites] = useState(() => { try { return JSON.parse(localStorage.getItem(favKey)) || {}; } catch { return {}; } });
+  const [statuses, setStatuses] = useState(() => { try { return JSON.parse(localStorage.getItem(statusKey)) || {}; } catch { return {}; } });
+  const [progress, setProgress] = useState(() => { try { return JSON.parse(localStorage.getItem(progressKey)) || {}; } catch { return {}; } });
+
+  useEffect(() => { localStorage.setItem(favKey, JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem(statusKey, JSON.stringify(statuses)); }, [statuses]);
+  useEffect(() => { localStorage.setItem(progressKey, JSON.stringify(progress)); }, [progress]);
+
+  const handleDelete = (book) => {
+    const bookKey = book.isbn || book.title;
+    const userBooksAll = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+    if (isUser) {
+      localStorage.setItem("sk_user_books", JSON.stringify(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title))));
+    } else {
+      const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
+      if (!hidden.includes(bookKey)) hidden.push(bookKey);
+      localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+    }
+    setRefreshKey(k => k + 1);
+    setSelectedBook(null);
+  };
+
+  const STATUS_COLORS = { "reading": "#C9A96E", "completed": "#6BAF7A", "want": "#7EB3D4", "dnf": "#C47A7A" };
+  const STATUS_LABELS = { "reading": "Reading", "completed": "Done", "want": "Want", "dnf": "DNF" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", zIndex: 550, overflowX: "hidden" }}>
+      {/* Parchment background — separate fixed layer so it never scrolls */}
+      <div style={{ position: "fixed", inset: 0, background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover', zIndex: 0, pointerEvents: "none" }} />
+      <audio ref={audioRef} loop src="/sounds/fire.mp3" />
+
+      {/* Header */}
+      <div style={{
+        flexShrink: 0, padding: "48px 16px 10px", position: "relative", zIndex: 1,
+        background: "linear-gradient(to bottom, rgba(248,241,228,0.98) 0%, rgba(248,241,228,0.92) 100%)",
+        borderBottom: "1px solid rgba(139,94,60,0.3)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <button onClick={onClose} style={{
+            background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
+            borderRadius: 20, padding: "6px 14px", color: "#5C3A1E", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 13, flexShrink: 0,
+          }}>← Back</button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 18, color: "#3A2010", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {mediaType === "ebooks" ? "📚" : "🎧"} {genre}
+            </div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic" }}>
+              {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : "Audiobooks"}
+            </div>
+          </div>
+          <button onClick={onToggleMediaType} style={{
+            background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
+            borderRadius: 20, padding: "6px 10px", color: "#5C3A1E", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 12, flexShrink: 0,
+          }}>{mediaType === "ebooks" ? "🎧" : "📚"}</button>
+          <button onClick={onOpenGroup} style={{
+            background: "rgba(94,107,140,0.15)", border: "1px solid rgba(94,107,140,0.5)",
+            borderRadius: 20, padding: "6px 10px", color: "#2E3A5C", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 12, flexShrink: 0,
+          }}>👥 Group</button>
+          <button onClick={onOpenBookClub} style={{
+            background: "rgba(107,140,94,0.15)", border: "1px solid rgba(107,140,94,0.5)",
+            borderRadius: 20, padding: "6px 10px", color: "#3A5C2E", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 12, flexShrink: 0,
+          }}>📚 Club</button>
+        </div>
+
+        {/* Search + Sort */}
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            placeholder="Search title or author…"
+            value={filterQuery}
+            onChange={e => setFilterQuery(e.target.value)}
+            style={{
+              flex: 1, padding: "8px 12px", borderRadius: 20,
+              border: "1px solid rgba(139,94,60,0.35)", background: "rgba(255,255,255,0.5)",
+              color: "#3A2010", fontFamily: "Georgia, serif", fontSize: 13, outline: "none",
+            }}
+          />
+          <select value={sortBy} onChange={e => { setSortBy(e.target.value); localStorage.setItem("sk_shelf_sort", e.target.value); }}
+            style={{
+              padding: "8px 10px", borderRadius: 20, border: "1px solid rgba(139,94,60,0.35)",
+              background: "rgba(255,255,255,0.5)", color: "#5C3A1E", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer",
+            }}>
+            <option value="default">Default</option>
+            <option value="title">Title</option>
+            <option value="author">Author</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Book shelf */}
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}>
+        {books.length === 0 ? (
+          <div style={{ textAlign: "center", color: "rgba(200,180,140,0.5)", fontFamily: "Georgia, serif", fontSize: 14, fontStyle: "italic", marginTop: 60 }}>
+            {filterQuery ? "No books match your search." : "No books in this collection yet."}
+          </div>
+        ) : (() => {
+          const perRowBooks = mediaType === "audiobooks" ? 3 : 5;
+          const rows = [];
+          for (let i = 0; i < books.length; i += perRowBooks) rows.push(books.slice(i, i + perRowBooks));
+          const bookGap = mediaType === "audiobooks" ? 6 : 3;
+          const rowMinH = mediaType === "audiobooks" ? 110 : 230;
+          const spineW = mediaType === "audiobooks" ? undefined : 44;
+          const plantW = mediaType === "audiobooks" ? 155 : 220;
+          const plantH = mediaType === "audiobooks" ? 380 : 760;
+
+          return rows.map((row, rowIndex) => {
+            const layout = rowIndex % 3;
+            const plantSrc = "/" + PLANT_IMAGES[rowIndex % PLANT_IMAGES.length];
+            const plantEl = (
+              <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: "translateY(112px)", position: "relative", zIndex: 10 }}>
+                <img src={plantSrc} alt="plant" style={{ width: plantW, height: "auto", display: "block" }} />
+              </div>
+            );
+            const bookEls = row.map((book, i) => {
+              const isEdge = i === 0 || i === row.length - 1;
+              const w = spineW ? (isEdge ? Math.round(spineW * 0.72) : spineW) : undefined;
+              return mediaType === "audiobooks"
+                ? <CDCase key={book.isbn || book.title} book={book} index={rowIndex * perRowBooks + i} rowIndex={rowIndex} onClick={setSelectedBook} />
+                : <BookSpine key={book.isbn || book.title} book={book} index={rowIndex * perRowBooks + i} rowIndex={rowIndex} onClick={setSelectedBook} spineWidth={w} />;
+            });
+
+            // Layout 0: plant LEFT, all books RIGHT
+            // Layout 1: 2 books FAR LEFT, plant MIDDLE, 2 books FAR RIGHT
+            // Layout 2: all books LEFT, plant FAR RIGHT
+            let rowContent;
+            const plantGap = 6;
+            const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: "center", width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
+            if (layout === 0) {
+              rowContent = (
+                <div style={rowBase}>
+                  {plantEl}
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div>
+                </div>
+              );
+            } else if (layout === 1) {
+              const half = Math.floor(bookEls.length / 2);
+              rowContent = (
+                <div style={rowBase}>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls.slice(0, half)}</div>
+                  {plantEl}
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls.slice(half)}</div>
+                </div>
+              );
+            } else {
+              rowContent = (
+                <div style={rowBase}>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div>
+                  {plantEl}
+                </div>
+              );
+            }
+
+            return (
+              <div key={rowIndex} style={{ position: "relative" }}>
+                {rowContent}
+                <img src="/shelf2.jpg" alt="shelf" style={{ width: "100%", height: 22, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 4px 10px rgba(0,0,0,0.5)", position: "relative", zIndex: 5 }} />
+                <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)", marginBottom: 8 }} />
+              </div>
+            );
+          });
+        })()}
+      </div>
+
+      {/* Bottom tab bar */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
+        background: "rgba(248,241,228,0.97)", borderTop: "1px solid rgba(139,94,60,0.3)",
+        display: "flex", justifyContent: "space-around", alignItems: "center",
+        padding: "10px 0 calc(10px + env(safe-area-inset-bottom))",
+        pointerEvents: "all",
+      }}>
+        {[
+          { icon: "🏠", label: "Home", action: onClose },
+          { icon: soundOn ? "🔊" : "🔇", label: "Sound", action: toggleSound, active: soundOn },
+          { icon: "📖", label: "My Story", action: onOpenStats },
+          { icon: "⚙️", label: "Settings", action: onOpenSettings },
+          { icon: "👤", label: "Profile", action: onOpenProfile },
+        ].map(({ icon, label, action, active }) => (
+          <button key={label} onClick={action}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+              color: active ? "#8B2020" : "#5C3A1E",
+              fontFamily: "Georgia, serif", fontSize: 10, padding: "4px 8px",
+              WebkitTapHighlightColor: "transparent", touchAction: "manipulation",
+            }}>
+            <span style={{ fontSize: 22 }}>{icon}</span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Book Modal */}
+      {selectedBook && (
+        <BookModal
+          book={selectedBook}
+          onClose={() => setSelectedBook(null)}
+          favorites={favorites} setFavorites={setFavorites}
+          statuses={statuses} setStatuses={setStatuses}
+          progress={progress} setProgress={setProgress}
+          mediaType={mediaType}
+          onBookEdited={(updated) => {
+            setSelectedBook(prev => ({ ...prev, ...updated }));
+            setRefreshKey(k => k + 1);
+          }}
+          onDelete={handleDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile }) {
+  const [soundOn, setSoundOn] = useState(false);
+  const [pickerGenre, setPickerGenre] = useState(null);
+  const [botanicalOverrides, setBotanicalOverrides] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sk_mobile_botanicals") || "{}"); } catch { return {}; }
+  });
+  const longPressRef = useRef(null);
+  const audioRef = useRef(null);
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+
+  const saveBotanical = (genre, src) => {
+    const next = { ...botanicalOverrides, [genre]: src };
+    setBotanicalOverrides(next);
+    localStorage.setItem("sk_mobile_botanicals", JSON.stringify(next));
+  };
+
+  const startLongPress = (genre) => {
+    longPressRef.current = setTimeout(() => setPickerGenre(genre), 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+  };
+
+  const DEFAULT_LEFT = [
+    { genre: "Fantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+    { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
+    { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
+    { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
+    { genre: "Self Help",          image: "/botanicals/selfhelp-daisies.png" },
+    { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
+  ];
+  const DEFAULT_RIGHT = [
+    { genre: "Fiction",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
+    { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+    { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
+    { genre: "Drama",                   image: "/botanicals/drama-blue-hydrangea.png" },
+    { genre: "True Crime",             image: "/botanicals/truecrime-purple-dahlia.jpg" },
+    { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
+    { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+  ];
+
+  const allGenres = [...DEFAULT_LEFT, ...DEFAULT_RIGHT];
+  const bookCount = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]").length; } catch { return 0; } })();
+
+  const toggleSound = () => {
+    if (!audioRef.current) return;
+    if (soundOn) { audioRef.current.pause(); setSoundOn(false); }
+    else { audioRef.current.play().catch(() => {}); setSoundOn(true); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#1A110A", overflow: "hidden" }}>
+      {/* Full-screen background video */}
+      <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+        <video autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }}
+          src="/reading-nook.mp4" onError={e => e.target.style.display = "none"} />
+        {/* Light vignette only at very top and bottom so video stays visible */}
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(10,6,2,0.55) 0%, transparent 30%, transparent 55%, rgba(10,6,2,0.75) 100%)" }} />
+      </div>
+
+      <audio ref={audioRef} loop src="/sounds/fire.mp3" />
+
+      {/* Floating header */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2, padding: "48px 20px 12px", textAlign: "center" }}>
+        <div style={{ fontFamily: '"Italianno", cursive', fontSize: 52, color: "#F5ECD7", letterSpacing: 2, fontWeight: 400, textShadow: "0 2px 24px rgba(0,0,0,0.95), 0 0 50px rgba(210,150,50,0.35)", lineHeight: 1 }}>
+          StoryKeeper
+        </div>
+        <div style={{ fontFamily: '"Lora", Georgia, serif', fontSize: 13, color: "#E2CFA8", fontStyle: "italic", marginTop: 4, textShadow: "0 1px 8px rgba(0,0,0,0.95)", letterSpacing: "1px" }}>
+          Read here. Listen here. Live here.
+        </div>
+        <div style={{ marginTop: 6, fontFamily: '"Lora", Georgia, serif', fontSize: 11, color: "rgba(200,180,140,0.8)", textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
+          {bookCount.toLocaleString()} books in your library
+        </div>
+
+        {/* eBooks / Audiobooks toggle */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
+          {["ebooks", "audiobooks"].map(t => (
+            <button key={t} onClick={() => { if (mediaType !== t) onToggleMediaType(); }}
+              style={{
+                padding: "7px 20px", borderRadius: 20, border: "1px solid rgba(201,169,110,0.4)", cursor: "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700,
+                background: mediaType === t ? "rgba(139,94,60,0.85)" : "rgba(10,6,2,0.5)",
+                color: mediaType === t ? "#F8F1E4" : "rgba(248,241,228,0.6)",
+                backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+              }}>
+              {t === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Genre strip — pinned above tab bar, horizontally scrollable */}
+      <div style={{
+        position: "absolute", bottom: "calc(64px + env(safe-area-inset-bottom))", left: 0, right: 0, zIndex: 2,
+      }}>
+        {/* Label */}
+        <div style={{ paddingLeft: 16, marginBottom: 8, fontFamily: "Georgia, serif", fontSize: 11, color: "rgba(201,169,110,0.8)", letterSpacing: 1, textTransform: "uppercase", textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
+          Browse by Genre
+        </div>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", paddingLeft: 16, paddingRight: 16, paddingBottom: 8 }}>
+          <div style={{ display: "flex", gap: 10 }}>
+            {allGenres.map(({ genre, image }) => {
+              const img = botanicalOverrides[genre] || image;
+              return (
+                <div key={genre} style={{ position: "relative", flexShrink: 0 }}>
+                  <button
+                    onClick={() => onGenreClick(genre)}
+                    onTouchStart={() => startLongPress(genre)}
+                    onTouchEnd={cancelLongPress}
+                    onTouchMove={cancelLongPress}
+                    style={{
+                      width: 100, height: 100, border: "1px solid rgba(201,169,110,0.35)", cursor: "pointer", borderRadius: 14,
+                      overflow: "hidden", padding: 0, display: "block",
+                      boxShadow: "0 4px 20px rgba(0,0,0,0.6), 0 0 12px rgba(201,169,110,0.15)",
+                      background: img ? `#3D2510 url(${img}) center/${img.endsWith(".png") ? "contain" : "cover"} no-repeat` : "#3D2510",
+                      position: "relative",
+                    }}>
+                    <div style={{
+                      position: "absolute", inset: 0,
+                      background: "linear-gradient(to top, rgba(10,5,2,0.88) 0%, rgba(10,5,2,0.15) 60%)",
+                    }} />
+                    <div style={{
+                      position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 4px 6px",
+                      fontFamily: '"Palatino Linotype", Palatino, Georgia, serif', fontSize: 10, fontWeight: 700,
+                      color: "#F8F1E4", textAlign: "center", textShadow: "0 1px 6px rgba(0,0,0,0.9)",
+                    }}>
+                      {genre}
+                    </div>
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setPickerGenre(genre); }}
+                    title="Change image"
+                    style={{
+                      position: "absolute", top: 4, right: 4, zIndex: 2,
+                      background: "rgba(0,0,0,0.55)", border: "1px solid rgba(201,169,110,0.4)",
+                      borderRadius: "50%", width: 22, height: 22, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 11, lineHeight: 1, padding: 0,
+                    }}>
+                    🎨
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom tab bar */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
+        background: "rgba(15,8,3,0.96)", borderTop: "1px solid rgba(139,94,60,0.3)",
+        display: "flex", justifyContent: "space-around", alignItems: "center",
+        padding: "10px 0 calc(10px + env(safe-area-inset-bottom))",
+        pointerEvents: "all",
+      }}>
+        {[
+          { icon: "🏠", label: "Home", action: null, active: true },
+          { icon: soundOn ? "🔊" : "🔇", label: "Sound", action: toggleSound, active: soundOn },
+          { icon: "📖", label: "My Story", action: onOpenStats, active: false },
+          { icon: "⚙️", label: "Settings", action: onOpenSettings, active: false },
+          { icon: "👤", label: "Profile", action: onOpenProfile, active: false },
+        ].map(({ icon, label, action, active }) => (
+          <button key={label} onClick={action ?? undefined}
+            style={{
+              background: "none", border: "none", cursor: action ? "pointer" : "default",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+              color: active ? "#C9A96E" : "rgba(200,180,140,0.7)",
+              fontFamily: "Georgia, serif", fontSize: 10,
+              padding: "4px 8px", WebkitTapHighlightColor: "transparent",
+              touchAction: "manipulation",
+            }}>
+            <span style={{ fontSize: 22 }}>{icon}</span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Botanical Picker Modal */}
+      {pickerGenre && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(5,2,0,0.96)", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "52px 16px 12px", textAlign: "center" }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, color: "#F8F1E4", marginBottom: 4 }}>
+              Choose Art for {pickerGenre}
+            </div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#C9A96E", fontStyle: "italic" }}>
+              Tap an image to select it
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              {MOBILE_BOTANICAL_POOL.map(({ src, label }) => {
+                const current = botanicalOverrides[pickerGenre] || allGenres.find(g => g.genre === pickerGenre)?.image;
+                const selected = src === current;
+                const thumb = src.includes("/rpx-") ? `/botanicals/thumbs/${src.split("/").pop().replace(/\.png$/, ".jpg")}` : src;
+                return (
+                  <button key={src}
+                    onClick={() => { saveBotanical(pickerGenre, src); setPickerGenre(null); }}
+                    style={{
+                      padding: 0, border: selected ? "2px solid #C9A96E" : "1px solid rgba(201,169,110,0.2)",
+                      borderRadius: 10, overflow: "hidden", aspectRatio: "1/1", cursor: "pointer",
+                      background: `#3D2510 url(${thumb}) center/cover no-repeat`,
+                      position: "relative",
+                    }}>
+                    {selected && (
+                      <div style={{
+                        position: "absolute", top: 4, right: 4, background: "#C9A96E", borderRadius: "50%",
+                        width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 12, color: "#1A110A", fontWeight: 700,
+                      }}>✓</div>
+                    )}
+                    <div style={{
+                      position: "absolute", bottom: 0, left: 0, right: 0,
+                      background: "linear-gradient(transparent, rgba(0,0,0,0.75))",
+                      padding: "12px 4px 4px", fontSize: 9,
+                      fontFamily: "Georgia, serif", color: "#F8F1E4", textAlign: "center",
+                    }}>{label}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <button onClick={() => setPickerGenre(null)} style={{
+            margin: "12px 16px calc(12px + env(safe-area-inset-bottom))",
+            padding: "14px", borderRadius: 12,
+            background: "#8B5E3C", color: "#F8F1E4", border: "none", cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700,
+          }}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
   const [hovered, setHovered] = useState(null);
   const [soundOn, setSoundOn] = useState(false);
@@ -6395,6 +7982,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
     { genre: "Drama",                   image: "/botanicals/drama-blue-hydrangea.png" },
     { genre: "True Crime",              image: "/botanicals/truecrime-purple-dahlia.jpg" },
     { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
+    { genre: "Classics",                image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
     { genre: "_custom",                 image: null },
   ];
 
@@ -6463,11 +8051,45 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
     { label: "Daisies",              src: "/botanicals/selfhelp-daisies.png" },
     { label: "Black Hibiscus",       src: "/botanicals/dark-romance-black-hibiscus.jpg" },
     { label: "Watercolor Bouquet",   src: "/botanicals/fiction-watercolor-bouquet.jpg" },
-    { label: "Dark Bouquet",         src: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+    { label: "Vintage Bouquet",      src: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
     { label: "Rosemary",             src: "/botanicals/cookbooks-rosemary.png" },
     { label: "Blue Hydrangea",       src: "/botanicals/drama-blue-hydrangea.png" },
     { label: "Purple Dahlia",        src: "/botanicals/truecrime-purple-dahlia.jpg" },
     { label: "Caladium Leaf",        src: "/botanicals/gardening-caladium-leaf.jpg" },
+    { label: "Yellow Rose",          src: "/botanicals/rpx-10209439.jpg" },
+    { label: "Flowering Cactus",     src: "/botanicals/rpx-2098047.jpg" },
+    { label: "White Lily",           src: "/botanicals/rpx-2613484.jpg" },
+    { label: "Mixed Bouquet",        src: "/botanicals/rpx-263623.jpg" },
+    { label: "Strawberries",         src: "/botanicals/rpx-263717.jpg" },
+    { label: "Amaryllis",            src: "/botanicals/rpx-2771351.jpg" },
+    { label: "Pansies",              src: "/botanicals/rpx-2771543.jpg" },
+    { label: "Sunflower",            src: "/botanicals/rpx-2771544.jpg" },
+    { label: "Blue Columbine",       src: "/botanicals/rpx-2772162.jpg" },
+    { label: "Pineapple",            src: "/botanicals/rpx-2805512.jpg" },
+    { label: "Yellow Roses",         src: "/botanicals/rpx-2869859.jpg" },
+    { label: "Lilac",                src: "/botanicals/rpx-2870676.jpg" },
+    { label: "Clematis",             src: "/botanicals/rpx-2872051.jpg" },
+    { label: "Skull & Flowers",      src: "/botanicals/rpx-2880154.jpg" },
+    { label: "Citrus Branch",        src: "/botanicals/rpx-2880305.jpg" },
+    { label: "Ranunculus Bouquet",   src: "/botanicals/rpx-2880345.jpg" },
+    { label: "Tiger & White Lily",   src: "/botanicals/rpx-2880374.jpg" },
+    { label: "Pink Azalea",          src: "/botanicals/rpx-2880380.jpg" },
+    { label: "Cherry Blossoms",      src: "/botanicals/rpx-2880457.jpg" },
+    { label: "White Poppies",        src: "/botanicals/rpx-2880603.jpg" },
+    { label: "Dahlias",              src: "/botanicals/rpx-2880608.jpg" },
+    { label: "Victorian Bouquet",    src: "/botanicals/rpx-50881.jpg" },
+    { label: "Dichorisandra",        src: "/botanicals/rpx-569504.jpg" },
+    { label: "Pelargonium",          src: "/botanicals/rpx-574479.jpg" },
+    { label: "Panicum Leaves",       src: "/botanicals/rpx-574635.jpg" },
+    { label: "Dark Red Foliage",     src: "/botanicals/rpx-6264355.jpg" },
+    { label: "Blue Flower",          src: "/botanicals/rpx-6437436.jpg" },
+    { label: "Rosa Damascena",       src: "/botanicals/rpx-6437442.jpg" },
+    { label: "Roses & Butterflies",  src: "/botanicals/rpx-6441864.jpg" },
+    { label: "Carnations",           src: "/botanicals/rpx-843203.jpg" },
+    { label: "Alternanthera",        src: "/botanicals/rpx-8543996.jpg" },
+    { label: "Pink Peony",           src: "/botanicals/rpx-15249963.png" },
+    { label: "Peonies Bouquet",      src: "/botanicals/rpx-16415935.png" },
+    { label: "Colorful Bouquet",     src: "/botanicals/rpx-16666974.png" },
   ];
 
   const getGenreList = (side) => side === "left" ? leftGenres : rightGenres;
@@ -6898,7 +8520,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
           style={{
             position: "fixed", zIndex: 800,
             left: ctxMenu.x + 180 > window.innerWidth ? ctxMenu.x - 180 : ctxMenu.x,
-            top: ctxMenu.y,
+            top: ctxMenu.y + 260 > window.innerHeight ? Math.max(0, ctxMenu.y - 260) : ctxMenu.y,
             background: "#F5EDD5",
             border: "1px solid #C4A870",
             borderRadius: 4,
@@ -6959,24 +8581,29 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
       {/* Image picker modal */}
       {imagePicker && (
         <div style={{ position: "fixed", inset: 0, zIndex: 810, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#F8F1E4", border: "2px solid #8B5E3C", borderRadius: 12, padding: 24, maxWidth: 480, width: "92%", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}>
-            <h3 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A", margin: "0 0 16px", textAlign: "center" }}>Choose a Botanical</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
-              {ALL_BOTANICALS.map(({ label, src }) => (
-                <div
-                  key={src}
-                  onClick={() => handleChangeImage(imagePicker.side, imagePicker.index, src)}
-                  title={label}
-                  style={{ cursor: "pointer", background: "#F5EDD5", border: "1px solid #C4A870", borderRadius: 4, padding: 6, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}
-                  onMouseEnter={e => e.currentTarget.style.background = "#EDE0BC"}
-                  onMouseLeave={e => e.currentTarget.style.background = "#F5EDD5"}
-                >
-                  <img src={src} alt={label} style={{ width: 64, height: 64, objectFit: "contain" }} />
-                  <span style={{ fontSize: 9, fontFamily: "Georgia, serif", fontStyle: "italic", color: "#5A3820", textAlign: "center", lineHeight: 1.2 }}>{label}</span>
-                </div>
-              ))}
+          <div style={{ background: "#F8F1E4", border: "2px solid #8B5E3C", borderRadius: 12, padding: 24, maxWidth: 540, width: "92%", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}>
+            <h3 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A", margin: "0 0 16px", textAlign: "center", flexShrink: 0 }}>Choose a Botanical</h3>
+            <div style={{ overflowY: "auto", flex: 1, marginBottom: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                {ALL_BOTANICALS.map(({ label, src }) => {
+                  const thumb = src.includes("/rpx-") ? `/botanicals/thumbs/${src.split("/").pop().replace(/\.png$/, ".jpg")}` : src;
+                  return (
+                    <div
+                      key={src}
+                      onClick={() => handleChangeImage(imagePicker.side, imagePicker.index, src)}
+                      title={label}
+                      style={{ cursor: "pointer", background: "#F5EDD5", border: "1px solid #C4A870", borderRadius: 4, padding: 6, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#EDE0BC"}
+                      onMouseLeave={e => e.currentTarget.style.background = "#F5EDD5"}
+                    >
+                      <img src={thumb} alt={label} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 3 }} />
+                      <span style={{ fontSize: 9, fontFamily: "Georgia, serif", fontStyle: "italic", color: "#5A3820", textAlign: "center", lineHeight: 1.2 }}>{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ textAlign: "center" }}>
+            <div style={{ textAlign: "center", flexShrink: 0 }}>
               <button onClick={() => setImagePicker(null)} style={{ padding: "8px 24px", background: "#D8C3A5", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A" }}>Cancel</button>
             </div>
           </div>
@@ -6986,19 +8613,24 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
       {/* Add genre modal */}
       {addModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 810, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#F8F1E4", border: "2px solid #8B5E3C", borderRadius: 12, padding: 24, maxWidth: 480, width: "92%", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}>
-            <h3 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A", margin: "0 0 16px", textAlign: "center" }}>Add New Genre</h3>
-            <input autoFocus placeholder="Genre name…" value={addGenreName} onChange={e => setAddGenreName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") confirmAddGenre(); if (e.key === "Escape") setAddModal(null); }} style={{ width: "100%", padding: "10px 14px", border: "1px solid #8B5E3C", borderRadius: 6, fontFamily: "Georgia, serif", fontSize: 14, background: "#FFF9F0", color: "#3A2A1A", marginBottom: 16, boxSizing: "border-box" }} />
-            <p style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32", margin: "0 0 10px" }}>Choose a botanical:</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
-              {ALL_BOTANICALS.map(({ label, src }) => (
-                <div key={src} onClick={() => setAddGenreImg(src)} title={label} style={{ cursor: "pointer", background: addGenreImg === src ? "#EDE0BC" : "#F5EDD5", border: `1px solid ${addGenreImg === src ? "#8B5E3C" : "#C4A870"}`, borderRadius: 4, padding: 5, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                  <img src={src} alt={label} style={{ width: 56, height: 56, objectFit: "contain" }} />
-                  <span style={{ fontSize: 8.5, fontFamily: "Georgia, serif", fontStyle: "italic", color: "#5A3820", textAlign: "center", lineHeight: 1.2 }}>{label}</span>
-                </div>
-              ))}
+          <div style={{ background: "#F8F1E4", border: "2px solid #8B5E3C", borderRadius: 12, padding: 24, maxWidth: 540, width: "92%", maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}>
+            <h3 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A", margin: "0 0 16px", textAlign: "center", flexShrink: 0 }}>Add New Genre</h3>
+            <input autoFocus placeholder="Genre name…" value={addGenreName} onChange={e => setAddGenreName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") confirmAddGenre(); if (e.key === "Escape") setAddModal(null); }} style={{ width: "100%", padding: "10px 14px", border: "1px solid #8B5E3C", borderRadius: 6, fontFamily: "Georgia, serif", fontSize: 14, background: "#FFF9F0", color: "#3A2A1A", marginBottom: 12, boxSizing: "border-box", flexShrink: 0 }} />
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32", margin: "0 0 8px", flexShrink: 0 }}>Choose a botanical:</p>
+            <div style={{ overflowY: "auto", flex: 1, marginBottom: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {ALL_BOTANICALS.map(({ label, src }) => {
+                  const thumb = src.includes("/rpx-") ? `/botanicals/thumbs/${src.split("/").pop().replace(/\.png$/, ".jpg")}` : src;
+                  return (
+                    <div key={src} onClick={() => setAddGenreImg(src)} title={label} style={{ cursor: "pointer", background: addGenreImg === src ? "#EDE0BC" : "#F5EDD5", border: `1px solid ${addGenreImg === src ? "#8B5E3C" : "#C4A870"}`, borderRadius: 4, padding: 5, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                      <img src={thumb} alt={label} style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 3 }} />
+                      <span style={{ fontSize: 8.5, fontFamily: "Georgia, serif", fontStyle: "italic", color: "#5A3820", textAlign: "center", lineHeight: 1.2 }}>{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexShrink: 0 }}>
               <button onClick={() => setAddModal(null)} style={{ padding: "8px 20px", background: "#D8C3A5", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A" }}>Cancel</button>
               <button onClick={confirmAddGenre} disabled={!addGenreName.trim()} style={{ padding: "8px 20px", background: addGenreName.trim() ? "#3A2A1A" : "#A08060", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13, color: "#F8F1E4" }}>Add Genre</button>
             </div>
@@ -7010,14 +8642,1067 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
   );
 }
 
+const POST_TYPES = [
+  { id: "discussion",  label: "💬 Discussion",          short: "Discussion" },
+  { id: "reading",     label: "📖 Currently Reading",    short: "Reading" },
+  { id: "finished",    label: "✅ Just Finished",        short: "Finished" },
+  { id: "want",        label: "📚 Want to Read",         short: "Want to Read" },
+  { id: "seeking",     label: "🙋 Seeking Suggestions",  short: "Seeking" },
+  { id: "suggestion",  label: "💡 Book Suggestion",      short: "Suggestion" },
+];
+
+function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscription }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
+  const canRead  = ["storyteller", "librarian", "storykeeper"].includes(userTier);
+  const canPost  = ["librarian", "storykeeper"].includes(userTier);
+
+  const [username, setUsername]         = React.useState("");
+  const [isMember, setIsMember]         = React.useState(false);
+  const [memberCount, setMemberCount]   = React.useState(0);
+  const [posts, setPosts]               = React.useState([]);
+  const [loading, setLoading]           = React.useState(true);
+  const [joining, setJoining]           = React.useState(false);
+  const [filterType, setFilterType]     = React.useState("all");
+  const [showNewPost, setShowNewPost]   = React.useState(false);
+  const [postType, setPostType]         = React.useState("discussion");
+  const [postContent, setPostContent]   = React.useState("");
+  const [postBook, setPostBook]         = React.useState("");
+  const [postAuthor, setPostAuthor]     = React.useState("");
+  const [postMsg, setPostMsg]           = React.useState("");
+  const [expandedPost, setExpandedPost] = React.useState(null);
+  const [comments, setComments]         = React.useState({});
+  const [commentText, setCommentText]   = React.useState("");
+  const [likedPosts, setLikedPosts]     = React.useState(new Set());
+  const [showMembers, setShowMembers]   = React.useState(false);
+  const [members, setMembers]           = React.useState([]);
+
+  React.useEffect(() => {
+    if (!authUser || !supabaseRef.current) return;
+    supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).single()
+      .then(({ data }) => { if (data) setUsername(data.username); });
+  }, [authUser]);
+
+  const loadData = React.useCallback(async () => {
+    if (!supabaseRef.current) { setLoading(false); return; }
+    setLoading(true);
+    const sb = supabaseRef.current;
+
+    const [{ count }, { data: postsData }, { data: likesData }] = await Promise.all([
+      sb.from("group_members").select("*", { count: "exact", head: true }).eq("genre", genre),
+      sb.from("group_posts").select("*").eq("genre", genre).order("created_at", { ascending: false }).limit(60),
+      authUser ? sb.from("group_likes").select("post_id").eq("user_id", authUser.id) : { data: [] },
+    ]);
+
+    setMemberCount(count || 0);
+    setPosts(postsData || []);
+    setLikedPosts(new Set((likesData || []).map(l => l.post_id)));
+
+    if (authUser) {
+      const { data: mem } = await sb.from("group_members").select("user_id").eq("genre", genre).eq("user_id", authUser.id).maybeSingle();
+      setIsMember(!!mem);
+    }
+    setLoading(false);
+  }, [genre, authUser]);
+
+  React.useEffect(() => { loadData(); }, [loadData]);
+
+  const handleJoinLeave = async () => {
+    if (!authUser || !username || !canPost) return;
+    setJoining(true);
+    const sb = supabaseRef.current;
+    if (isMember) {
+      await sb.from("group_members").delete().eq("genre", genre).eq("user_id", authUser.id);
+      setIsMember(false);
+      setMemberCount(c => c - 1);
+    } else {
+      await sb.from("group_members").insert({ genre, user_id: authUser.id, username });
+      setIsMember(true);
+      setMemberCount(c => c + 1);
+    }
+    setJoining(false);
+  };
+
+  const handlePost = async () => {
+    if (!postContent.trim()) { setPostMsg("Please write something."); return; }
+    if (!isMember) { setPostMsg("Join the group to post."); return; }
+    const sb = supabaseRef.current;
+    const { error } = await sb.from("group_posts").insert({
+      genre, user_id: authUser.id, username, post_type: postType,
+      content: postContent.trim(),
+      book_title: postBook.trim() || null,
+      book_author: postAuthor.trim() || null,
+    });
+    if (error) { setPostMsg("Error posting."); return; }
+    setPostContent(""); setPostBook(""); setPostAuthor(""); setPostMsg("");
+    setShowNewPost(false);
+    loadData();
+  };
+
+  const handleLike = async (postId) => {
+    if (!authUser || !isMember) return;
+    const sb = supabaseRef.current;
+    const liked = likedPosts.has(postId);
+    if (liked) {
+      await sb.from("group_likes").delete().eq("post_id", postId).eq("user_id", authUser.id);
+      await sb.from("group_posts").update({ like_count: (posts.find(p => p.id === postId)?.like_count || 1) - 1 }).eq("id", postId);
+      setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s; });
+    } else {
+      await sb.from("group_likes").insert({ post_id: postId, user_id: authUser.id });
+      await sb.from("group_posts").update({ like_count: (posts.find(p => p.id === postId)?.like_count || 0) + 1 }).eq("id", postId);
+      setLikedPosts(prev => new Set([...prev, postId]));
+    }
+    loadData();
+  };
+
+  const loadComments = async (postId) => {
+    const { data } = await supabaseRef.current.from("group_comments")
+      .select("*").eq("post_id", postId).order("created_at");
+    setComments(prev => ({ ...prev, [postId]: data || [] }));
+  };
+
+  const toggleComments = (postId) => {
+    if (expandedPost === postId) { setExpandedPost(null); return; }
+    setExpandedPost(postId);
+    loadComments(postId);
+  };
+
+  const handleComment = async (postId) => {
+    if (!commentText.trim() || !authUser || !isMember) return;
+    await supabaseRef.current.from("group_comments").insert({
+      post_id: postId, user_id: authUser.id, username, content: commentText.trim(),
+    });
+    await supabaseRef.current.from("group_posts")
+      .update({ comment_count: (posts.find(p => p.id === postId)?.comment_count || 0) + 1 }).eq("id", postId);
+    setCommentText("");
+    loadComments(postId);
+    loadData();
+  };
+
+  const loadMembers = async () => {
+    const { data } = await supabaseRef.current.from("group_members").select("username, joined_at").eq("genre", genre).order("joined_at");
+    setMembers(data || []);
+    setShowMembers(true);
+  };
+
+  const filteredPosts = filterType === "all" ? posts : posts.filter(p => p.post_type === filterType);
+
+  const cardStyle = { background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 12, padding: 16, marginBottom: 12 };
+  const inputStyle = { width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, boxSizing: "border-box", outline: "none" };
+  const btnStyle = (color, text = "#fff") => ({ background: color, border: "none", borderRadius: 8, padding: "9px 20px", color: text, fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer", fontWeight: 600 });
+
+  const typeColors = { discussion: "#5E6B8C", reading: "#6B8C5E", finished: "#8C6B5E", want: "#8C5E6B", seeking: "#6B5E8C", suggestion: "#5E8C6B" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: th.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0" }}>‹</button>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
+            <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>👥 Group</h2>
+          </div>
+        </div>
+
+        {/* No access — free tier */}
+        {!authUser || (!canRead && !canPost) ? (
+          <div style={{ ...cardStyle, textAlign: "center", padding: 32 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>👥</div>
+            <h3 style={{ margin: "0 0 8px", color: th.text, fontSize: 18 }}>Groups are a Paid Feature</h3>
+            <p style={{ color: th.textSoft, fontSize: 14, lineHeight: 1.6, margin: "0 0 20px" }}>
+              Join genre groups, share what you're reading, ask for recommendations, and connect with other readers. Available on all paid plans.
+            </p>
+            {authUser && <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>Upgrade to Join</button>}
+          </div>
+        ) : loading ? (
+          <div style={{ textAlign: "center", color: th.textSoft, padding: 40 }}>Loading...</div>
+        ) : (
+          <>
+            {/* Group info bar */}
+            <div style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 36 }}>📚</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: th.text, fontSize: 16 }}>{genre} Readers</div>
+                <button onClick={loadMembers} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: th.textSoft, fontSize: 13 }}>
+                  {memberCount} {memberCount === 1 ? "member" : "members"} · View all
+                </button>
+              </div>
+              {canPost && (
+                <button onClick={handleJoinLeave} disabled={joining} style={btnStyle(isMember ? th.bgMuted : th.accent, isMember ? th.text : "#fff")}>
+                  {joining ? "…" : isMember ? "✓ Joined" : "Join"}
+                </button>
+              )}
+              {!canPost && canRead && (
+                <div style={{ fontSize: 12, color: th.textSoft, fontStyle: "italic" }}>Read only</div>
+              )}
+            </div>
+
+            {/* Storyteller read-only notice */}
+            {canRead && !canPost && (
+              <div style={{ ...cardStyle, background: th.accent + "15", borderColor: th.accent + "40", textAlign: "center", padding: 12, marginBottom: 16 }}>
+                <span style={{ fontSize: 13, color: th.textSoft }}>You can browse this group. <button onClick={onOpenSubscription} style={{ background: "none", border: "none", color: th.accent, cursor: "pointer", fontSize: 13, padding: 0, fontWeight: 600 }}>Upgrade to The Librarian</button> to join and post.</span>
+              </div>
+            )}
+
+            {/* New Post button */}
+            {canPost && isMember && !showNewPost && (
+              <button onClick={() => setShowNewPost(true)} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
+                + New Post
+              </button>
+            )}
+
+            {/* New Post form */}
+            {showNewPost && (
+              <div style={{ ...cardStyle, marginBottom: 16 }}>
+                <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>New Post</h3>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                  {POST_TYPES.map(pt => (
+                    <button key={pt.id} onClick={() => setPostType(pt.id)} style={{
+                      background: postType === pt.id ? typeColors[pt.id] : th.bgMuted,
+                      border: `1px solid ${postType === pt.id ? typeColors[pt.id] : th.border}`,
+                      borderRadius: 20, padding: "5px 12px", cursor: "pointer",
+                      color: postType === pt.id ? "#fff" : th.textSoft, fontSize: 12,
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                    }}>{pt.label}</button>
+                  ))}
+                </div>
+                {(postType === "reading" || postType === "finished" || postType === "want" || postType === "suggestion") && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <input style={{ ...inputStyle, flex: 1 }} placeholder="Book title" value={postBook} onChange={e => setPostBook(e.target.value)} />
+                    <input style={{ ...inputStyle, flex: 1 }} placeholder="Author" value={postAuthor} onChange={e => setPostAuthor(e.target.value)} />
+                  </div>
+                )}
+                <textarea
+                  placeholder="What's on your mind?"
+                  value={postContent} onChange={e => setPostContent(e.target.value)}
+                  rows={3} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+                />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button onClick={() => setShowNewPost(false)} style={btnStyle(th.bgMuted, th.text)}>Cancel</button>
+                  <button onClick={handlePost} style={btnStyle(th.accent)}>Post</button>
+                </div>
+                {postMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 6 }}>{postMsg}</div>}
+              </div>
+            )}
+
+            {/* Filter tabs */}
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 14 }}>
+              <button onClick={() => setFilterType("all")} style={{
+                background: filterType === "all" ? th.accent : th.bgMuted,
+                border: `1px solid ${th.border}`, borderRadius: 20, padding: "5px 14px",
+                color: filterType === "all" ? "#fff" : th.textSoft, fontSize: 12, cursor: "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif', flexShrink: 0,
+              }}>All</button>
+              {POST_TYPES.map(pt => (
+                <button key={pt.id} onClick={() => setFilterType(pt.id)} style={{
+                  background: filterType === pt.id ? typeColors[pt.id] : th.bgMuted,
+                  border: `1px solid ${th.border}`, borderRadius: 20, padding: "5px 14px",
+                  color: filterType === pt.id ? "#fff" : th.textSoft, fontSize: 12, cursor: "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', flexShrink: 0,
+                }}>{pt.short}</button>
+              ))}
+            </div>
+
+            {/* Posts feed */}
+            {filteredPosts.length === 0 ? (
+              <div style={{ textAlign: "center", color: th.textSoft, fontStyle: "italic", padding: 32 }}>
+                {filterType === "all" ? "No posts yet. Be the first!" : `No ${filterType} posts yet.`}
+              </div>
+            ) : filteredPosts.map(post => {
+              const pt = POST_TYPES.find(t => t.id === post.post_type) || POST_TYPES[0];
+              const liked = likedPosts.has(post.id);
+              return (
+                <div key={post.id} style={cardStyle}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ background: typeColors[post.post_type] || th.accent, color: "#fff", borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 600 }}>{pt.label}</span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
+                  </div>
+                  {(post.book_title) && (
+                    <div style={{ background: th.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
+                      <div style={{ fontWeight: 700, color: th.text, fontSize: 14 }}>{post.book_title}</div>
+                      {post.book_author && <div style={{ fontSize: 12, color: th.textSoft }}>by {post.book_author}</div>}
+                    </div>
+                  )}
+                  <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 10 }}>{post.content}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{post.username}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+                    <button onClick={() => handleLike(post.id)} style={{
+                      background: "none", border: "none", cursor: canPost && isMember ? "pointer" : "default",
+                      color: liked ? "#e74c3c" : th.textSoft, fontSize: 13, padding: 0,
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                    }}>
+                      {liked ? "❤️" : "🤍"} {post.like_count || 0}
+                    </button>
+                    <button onClick={() => toggleComments(post.id)} style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      color: th.textSoft, fontSize: 13, padding: 0,
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                    }}>
+                      💬 {post.comment_count || 0} {post.comment_count === 1 ? "comment" : "comments"}
+                    </button>
+                  </div>
+
+                  {expandedPost === post.id && (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${th.border}` }}>
+                      {(comments[post.id] || []).map(c => (
+                        <div key={c.id} style={{ marginBottom: 10, paddingLeft: 12, borderLeft: `2px solid ${th.border}` }}>
+                          <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{c.username}</span>
+                          <span style={{ fontSize: 11, color: th.textSoft, marginLeft: 6 }}>{new Date(c.created_at).toLocaleDateString()}</span>
+                          <div style={{ color: th.text, fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>{c.content}</div>
+                        </div>
+                      ))}
+                      {canPost && isMember && (
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <input
+                            placeholder="Write a comment…"
+                            value={commentText} onChange={e => setCommentText(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") handleComment(post.id); }}
+                            style={{ ...inputStyle, flex: 1, padding: "7px 10px", fontSize: 13 }}
+                          />
+                          <button onClick={() => handleComment(post.id)} style={btnStyle(th.accent)}>Send</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {/* Members modal */}
+      {showMembers && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end" }}>
+          <div style={{ background: th.bg, borderRadius: "16px 16px 0 0", padding: 24, width: "100%", maxHeight: "60vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: th.text }}>Members ({memberCount})</h3>
+              <button onClick={() => setShowMembers(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
+            </div>
+            {members.map(m => (
+              <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}`, color: th.text, fontSize: 14 }}>
+                @{m.username}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscription }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
+  const hasAccess = authUser && ["librarian", "storykeeper"].includes(userTier);
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const monthName = monthNames[month - 1];
+
+  const lastSaturday = (() => {
+    const d = new Date(year, month, 0);
+    while (d.getDay() !== 6) d.setDate(d.getDate() - 1);
+    return d.getDate();
+  })();
+  const basePhase = day <= 10 ? "nominating" : day <= 20 ? "voting" : "reading";
+  const currentPhase = day === lastSaturday && day > 20 ? "meeting" : basePhase;
+
+  const meetingUrl = `https://meet.jit.si/StoryKeeper-${genre.replace(/[\s&]/g, "-")}-${year}-${String(month).padStart(2,"0")}`;
+
+  const [session, setSession] = React.useState(null);
+  const [nominations, setNominations] = React.useState([]);
+  const [myVote, setMyVote] = React.useState(null);
+  const [username, setUsername] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+  const [nomTitle, setNomTitle] = React.useState("");
+  const [nomAuthor, setNomAuthor] = React.useState("");
+  const [nomMsg, setNomMsg] = React.useState("");
+  const [posts, setPosts] = React.useState([]);
+  const [newPost, setNewPost] = React.useState("");
+  const [postMsg, setPostMsg] = React.useState("");
+  const [expandedPost, setExpandedPost] = React.useState(null);
+  const [postReplies, setPostReplies] = React.useState({});
+  const [replyText, setReplyText] = React.useState("");
+
+  React.useEffect(() => {
+    if (!authUser || !supabaseRef.current) return;
+    supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).single()
+      .then(({ data }) => { if (data) setUsername(data.username); });
+  }, [authUser]);
+
+  const loadData = React.useCallback(async () => {
+    if (!supabaseRef.current || !hasAccess) { setLoading(false); return; }
+    setLoading(true);
+    const sb = supabaseRef.current;
+
+    const meetDate = new Date(year, month - 1, lastSaturday).toISOString().split("T")[0];
+    let { data: sess } = await sb.from("book_club_sessions")
+      .select("*").eq("genre", genre).eq("year", year).eq("month", month).maybeSingle();
+    if (!sess) {
+      const { data: newSess } = await sb.from("book_club_sessions")
+        .insert({ genre, year, month, status: currentPhase, meeting_date: meetDate })
+        .select().single();
+      sess = newSess;
+    }
+    if (sess) {
+      setSession(sess);
+      const { data: noms } = await sb.from("book_club_nominations")
+        .select("*, book_club_votes(user_id)").eq("session_id", sess.id).order("created_at");
+      setNominations(noms || []);
+      if (authUser) {
+        const voted = (noms || []).find(n => (n.book_club_votes || []).some(v => v.user_id === authUser.id));
+        setMyVote(voted ? voted.id : null);
+      }
+    }
+    const { data: postsData } = await sb.from("book_club_posts")
+      .select("*").eq("genre", genre).order("created_at", { ascending: false }).limit(50);
+    setPosts(postsData || []);
+    setLoading(false);
+  }, [genre, hasAccess, authUser]);
+
+  React.useEffect(() => { loadData(); }, [loadData]);
+
+  const handleNominate = async () => {
+    if (!nomTitle.trim()) { setNomMsg("Please enter a book title."); return; }
+    if (!authUser) { setNomMsg("Please sign in to nominate."); return; }
+    if (!username) { setNomMsg("Please set a username in your profile first."); return; }
+    const myNoms = nominations.filter(n => n.user_id === authUser.id);
+    if (myNoms.length >= 3) { setNomMsg("You can nominate up to 3 books per month."); return; }
+    const { error } = await supabaseRef.current.from("book_club_nominations").insert({
+      session_id: session.id, user_id: authUser.id, username,
+      book_title: nomTitle.trim(), book_author: nomAuthor.trim() || null,
+    });
+    if (error) { setNomMsg("Error: " + error.message); return; }
+    setNomTitle(""); setNomAuthor(""); setNomMsg("Nominated! ✓");
+    loadData();
+  };
+
+  const handleVote = async (nomId) => {
+    if (!authUser || currentPhase !== "voting") return;
+    const sb = supabaseRef.current;
+    if (myVote === nomId) {
+      await sb.from("book_club_votes").delete().eq("nomination_id", nomId).eq("user_id", authUser.id);
+      setMyVote(null);
+    } else {
+      if (myVote) await sb.from("book_club_votes").delete().eq("nomination_id", myVote).eq("user_id", authUser.id);
+      await sb.from("book_club_votes").insert({ nomination_id: nomId, user_id: authUser.id });
+      setMyVote(nomId);
+    }
+    loadData();
+  };
+
+  const handlePost = async () => {
+    if (!newPost.trim()) return;
+    if (!authUser || !username) { setPostMsg("Sign in and set a username to post."); return; }
+    const { error } = await supabaseRef.current.from("book_club_posts").insert({
+      user_id: authUser.id, username, genre, post_type: "discussion", content: newPost.trim(),
+    });
+    if (error) { setPostMsg("Error posting."); return; }
+    setNewPost(""); setPostMsg("");
+    loadData();
+  };
+
+  const loadReplies = async (postId) => {
+    const { data } = await supabaseRef.current.from("book_club_replies")
+      .select("*").eq("post_id", postId).order("created_at");
+    setPostReplies(prev => ({ ...prev, [postId]: data || [] }));
+  };
+
+  const handleReply = async (postId) => {
+    if (!replyText.trim() || !authUser || !username) return;
+    await supabaseRef.current.from("book_club_replies").insert({
+      post_id: postId, user_id: authUser.id, username, content: replyText.trim(),
+    });
+    setReplyText("");
+    loadReplies(postId);
+  };
+
+  const togglePost = (postId) => {
+    if (expandedPost === postId) { setExpandedPost(null); return; }
+    setExpandedPost(postId);
+    loadReplies(postId);
+  };
+
+  const winningNom = nominations.length > 0
+    ? nominations.reduce((a, b) => (b.book_club_votes?.length || 0) > (a.book_club_votes?.length || 0) ? b : a, nominations[0])
+    : null;
+
+  const phaseInfo = {
+    nominating: { label: "Nominations Open", emoji: "📝", color: "#6B8C5E", desc: `Nominate a book for ${monthName}'s reading pick. Voting opens on the 11th.` },
+    voting:     { label: "Voting Open", emoji: "🗳️", color: "#5E6B8C", desc: `Vote for ${monthName}'s book pick. Voting closes on the 20th.` },
+    reading:    { label: "Reading in Progress", emoji: "📖", color: "#8C5E3C", desc: `The group is reading this month's pick. Meeting on the ${lastSaturday}${lastSaturday===1?"st":lastSaturday===2?"nd":lastSaturday===3?"rd":"th"}.` },
+    meeting:    { label: "Meeting Day!", emoji: "🎉", color: "#8C5E6B", desc: `Today is ${monthName}'s book club meeting! Join the video call below.` },
+  };
+  const pi = phaseInfo[currentPhase];
+
+  const cardStyle = { background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 12, padding: 16, marginBottom: 12 };
+  const inputStyle = { width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, boxSizing: "border-box", outline: "none" };
+  const btnStyle = (color) => ({ background: color, border: "none", borderRadius: 8, padding: "9px 20px", color: "#fff", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer", fontWeight: 600 });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: th.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0", lineHeight: 1 }}>‹</button>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
+            <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>📚 Book Club</h2>
+          </div>
+        </div>
+
+        {/* Tier gate */}
+        {!hasAccess ? (
+          <div style={{ ...cardStyle, textAlign: "center", padding: 32 }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
+            <h3 style={{ margin: "0 0 8px", color: th.text, fontSize: 18 }}>
+              {!authUser ? "Sign In to Join Book Club" : "Book Club is a Premium Feature"}
+            </h3>
+            <p style={{ color: th.textSoft, fontSize: 14, lineHeight: 1.6, margin: "0 0 20px" }}>
+              {!authUser
+                ? "You need to be signed in to participate in monthly book picks, voting, and live video discussions."
+                : "Monthly book picks, voting, and live video discussions are available on The Librarian and The StoryKeeper plans."}
+            </p>
+            {authUser && <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>Upgrade to Join</button>}
+          </div>
+        ) : loading ? (
+          <div style={{ textAlign: "center", color: th.textSoft, padding: 40 }}>Loading...</div>
+        ) : (
+          <>
+            {/* Phase banner */}
+            <div style={{ ...cardStyle, background: pi.color + "22", borderColor: pi.color + "55", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 28 }}>{pi.emoji}</span>
+                <div>
+                  <div style={{ fontWeight: 700, color: pi.color, fontSize: 15 }}>{pi.label}</div>
+                  <div style={{ color: th.textSoft, fontSize: 13, marginTop: 2 }}>{pi.desc}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* NOMINATING PHASE */}
+            {currentPhase === "nominating" && (
+              <div style={cardStyle}>
+                <h3 style={{ margin: "0 0 14px", color: th.text, fontSize: 16 }}>📝 Nominate a Book</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <input style={inputStyle} placeholder="Book title *" value={nomTitle} onChange={e => setNomTitle(e.target.value)} />
+                  <input style={inputStyle} placeholder="Author (optional)" value={nomAuthor} onChange={e => setNomAuthor(e.target.value)} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: th.textSoft }}>{nominations.filter(n => n.user_id === authUser?.id).length}/3 nominations used</span>
+                    <button onClick={handleNominate} style={btnStyle(th.accent)}>Nominate</button>
+                  </div>
+                  {nomMsg && <div style={{ fontSize: 13, color: nomMsg.includes("Error") ? "#c0392b" : "#6B8C5E" }}>{nomMsg}</div>}
+                </div>
+              </div>
+            )}
+
+            {/* Nominations list (nominating + voting phases) */}
+            {(currentPhase === "nominating" || currentPhase === "voting") && nominations.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: "0 0 10px", color: th.text, fontSize: 16 }}>
+                  {currentPhase === "voting" ? "🗳️ Vote for Your Pick" : "Current Nominations"}
+                </h3>
+                {nominations.map(nom => {
+                  const voteCount = nom.book_club_votes?.length || 0;
+                  const isMine = myVote === nom.id;
+                  return (
+                    <div key={nom.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, color: th.text, fontSize: 15 }}>{nom.book_title}</div>
+                        {nom.book_author && <div style={{ fontSize: 13, color: th.textSoft }}>by {nom.book_author}</div>}
+                        <div style={{ fontSize: 12, color: th.textSoft, marginTop: 2 }}>Nominated by @{nom.username}</div>
+                      </div>
+                      {currentPhase === "voting" && (
+                        <button onClick={() => handleVote(nom.id)} style={{
+                          background: isMine ? th.accent : th.bgMuted,
+                          border: `2px solid ${th.accent}`, borderRadius: 20, padding: "6px 14px",
+                          color: isMine ? "#fff" : th.accent, fontSize: 13, cursor: "pointer",
+                          fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                        }}>
+                          {isMine ? "✓ Voted" : "Vote"} · {voteCount}
+                        </button>
+                      )}
+                      {currentPhase === "nominating" && (
+                        <div style={{ fontSize: 13, color: th.textSoft }}>{voteCount} {voteCount === 1 ? "vote" : "votes"}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {nominations.length === 0 && currentPhase === "nominating" && (
+              <div style={{ textAlign: "center", color: th.textSoft, fontSize: 14, fontStyle: "italic", marginBottom: 16 }}>
+                No nominations yet — be the first!
+              </div>
+            )}
+
+            {/* READING / MEETING PHASE — show this month's pick */}
+            {(currentPhase === "reading" || currentPhase === "meeting") && winningNom && (
+              <div style={{ ...cardStyle, marginBottom: 20 }}>
+                <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>{monthName}'s Pick</div>
+                <div style={{ fontWeight: 700, color: th.text, fontSize: 20, marginBottom: 4 }}>{winningNom.book_title}</div>
+                {winningNom.book_author && <div style={{ fontSize: 14, color: th.textSoft }}>by {winningNom.book_author}</div>}
+                <div style={{ fontSize: 13, color: th.textSoft, marginTop: 4 }}>
+                  {winningNom.book_club_votes?.length || 0} votes · Nominated by @{winningNom.username}
+                </div>
+                {currentPhase === "meeting" && (
+                  <button
+                    onClick={() => window.open(meetingUrl, "_blank")}
+                    style={{ ...btnStyle("#6B8C5E"), marginTop: 16, width: "100%", fontSize: 16, padding: "12px 20px" }}
+                  >
+                    📹 Join This Month's Meeting
+                  </button>
+                )}
+                {currentPhase === "reading" && (
+                  <div style={{ marginTop: 12, fontSize: 13, color: th.textSoft, fontStyle: "italic" }}>
+                    Meeting on {monthName} {lastSaturday} — mark your calendar!
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(currentPhase === "reading" || currentPhase === "meeting") && !winningNom && (
+              <div style={{ ...cardStyle, textAlign: "center", color: th.textSoft, fontStyle: "italic" }}>
+                No book was selected this month.
+              </div>
+            )}
+
+            {/* DISCUSSION */}
+            <div style={{ marginTop: 8 }}>
+              <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>💬 Club Discussion</h3>
+              {authUser && username ? (
+                <div style={{ ...cardStyle, marginBottom: 16 }}>
+                  <textarea
+                    placeholder={`Share your thoughts about ${genre} books…`}
+                    value={newPost}
+                    onChange={e => setNewPost(e.target.value)}
+                    rows={3}
+                    style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                    <button onClick={handlePost} style={btnStyle(th.accent)}>Post</button>
+                  </div>
+                  {postMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 4 }}>{postMsg}</div>}
+                </div>
+              ) : (
+                <div style={{ ...cardStyle, textAlign: "center", color: th.textSoft, fontSize: 14 }}>
+                  {!authUser ? "Sign in to join the discussion." : "Set a username in your profile to post."}
+                </div>
+              )}
+
+              {posts.length === 0 && (
+                <div style={{ textAlign: "center", color: th.textSoft, fontSize: 14, fontStyle: "italic", padding: 20 }}>
+                  No posts yet. Start the conversation!
+                </div>
+              )}
+
+              {posts.map(post => (
+                <div key={post.id} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700, color: th.accent, fontSize: 14 }}>@{post.username}</span>
+                    <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
+                  </div>
+                  <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>{post.content}</div>
+                  <button onClick={() => togglePost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: th.textSoft, fontSize: 12, padding: 0 }}>
+                    {expandedPost === post.id ? "Hide replies" : `Replies (${postReplies[post.id]?.length ?? "…"})`}
+                  </button>
+
+                  {expandedPost === post.id && (
+                    <div style={{ marginTop: 10, paddingLeft: 12, borderLeft: `2px solid ${th.border}` }}>
+                      {(postReplies[post.id] || []).map(r => (
+                        <div key={r.id} style={{ marginBottom: 8 }}>
+                          <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{r.username}</span>
+                          <span style={{ fontSize: 12, color: th.textSoft, marginLeft: 6 }}>{new Date(r.created_at).toLocaleDateString()}</span>
+                          <div style={{ color: th.text, fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>{r.content}</div>
+                        </div>
+                      ))}
+                      {authUser && username && (
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <input
+                            placeholder="Write a reply…"
+                            value={replyText}
+                            onChange={e => setReplyText(e.target.value)}
+                            style={{ ...inputStyle, flex: 1, padding: "6px 10px", fontSize: 13 }}
+                            onKeyDown={e => { if (e.key === "Enter") { handleReply(post.id); } }}
+                          />
+                          <button onClick={() => handleReply(post.id)} style={btnStyle(th.accent)}>Reply</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSubscription }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [avatar, setAvatar] = React.useState(() => localStorage.getItem("sk_avatar") || null);
+  const [avatarPos, setAvatarPos] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem("sk_avatar_pos") || "null") || { x: 50, y: 50 }; } catch { return { x: 50, y: 50 }; }
+  });
+  const [uploading, setUploading] = React.useState(false);
+  const [repositioning, setRepositioning] = React.useState(false);
+  const [repoPos, setRepoPos] = React.useState({ x: 50, y: 50 });
+  const [showOverlay, setShowOverlay] = React.useState(false);
+  const [deleteConfirm, setDeleteConfirm] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+  const dragRef = React.useRef(null);
+  const dragStart = React.useRef(null);
+  const [editingUsername, setEditingUsername] = React.useState(false);
+  const [usernameInput, setUsernameInput] = React.useState("");
+  const [editingPassword, setEditingPassword] = React.useState(false);
+  const [newPassword, setNewPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [accountMsg, setAccountMsg] = React.useState("");
+  const fileRef = React.useRef(null);
+
+  // Book stats
+  const stats = React.useMemo(() => {
+    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const ebooks = userBooks.filter(b => !b.type || b.type === "ebooks" || b.mediaType === "ebook").length;
+    const audiobooks = userBooks.filter(b => b.type === "audiobooks" || b.mediaType === "audiobook").length;
+    const reading = userBooks.filter(b => b.status === "reading").length;
+    const finished = userBooks.filter(b => b.status === "finished" || b.status === "read").length;
+    return { total: userBooks.length, ebooks, audiobooks, reading, finished };
+  }, []);
+
+  const handleAvatarChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        // Resize to max 400x400 for quality while staying manageable
+        const maxSize = 400;
+        const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        setAvatar(dataUrl);
+        setRepoPos({ x: 50, y: 50 });
+        setRepositioning(true); // open reposition mode
+        setUploading(false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      const sb = supabaseRef.current;
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error("Not logged in");
+      const res = await fetch("/api/delete-account", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Delete failed");
+      // Clear all local data
+      localStorage.clear();
+      await sb.auth.signOut();
+      window.location.reload();
+    } catch (err) {
+      alert("Could not delete account: " + err.message);
+      setDeleting(false);
+      setDeleteConfirm(false);
+    }
+  };
+
+  const displayName = authUser?.user_metadata?.full_name || authUser?.user_metadata?.name || authUser?.email?.split("@")[0] || "Reader";
+  const initials = displayName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9100,
+      background: "rgba(0,0,0,0.7)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: th.bg, borderRadius: 16, padding: "32px 28px",
+        width: Math.min(window.innerWidth - 32, 400),
+        maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 12px 48px rgba(0,0,0,0.6)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+      }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", cursor: "pointer", color: th.accent,
+            fontSize: 22, padding: "0 10px 0 0", lineHeight: 1, fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>‹</button>
+          <h2 style={{ margin: 0, fontSize: 20, color: th.text, flex: 1, textAlign: "center" }}>My Profile</h2>
+          <div style={{ width: 32 }} />
+        </div>
+
+        {/* Avatar */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
+          {repositioning && avatar ? (
+            // Drag-to-reposition mode
+            <div style={{ width: "100%", marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: th.textSoft, textAlign: "center", marginBottom: 8 }}>Drag to reposition your photo</div>
+              <div
+                ref={dragRef}
+                style={{ width: 160, height: 160, borderRadius: "50%", overflow: "hidden", border: `3px solid ${th.accent}`, margin: "0 auto 12px", cursor: "grab", position: "relative", touchAction: "none" }}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  dragStart.current = { px: e.clientX, py: e.clientY, ox: repoPos.x, oy: repoPos.y };
+                }}
+                onPointerMove={(e) => {
+                  if (!dragStart.current) return;
+                  const dx = (e.clientX - dragStart.current.px) / 1.6;
+                  const dy = (e.clientY - dragStart.current.py) / 1.6;
+                  setRepoPos({
+                    x: Math.max(0, Math.min(100, dragStart.current.ox - dx)),
+                    y: Math.max(0, Math.min(100, dragStart.current.oy - dy)),
+                  });
+                }}
+                onPointerUp={() => { dragStart.current = null; }}
+              >
+                <img src={avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `${repoPos.x}% ${repoPos.y}%`, pointerEvents: "none", userSelect: "none" }} />
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                <button onClick={() => { setRepositioning(false); setAvatar(localStorage.getItem("sk_avatar") || null); }} style={{ padding: "8px 20px", borderRadius: 8, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+                <button onClick={() => {
+                  const pos = repoPos;
+                  try { localStorage.setItem("sk_avatar", avatar); localStorage.setItem("sk_avatar_pos", JSON.stringify(pos)); } catch {}
+                  setAvatarPos(pos);
+                  setRepositioning(false);
+                }} style={{ padding: "8px 20px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save Position</button>
+              </div>
+            </div>
+          ) : (
+            // Normal avatar display
+            <div
+              onClick={() => setShowOverlay(v => !v)}
+              style={{ width: 90, height: 90, borderRadius: "50%", cursor: "pointer", overflow: "hidden", border: `3px solid ${th.accent}`, background: th.bgMuted, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10, position: "relative" }}
+            >
+              {avatar
+                ? <img src={avatar} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `${avatarPos.x}% ${avatarPos.y}%` }} />
+                : <span style={{ fontSize: 32, color: th.accent, fontWeight: 700 }}>{initials}</span>
+              }
+              {showOverlay && (
+                <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                  <button onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); setShowOverlay(false); }} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 6, padding: "3px 8px", fontSize: 10, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>📷 Change</button>
+                  {avatar && <button onClick={(e) => { e.stopPropagation(); setRepoPos(avatarPos); setRepositioning(true); setShowOverlay(false); }} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 6, padding: "3px 8px", fontSize: 10, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>↕ Reposition</button>}
+                </div>
+              )}
+            </div>
+          )}
+          <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleAvatarChange} />
+          <div style={{ fontSize: 20, fontWeight: 700, color: th.text, marginBottom: 2 }}>{displayName}</div>
+          <div style={{ fontSize: 13, color: th.textSoft }}>{authUser?.email}</div>
+          {!repositioning && <div style={{ fontSize: 11, color: th.textSoft, marginTop: 4, fontStyle: "italic" }}>Tap photo to edit</div>}
+        </div>
+
+        {/* Book Stats */}
+        <div style={{ marginBottom: 24, background: th.bgMuted, borderRadius: 12, padding: "16px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>My Library</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            {[
+              { label: "Total", value: stats.total },
+              { label: "eBooks", value: stats.ebooks },
+              { label: "Audiobooks", value: stats.audiobooks },
+              { label: "Reading", value: stats.reading },
+              { label: "Finished", value: stats.finished },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ textAlign: "center", background: th.bg, borderRadius: 8, padding: "10px 4px" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: th.accent }}>{value}</div>
+                <div style={{ fontSize: 11, color: th.textSoft }}>{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Subscription */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Subscription</div>
+          <div style={{
+            background: th.bgMuted, borderRadius: 10, padding: "12px 16px",
+            display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8,
+          }}>
+            <div>
+              <div style={{ fontSize: 14, color: th.text, fontWeight: 700 }}>The Reluctant Reader</div>
+              <div style={{ fontSize: 12, color: th.textSoft }}>Free plan</div>
+            </div>
+            <span style={{ fontSize: 18 }}>📖</span>
+          </div>
+          <button onClick={() => { onClose(); onOpenSubscription(); }} style={{
+            width: "100%", padding: "10px", borderRadius: 8,
+            background: th.accent, border: "none", color: th.bg,
+            cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+            marginBottom: 8,
+          }}>Upgrade Plan</button>
+          <button onClick={() => window.open("https://billing.stripe.com/p/login/test_00000000", "_blank")} style={{
+            width: "100%", padding: "10px", borderRadius: 8,
+            background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
+            cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>Manage Subscription</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+            <span style={{ fontSize: 13 }}>🔒</span>
+            <span style={{ fontSize: 11, color: th.textSoft }}>Payments are secure and encrypted via Stripe.</span>
+          </div>
+        </div>
+
+        {/* Account Actions */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Account</div>
+
+          {/* Email */}
+          <div style={{ background: th.bgMuted, borderRadius: 8, padding: "10px 14px", marginBottom: 8, fontSize: 13, color: th.textSoft }}>
+            <span style={{ fontWeight: 700, color: th.text }}>Email: </span>{authUser?.email}
+          </div>
+
+          {/* Update Username */}
+          {!editingUsername ? (
+            <button onClick={() => { setUsernameInput(authUser?.user_metadata?.full_name || ""); setEditingUsername(true); setAccountMsg(""); }} style={{
+              width: "100%", padding: "10px", borderRadius: 8, marginBottom: 8,
+              background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
+              cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "left",
+            }}>✏️ Update Username</button>
+          ) : (
+            <div style={{ marginBottom: 8, background: th.bgMuted, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6 }}>New username</div>
+              <input value={usernameInput} onChange={e => setUsernameInput(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box", marginBottom: 8 }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setEditingUsername(false)} style={{ flex: 1, padding: "8px", borderRadius: 6, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+                <button onClick={async () => {
+                  const sb = supabaseRef.current;
+                  if (!sb) return;
+                  const trimmed = usernameInput.trim();
+                  if (!trimmed) { setAccountMsg("Username cannot be empty."); return; }
+                  // Check uniqueness in usernames table
+                  const { data: existing } = await sb.from("usernames").select("user_id").eq("username", trimmed.toLowerCase()).single();
+                  if (existing && existing.user_id !== authUser.id) {
+                    setAccountMsg("That username is already taken."); return;
+                  }
+                  // Release old username entry if any, reserve new one
+                  await sb.from("usernames").delete().eq("user_id", authUser.id);
+                  await sb.from("usernames").insert({ username: trimmed.toLowerCase(), user_id: authUser.id });
+                  const { error } = await sb.auth.updateUser({ data: { full_name: trimmed } });
+                  if (error) setAccountMsg("Error: " + error.message);
+                  else { setAccountMsg("Username updated!"); setEditingUsername(false); }
+                }} style={{ flex: 1, padding: "8px", borderRadius: 6, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
+              </div>
+            </div>
+          )}
+
+          {/* Update Password */}
+          {!editingPassword ? (
+            <button onClick={() => { setEditingPassword(true); setNewPassword(""); setConfirmPassword(""); setAccountMsg(""); }} style={{
+              width: "100%", padding: "10px", borderRadius: 8, marginBottom: 8,
+              background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
+              cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "left",
+            }}>🔒 Update Password</button>
+          ) : (
+            <div style={{ marginBottom: 8, background: th.bgMuted, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6 }}>New password</div>
+              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box", marginBottom: 6 }} />
+              <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box", marginBottom: 8 }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setEditingPassword(false)} style={{ flex: 1, padding: "8px", borderRadius: 6, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+                <button onClick={async () => {
+                  if (newPassword !== confirmPassword) { setAccountMsg("Passwords don't match."); return; }
+                  if (newPassword.length < 6) { setAccountMsg("Password must be at least 6 characters."); return; }
+                  const sb = supabaseRef.current;
+                  if (!sb) return;
+                  const { error } = await sb.auth.updateUser({ password: newPassword });
+                  if (error) setAccountMsg("Error: " + error.message);
+                  else { setAccountMsg("Password updated!"); setEditingPassword(false); setNewPassword(""); setConfirmPassword(""); }
+                }} style={{ flex: 1, padding: "8px", borderRadius: 6, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
+              </div>
+            </div>
+          )}
+
+          {accountMsg && <div style={{ fontSize: 12, color: accountMsg.startsWith("Error") ? "#8B2A2A" : "#2d6a2d", marginBottom: 8, padding: "6px 10px", background: accountMsg.startsWith("Error") ? "#FFF0F0" : "#F0FFF0", borderRadius: 6 }}>{accountMsg}</div>}
+
+          <button onClick={() => { onSignOut(); onClose(); }} style={{
+            width: "100%", padding: "10px", borderRadius: 8, marginBottom: 8,
+            background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
+            cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>🚪 Sign Out</button>
+
+          {!deleteConfirm ? (
+            <button onClick={() => setDeleteConfirm(true)} style={{
+              width: "100%", padding: "10px", borderRadius: 8,
+              background: "#F5E0E0", border: "1px solid #D4A0A0", color: "#8B2A2A",
+              cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+            }}>Delete Account</button>
+          ) : (
+            <div style={{ background: "#FFF0F0", border: "1px solid #D4A0A0", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 13, color: "#8B2A2A", marginBottom: 10, fontWeight: 700 }}>Are you sure?</div>
+              <div style={{ fontSize: 12, color: "#8B4A4A", marginBottom: 12, lineHeight: 1.5 }}>
+                This permanently deletes your account and all library data. This cannot be undone.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setDeleteConfirm(false)} style={{
+                  flex: 1, padding: "9px", borderRadius: 8,
+                  background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
+                  cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+                }}>Cancel</button>
+                <button onClick={handleDeleteAccount} disabled={deleting} style={{
+                  flex: 1, padding: "9px", borderRadius: 8,
+                  background: "#C0392B", border: "none", color: "#fff",
+                  cursor: deleting ? "wait" : "pointer", fontSize: 13,
+                  fontFamily: '"Palatino Linotype", Palatino, serif', opacity: deleting ? 0.6 : 1,
+                }}>{deleting ? "Deleting..." : "Yes, Delete"}</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ textAlign: "center" }}>
+          <button onClick={onClose} style={{
+            background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 8,
+            padding: "9px 28px", color: th.text, fontSize: 14,
+            fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+          }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [showHome, setShowHome] = useState(() => {
-    const h = window.location.hash;
-    return !h || h === "#" || h === "";
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    if (h && h !== "#") return false;
+    const saved = localStorage.getItem("sk_current_page");
+    if (saved && saved !== "home") return false;
+    return true;
   });
   const [genre, setGenre] = useState(() => {
-    const h = window.location.hash;
-    return h.startsWith("#genre=") ? decodeURIComponent(h.slice(7)) : null;
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    if (h.startsWith("#genre=")) return decodeURIComponent(h.slice(7));
+    const saved = localStorage.getItem("sk_current_page");
+    if (saved && saved.startsWith("genre:")) return saved.slice(6);
+    return null;
   });
   const [mediaType, setMediaType] = useState(() => localStorage.getItem("sk_media_type") || "ebooks");
   const [bgTask, setBgTask] = useState(null);
@@ -7053,6 +9738,129 @@ export default function App() {
     };
   }, []);
 
+  // --- Cloud sync helpers ---
+  const SYNC_KEYS = [
+    "sk_user_books",
+    "sk_statuses_ebooks", "sk_statuses_audiobooks",
+    "sk_favorites_ebooks", "sk_favorites_audiobooks",
+    "sk_progress_ebooks", "sk_progress_audiobooks",
+    "sk_dates_ebooks", "sk_dates_audiobooks",
+    "sk_sessions_ebooks", "sk_sessions_audiobooks",
+    "sk_chapters_ebooks",
+    "sk_dark_factor", "sk_world_building",
+    "sk_connections", "sk_genre_overrides", "sk_hidden_books",
+    "sk_avatar", "sk_avatar_pos",
+  ];
+
+  const gatherLocalData = () => {
+    const payload = {};
+    SYNC_KEYS.forEach(k => {
+      const v = localStorage.getItem(k);
+      if (!v) return;
+      try {
+        const parsed = JSON.parse(v);
+        // Strip descriptions from books — they're large and re-enrichable
+        if (k === "sk_user_books" && Array.isArray(parsed)) {
+          payload[k] = parsed.map(({ description: _d, ...rest }) => rest);
+        } else {
+          payload[k] = parsed;
+        }
+      } catch { payload[k] = v; }
+    });
+    return payload;
+  };
+
+  const applyCloudData = (data) => {
+    if (!data) return;
+    SYNC_KEYS.forEach(k => {
+      if (data[k] === undefined) return;
+
+      if (k === "sk_user_books") {
+        // Merge cloud books with local books — never overwrite locally-enriched fields
+        const local = (() => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch { return []; } })();
+        const cloudBooks = Array.isArray(data[k]) ? data[k] : [];
+        const localMap = new Map();
+        local.forEach(b => {
+          if (b.isbn) localMap.set(b.isbn, b);
+          localMap.set(b.title?.toLowerCase().trim(), b);
+        });
+        const merged = cloudBooks.map(cloudBook => {
+          const localBook =
+            (cloudBook.isbn && localMap.get(cloudBook.isbn)) ||
+            localMap.get(cloudBook.title?.toLowerCase().trim());
+          if (!localBook) return cloudBook; // new book from cloud — add it
+          // Prefer locally-enriched fields; fill missing fields from cloud
+          return {
+            ...cloudBook,
+            ...localBook,
+            // Fields where cloud can fill in if local is missing
+            coverUrl: localBook.coverUrl || cloudBook.coverUrl,
+            description: localBook.description || cloudBook.description,
+            author: localBook.author || cloudBook.author,
+            isbn: localBook.isbn || cloudBook.isbn,
+            _totalPages: localBook._totalPages || cloudBook._totalPages,
+            _totalChapters: localBook._totalChapters || cloudBook._totalChapters,
+          };
+        });
+        // Keep any local books not in cloud (locally added, not yet synced)
+        const cloudIsbns = new Set(cloudBooks.map(b => b.isbn).filter(Boolean));
+        const cloudTitles = new Set(cloudBooks.map(b => b.title?.toLowerCase().trim()).filter(Boolean));
+        local.forEach(localBook => {
+          const inCloud =
+            (localBook.isbn && cloudIsbns.has(localBook.isbn)) ||
+            cloudTitles.has(localBook.title?.toLowerCase().trim());
+          if (!inCloud) merged.push(localBook);
+        });
+        localStorage.setItem(k, JSON.stringify(merged));
+
+      } else if (k === "sk_genre_overrides") {
+        // Merge overrides — local manually-set genres take precedence
+        const local = (() => { try { return JSON.parse(localStorage.getItem(k) || "{}"); } catch { return {}; } })();
+        const merged = { ...data[k], ...local }; // local wins conflicts
+        localStorage.setItem(k, JSON.stringify(merged));
+
+      } else {
+        // Store strings (e.g. base64 avatar) as-is; everything else as JSON
+        const val = data[k];
+        localStorage.setItem(k, typeof val === "string" ? val : JSON.stringify(val));
+      }
+    });
+    // Notify components to re-read from localStorage
+    window.dispatchEvent(new CustomEvent("sk-cloud-synced"));
+  };
+
+  const withTimeout = (promise, ms = 10000) =>
+    Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), ms))]);
+
+  const syncToCloud = async (user) => {
+    const sb = supabaseRef.current;
+    if (!sb || !user) return;
+    const payload = gatherLocalData();
+    await withTimeout(
+      sb.from("user_libraries").upsert({ user_id: user.id, data: payload, updated_at: new Date().toISOString() })
+    );
+  };
+
+  const syncFromCloud = async (user) => {
+    const sb = supabaseRef.current;
+    if (!sb || !user) return false;
+    const { data, error } = await withTimeout(
+      sb.from("user_libraries").select("data, updated_at").eq("user_id", user.id).single()
+    );
+    if (error || !data) return false;
+    applyCloudData(data.data);
+    return true;
+  };
+
+  const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "done", "error"
+  const syncDebounceRef = useRef(null);
+
+  const triggerAutoSync = (user) => {
+    if (!user) return;
+    clearTimeout(syncDebounceRef.current);
+    syncDebounceRef.current = setTimeout(() => syncToCloud(user), 5000);
+  };
+
   // Supabase auth session
   useEffect(() => {
     const sb = getSupabase();
@@ -7061,8 +9869,23 @@ export default function App() {
     sb.auth.getSession().then(({ data }) => {
       setAuthUser(data.session?.user ?? null);
     });
-    const { data: { subscription } } = sb.auth.onAuthStateChange((_event, session) => {
-      setAuthUser(session?.user ?? null);
+    const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
+      const user = session?.user ?? null;
+      setAuthUser(user);
+      if (user) {
+        // Load subscription tier from Supabase
+        sb.from("user_subscriptions").select("tier").eq("user_id", user.id).maybeSingle()
+          .then(({ data }) => {
+            localStorage.setItem("sk_user_tier", data?.tier || "reluctant");
+          });
+      } else {
+        localStorage.setItem("sk_user_tier", "reluctant");
+      }
+      // Only pull from cloud on an actual new sign-in, not on page refresh (INITIAL_SESSION / TOKEN_REFRESHED)
+      if (user && event === "SIGNED_IN") {
+        const pulled = await syncFromCloud(user);
+        if (!pulled) await syncToCloud(user);
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -7102,13 +9925,57 @@ export default function App() {
 
   const [nests, setNests] = useState(DEFAULT_ASSIGNMENTS);
   const [openNestId, setOpenNestId] = useState(null);
-  const [showFavorites, setShowFavorites] = useState(() => window.location.hash === "#favorites");
-  const [showStats, setShowStats] = useState(() => window.location.hash === "#stats");
+  const [showFavorites, setShowFavorites] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#favorites" || localStorage.getItem("sk_current_page") === "favorites";
+  });
+  const [showStats, setShowStats] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#stats" || localStorage.getItem("sk_current_page") === "stats";
+  });
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showPlatforms, setShowPlatforms] = useState(() => window.location.hash === "#platforms");
-  const [showSubscription, setShowSubscription] = useState(() => window.location.hash === "#subscription");
+  const [showPlatforms, setShowPlatforms] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#platforms" || localStorage.getItem("sk_current_page") === "platforms";
+  });
+  const [showSubscription, setShowSubscription] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#subscription" || localStorage.getItem("sk_current_page") === "subscription";
+  });
   const [showAbout, setShowAbout] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#settings" || localStorage.getItem("sk_current_page") === "settings";
+  });
+  const [showProfile, setShowProfile] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#profile" || localStorage.getItem("sk_current_page") === "profile";
+  });
+  const [showGroup, setShowGroup] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h.startsWith("#group=") || localStorage.getItem("sk_current_page")?.startsWith("group:");
+  });
+  const [groupGenre, setGroupGenre] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    if (h.startsWith("#group=")) return decodeURIComponent(h.slice(7));
+    const saved = localStorage.getItem("sk_current_page") || "";
+    if (saved.startsWith("group:")) return saved.slice(6);
+    return null;
+  });
+  const [showBookClub, setShowBookClub] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h.startsWith("#bookclub=") || localStorage.getItem("sk_current_page")?.startsWith("bookclub:");
+  });
+  const [bookClubGenre, setBookClubGenre] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    if (h.startsWith("#bookclub=")) return decodeURIComponent(h.slice(10));
+    const saved = localStorage.getItem("sk_current_page") || "";
+    if (saved.startsWith("bookclub:")) return saved.slice(9);
+    return null;
+  });
+  const isMobile = useIsMobile();
+  const [ebookProgressMode, setEbookProgressMode] = useState(() => localStorage.getItem("sk_ebook_progress_mode") || "page");
+  const [audiobookProgressMode, setAudiobookProgressMode] = useState(() => localStorage.getItem("sk_audiobook_progress_mode") || "chapter");
   const [themeKey, setThemeKey] = useState(() => localStorage.getItem("sk_theme") || "firelight");
   const th = SK_THEMES[themeKey] || SK_THEMES.firelight;
   const [globalSearch, setGlobalSearch] = useState("");
@@ -7118,6 +9985,35 @@ export default function App() {
   const [searchBook, setSearchBook] = useState(null);
   const [autoOpenBook, setAutoOpenBook] = useState(null);
 
+  // Persist current page to localStorage so refresh (including iOS pull-to-refresh) restores position
+  useEffect(() => {
+    let page = "home";
+    if (showGroup && groupGenre) page = "group:" + groupGenre;
+    else if (showBookClub && bookClubGenre) page = "bookclub:" + bookClubGenre;
+    else if (genre) page = "genre:" + genre;
+    else if (showStats) page = "stats";
+    else if (showPlatforms) page = "platforms";
+    else if (showFavorites) page = "favorites";
+    else if (showSubscription) page = "subscription";
+    else if (showProfile) page = "profile";
+    else if (showSettings) page = "settings";
+    localStorage.setItem("sk_current_page", page);
+    localStorage.setItem("sk_last_hash", window.location.hash);
+  }, [genre, showStats, showPlatforms, showFavorites, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre]);
+
+  // Save hash right before unload (catches pull-to-refresh on iOS)
+  useEffect(() => {
+    const onUnload = () => {
+      localStorage.setItem("sk_last_hash", window.location.hash);
+    };
+    window.addEventListener("pagehide", onUnload);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      window.removeEventListener("pagehide", onUnload);
+      window.removeEventListener("beforeunload", onUnload);
+    };
+  }, []);
+
   useEffect(() => {
     const onPopState = () => {
       const h = window.location.hash;
@@ -7125,6 +10021,20 @@ export default function App() {
       setShowFavorites(h === "#favorites");
       setShowStats(h === "#stats");
       setShowSubscription(h === "#subscription");
+      setShowProfile(h === "#profile");
+      setShowSettings(h === "#settings");
+      if (h.startsWith("#group=")) {
+        setShowGroup(true);
+        setGroupGenre(decodeURIComponent(h.slice(7)));
+      } else {
+        setShowGroup(false);
+      }
+      if (h.startsWith("#bookclub=")) {
+        setShowBookClub(true);
+        setBookClubGenre(decodeURIComponent(h.slice(10)));
+      } else {
+        setShowBookClub(false);
+      }
       if (h.startsWith("#genre=")) {
         const g = decodeURIComponent(h.slice(7));
         setGenre(g);
@@ -7207,6 +10117,28 @@ export default function App() {
 
       {/* SUBSCRIPTION PAGE */}
       {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; }} />}
+
+      {/* GENRE GROUP PAGE */}
+      {showGroup && groupGenre && (
+        <GenreGroupPage
+          genre={groupGenre}
+          authUser={authUser}
+          supabaseRef={supabaseRef}
+          onClose={() => { setShowGroup(false); setGroupGenre(null); window.location.hash = ""; }}
+          onOpenSubscription={() => { setShowGroup(false); setGroupGenre(null); setShowSubscription(true); window.location.hash = "#subscription"; }}
+        />
+      )}
+
+      {/* BOOK CLUB PAGE */}
+      {showBookClub && bookClubGenre && (
+        <BookClubPage
+          genre={bookClubGenre}
+          authUser={authUser}
+          supabaseRef={supabaseRef}
+          onClose={() => { setShowBookClub(false); setBookClubGenre(null); window.location.hash = ""; }}
+          onOpenSubscription={() => { setShowBookClub(false); setBookClubGenre(null); setShowSubscription(true); window.location.hash = "#subscription"; }}
+        />
+      )}
 
       {/* HAMBURGER BUTTON */}
       <button
@@ -7408,6 +10340,7 @@ export default function App() {
 
         {/* Menu items */}
         {[
+          { key: "profile",       label: "👤 My Profile",            action: () => { setShowSidebar(false); setShowProfile(true); window.location.hash = "#profile"; } },
           { key: "platforms",     label: "🔗 Platform Connections", action: () => { setShowSidebar(false); setShowPlatforms(true); window.location.hash = "#platforms"; } },
           { key: "favorites",     label: "❤️ My Favorites",         action: () => { setShowSidebar(false); setShowFavorites(true); window.location.hash = "#favorites"; } },
           { key: "stats",         label: "📖 My Story So Far",        action: () => { setShowSidebar(false); setShowStats(true); window.location.hash = "#stats"; } },
@@ -7439,7 +10372,7 @@ export default function App() {
 
         {/* Settings */}
         <div
-          onClick={() => { setShowSidebar(false); setShowSettings(true); }}
+          onClick={() => { setShowSidebar(false); setShowSettings(true); window.location.hash = "#settings"; }}
           onMouseEnter={() => setSidebarHover("settings")}
           onMouseLeave={() => setSidebarHover(null)}
           style={{
@@ -7508,7 +10441,21 @@ export default function App() {
       )}
 
       {/* BOOKSHELF PAGE */}
-      {genre && (
+      {genre && (isMobile ? (
+        <MobileBookShelf
+          genre={genre}
+          mediaType={mediaType}
+          onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+          onClose={() => { setGenre(null); setShowHome(true); window.location.hash = ""; }}
+          onOpenSettings={() => { setShowSettings(true); window.location.hash = "#settings"; }}
+          onOpenStats={() => setShowStats(true)}
+          onOpenProfile={() => { setShowProfile(true); window.location.hash = "#profile"; }}
+          onOpenGroup={() => { setGroupGenre(genre); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(genre); }}
+          onOpenBookClub={() => { setBookClubGenre(genre); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(genre); }}
+          autoOpenBook={autoOpenBook}
+          onAutoOpenDone={() => setAutoOpenBook(null)}
+        />
+      ) : (
         <BookShelf
           genre={genre}
           mediaType={mediaType}
@@ -7516,10 +10463,26 @@ export default function App() {
           autoOpenBook={autoOpenBook}
           onAutoOpenDone={() => setAutoOpenBook(null)}
         />
-      )}
+      ))}
 
       {/* HOME PAGE */}
-      {showHome && (
+      {isMobile && (
+        <div style={{ display: showHome ? "block" : "none", position: "fixed", inset: 0, zIndex: 500 }}>
+          <MobileHomeView
+            mediaType={mediaType}
+            onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+            onGenreClick={(g) => {
+              window.location.hash = "#genre=" + encodeURIComponent(g);
+              setGenre(g);
+              setShowHome(false);
+            }}
+            onOpenSettings={() => { setShowSettings(true); window.location.hash = "#settings"; }}
+            onOpenStats={() => setShowStats(true)}
+            onOpenProfile={() => { setShowProfile(true); window.location.hash = "#profile"; }}
+          />
+        </div>
+      )}
+      {!isMobile && showHome && (
         <HomeView
           mediaType={mediaType}
           onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
@@ -7578,14 +10541,21 @@ export default function App() {
           position: "fixed", inset: 0, zIndex: 9000,
           background: "rgba(0,0,0,0.65)",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }} onClick={() => setShowSettings(false)}>
+        }} onClick={() => { setShowSettings(false); window.location.hash = ""; }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: th.bg, borderRadius: 14, padding: "36px 32px",
             width: 420, maxHeight: "85vh", overflowY: "auto",
             boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
             fontFamily: '"Palatino Linotype", Palatino, serif',
           }}>
-            <h2 style={{ margin: "0 0 24px", fontSize: 22, color: th.text, textAlign: "center" }}>⚙️ Settings</h2>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
+              <button onClick={() => { setShowSettings(false); window.location.hash = ""; }} style={{
+                background: "none", border: "none", cursor: "pointer", color: th.accent,
+                fontSize: 22, padding: "0 10px 0 0", lineHeight: 1, fontFamily: '"Palatino Linotype", Palatino, serif',
+              }}>‹</button>
+              <h2 style={{ margin: 0, fontSize: 22, color: th.text, flex: 1, textAlign: "center" }}>⚙️ Settings</h2>
+              <div style={{ width: 32 }} />
+            </div>
 
             {/* Color Theme */}
             <div style={{ marginBottom: 24 }}>
@@ -7680,27 +10650,104 @@ export default function App() {
               })}
             </div>
 
+            {/* Progress Tracking */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Progress Tracking</div>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6, fontFamily: "Georgia, serif" }}>📖 Ebook progress tracked by:</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[["page", "Page Number"], ["percent", "Percentage %"]].map(([val, label]) => (
+                    <button key={val} onClick={() => { setEbookProgressMode(val); localStorage.setItem("sk_ebook_progress_mode", val); }} style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, cursor: "pointer", fontSize: 13,
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                      border: ebookProgressMode === val ? `2px solid ${th.accent}` : `2px solid ${th.border || "#C9A96E"}`,
+                      background: ebookProgressMode === val ? th.accent : th.bgMuted,
+                      color: ebookProgressMode === val ? "#FFF8EE" : th.text,
+                      fontWeight: ebookProgressMode === val ? 700 : 400,
+                      transition: "all 0.15s",
+                    }}>{label}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6, fontFamily: "Georgia, serif" }}>🎧 Audiobook progress tracked by:</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[["chapter", "Chapter Number"], ["percent", "Percentage %"]].map(([val, label]) => (
+                    <button key={val} onClick={() => { setAudiobookProgressMode(val); localStorage.setItem("sk_audiobook_progress_mode", val); }} style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, cursor: "pointer", fontSize: 13,
+                      fontFamily: '"Palatino Linotype", Palatino, serif',
+                      border: audiobookProgressMode === val ? `2px solid ${th.accent}` : `2px solid ${th.border || "#C9A96E"}`,
+                      background: audiobookProgressMode === val ? th.accent : th.bgMuted,
+                      color: audiobookProgressMode === val ? "#FFF8EE" : th.text,
+                      fontWeight: audiobookProgressMode === val ? 700 : 400,
+                      transition: "all 0.15s",
+                    }}>{label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {/* Data Management */}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Data Management</div>
               <button onClick={() => {
-                if (window.confirm("Download your library as a CSV file?")) {
-                  const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-                  const headers = ["Title", "Author", "Genre", "Type", "Description", "Cover URL", "ISBN"];
-                  const rows = books.map(b => [
-                    b.title || "", b.author || "", b.genre || "", b.mediaType || b.type || "",
-                    (b.description || "").replace(/"/g, '""'), b.coverUrl || "", b.isbn || ""
-                  ].map(v => `"${v}"`).join(","));
-                  const csv = [headers.join(","), ...rows].join("\n");
-                  const blob = new Blob([csv], { type: "text/csv" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a"); a.href = url; a.download = "storykeeper-library.csv"; a.click();
-                }
+                const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const statuses_e = JSON.parse(localStorage.getItem("sk_statuses_ebooks") || "{}");
+                const statuses_a = JSON.parse(localStorage.getItem("sk_statuses_audiobooks") || "{}");
+                const progress_e = JSON.parse(localStorage.getItem("sk_progress_ebooks") || "{}");
+                const progress_a = JSON.parse(localStorage.getItem("sk_progress_audiobooks") || "{}");
+                const dates_e = JSON.parse(localStorage.getItem("sk_dates_ebooks") || "{}");
+                const dates_a = JSON.parse(localStorage.getItem("sk_dates_audiobooks") || "{}");
+                const favorites_e = JSON.parse(localStorage.getItem("sk_favorites_ebooks") || "{}");
+                const favorites_a = JSON.parse(localStorage.getItem("sk_favorites_audiobooks") || "{}");
+                const backup = { books, statuses_e, statuses_a, progress_e, progress_a, dates_e, dates_a, favorites_e, favorites_a, exportedAt: new Date().toISOString() };
+                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a"); a.href = url; a.download = "storykeeper-backup.json"; a.click();
               }} style={{
                 width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8,
                 background: th.bgMuted, border: "none", cursor: "pointer", fontSize: 13,
                 fontFamily: '"Palatino Linotype", Palatino, serif', color: th.text,
-              }}>📤 Download My Library Backup</button>
+              }}>📤 Download Full Backup (JSON)</button>
+
+              <label style={{ display: "block", width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8, background: th.bgMuted, border: "none", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', color: th.text, textAlign: "center", boxSizing: "border-box" }}>
+                📥 Restore From Backup
+                <input type="file" accept=".json" style={{ display: "none" }} onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    try {
+                      const raw = ev.target.result;
+                      const data = JSON.parse(raw);
+                      // Support both full backup format and raw books array
+                      const books = Array.isArray(data) ? data : (data.books || []);
+                      if (!books?.length) { alert("❌ No books found in this file."); return; }
+                      if (!window.confirm(`Restore ${books.length} books from backup? This will merge with your current library.`)) return;
+                      const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                      const existingTitles = new Set(existing.map(b => (b.title || "").toLowerCase().trim()));
+                      const newBooks = books.filter(b => b.title && !existingTitles.has(b.title.toLowerCase().trim()));
+                      localStorage.setItem("sk_user_books", JSON.stringify([...existing, ...newBooks]));
+                      if (!Array.isArray(data)) {
+                        if (data.statuses_e) localStorage.setItem("sk_statuses_ebooks", JSON.stringify(data.statuses_e));
+                        if (data.statuses_a) localStorage.setItem("sk_statuses_audiobooks", JSON.stringify(data.statuses_a));
+                        if (data.progress_e) localStorage.setItem("sk_progress_ebooks", JSON.stringify(data.progress_e));
+                        if (data.progress_a) localStorage.setItem("sk_progress_audiobooks", JSON.stringify(data.progress_a));
+                        if (data.dates_e) localStorage.setItem("sk_dates_ebooks", JSON.stringify(data.dates_e));
+                        if (data.dates_a) localStorage.setItem("sk_dates_audiobooks", JSON.stringify(data.dates_a));
+                        if (data.favorites_e) localStorage.setItem("sk_favorites_ebooks", JSON.stringify(data.favorites_e));
+                        if (data.favorites_a) localStorage.setItem("sk_favorites_audiobooks", JSON.stringify(data.favorites_a));
+                      }
+                      refreshBookCounts();
+                      alert(`✅ Restored ${newBooks.length} books! (${books.length - newBooks.length} duplicates skipped)`);
+                      e.target.value = "";
+                    } catch(err) { alert("❌ Could not read backup file. Error: " + err.message); }
+                  };
+                  reader.readAsText(file);
+                }} />
+              </label>
               <button onClick={() => {
                 const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
                 const incomplete = books.filter(b => needsDesc(b) || !b.coverUrl || !b.author);
@@ -7734,8 +10781,73 @@ export default function App() {
               }}>🗑️ Clear Entire Library</button>
             </div>
 
+            {/* Account */}
+            <div style={{ marginBottom: 24, paddingTop: 20, borderTop: `1px solid ${th.border}` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Account</div>
+              {authUser ? (
+                <div>
+                  <div style={{ fontSize: 13, color: th.textMid, marginBottom: 12, fontFamily: "Georgia, serif" }}>
+                    Signed in as <strong>{authUser.email}</strong>
+                  </div>
+                  <button onClick={async () => {
+                    setSyncStatus("syncing");
+                    try {
+                      await syncToCloud(authUser);
+                      setSyncStatus("done");
+                      setTimeout(() => setSyncStatus(""), 3000);
+                    } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus(""), 3000); }
+                  }} style={{
+                    width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
+                    background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
+                    fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8,
+                  }}>
+                    {syncStatus === "syncing" ? "☁️ Syncing…" : syncStatus === "done" ? "✅ Synced!" : syncStatus === "error" ? "❌ Sync failed" : "☁️ Sync Now"}
+                  </button>
+                  <button onClick={async () => {
+                    setSyncStatus("syncing");
+                    try {
+                      await syncFromCloud(authUser);
+                      setSyncStatus("done");
+                      setTimeout(() => setSyncStatus(""), 3000);
+                      window.location.reload();
+                    } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus(""), 3000); }
+                  }} style={{
+                    width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
+                    background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
+                    fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8,
+                  }}>
+                    ⬇️ Pull from Cloud
+                  </button>
+                  <button onClick={() => { handleSignOut(); setShowSettings(false); }} style={{
+                    width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
+                    background: th.bgMuted, color: th.text, cursor: "pointer", fontSize: 14,
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                  }}>🚪 Sign Out</button>
+                </div>
+              ) : (
+                <div>
+                  <button onClick={handleGoogleAuth} style={{
+                    width: "100%", padding: "11px", marginBottom: 10, borderRadius: 8,
+                    border: `1px solid ${th.border}`, background: th.bgMuted,
+                    fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: th.text,
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                  }}>
+                    <img src="https://www.google.com/favicon.ico" alt="" style={{ width: 16, height: 16 }} />
+                    Continue with Google
+                  </button>
+                  <button onClick={() => { setShowSettings(false); setAuthMode("signin"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess(""); setShowAuthModal(true); }} style={{
+                    width: "100%", padding: "11px", borderRadius: 8, border: `1px solid ${th.border}`,
+                    background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                  }}>
+                    Sign In with Email
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div style={{ textAlign: "center" }}>
-              <button onClick={() => setShowSettings(false)} style={{
+              <button onClick={() => { setShowSettings(false); window.location.hash = ""; }} style={{
                 background: th.accent, border: "none", borderRadius: 8,
                 padding: "9px 28px", color: th.bg, fontSize: 14,
                 fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
@@ -7743,6 +10855,32 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* PROFILE MODAL */}
+      {showProfile && (
+        authUser ? (
+          <UserProfileModal
+            authUser={authUser}
+            supabaseRef={supabaseRef}
+            onClose={() => { setShowProfile(false); window.location.hash = ""; }}
+            onSignOut={handleSignOut}
+            onOpenSubscription={() => { setShowProfile(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
+          />
+        ) : (
+          <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowProfile(false)}>
+            <div onClick={e => e.stopPropagation()} style={{ background: th.bg, borderRadius: 16, padding: "36px 28px", width: Math.min(window.innerWidth - 32, 360), fontFamily: '"Palatino Linotype", Palatino, serif', boxShadow: "0 12px 48px rgba(0,0,0,0.6)", textAlign: "center" }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>👤</div>
+              <h2 style={{ margin: "0 0 12px", fontSize: 20, color: th.text }}>My Profile</h2>
+              <p style={{ fontSize: 14, color: th.textSoft, marginBottom: 24, lineHeight: 1.6 }}>Sign in to access your profile, sync your library across devices, and manage your subscription.</p>
+              <button onClick={() => { setShowProfile(false); handleGoogleAuth(); }} style={{ width: "100%", padding: "12px", marginBottom: 10, borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgMuted, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                <img src="https://www.google.com/favicon.ico" alt="" style={{ width: 16, height: 16 }} />
+                Continue with Google
+              </button>
+              <button onClick={() => { setShowProfile(false); window.location.hash = ""; }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`, background: "none", color: th.textSoft, fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+            </div>
+          </div>
+        )
       )}
 
       {/* ABOUT MODAL */}
