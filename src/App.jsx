@@ -1449,7 +1449,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               lineHeight: 1.7,
               margin: "0 0 4px 0",
             }}>
-              {book.description}
+              {(book.description && !book.description.includes("LibraryThing") && !book.description.includes("catalogs your") && !book.description.includes("easily, quickly and for free")) ? book.description : ""}
             </p>
 
             {/* Read / Listen button */}
@@ -5736,23 +5736,21 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   useEffect(() => {
     if (!localStorage.getItem("sk_supabase_url")) localStorage.setItem("sk_supabase_url", "https://elmoftpybhfxqzkrhkwe.supabase.co");
     if (!localStorage.getItem("sk_supabase_key")) localStorage.setItem("sk_supabase_key", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM");
-    // One-time cleanup: strip LibraryThing placeholder descriptions already stored
-    if (!localStorage.getItem("sk_lt_desc_cleaned")) {
+    // Cleanup: strip LibraryThing placeholder descriptions
+    if (!localStorage.getItem("sk_lt_desc_cleaned_v2")) {
       try {
         const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
         let cleaned = 0;
+        const isPlaceholder = (d) => !d || d.includes("LibraryThing") || d.includes("catalogs your") || d.includes("catalogs your books") || d.includes("easily, quickly and for free") || d.trim().length < 30;
         const updated = all.map(b => {
-          if (b.description && (b.description.includes("LibraryThing") || b.description.includes("catalogs your") || b.description.length < 30)) {
+          if (isPlaceholder(b.description)) {
             cleaned++;
             return { ...b, description: "" };
           }
           return b;
         });
-        if (cleaned > 0) {
-          localStorage.setItem("sk_user_books", JSON.stringify(updated));
-          console.log("Cleaned " + cleaned + " LibraryThing placeholder descriptions");
-        }
-        localStorage.setItem("sk_lt_desc_cleaned", "1");
+        if (cleaned > 0) localStorage.setItem("sk_user_books", JSON.stringify(updated));
+        localStorage.setItem("sk_lt_desc_cleaned_v2", "1");
       } catch(e) {}
     }
   }, []);
