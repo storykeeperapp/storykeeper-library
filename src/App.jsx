@@ -1074,7 +1074,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   })();
   const [selectedGenre, setSelectedGenre] = useState(currentGenre);
   const activeGenre = selectedGenre || book.genre;
-  const isDrama = ["Drama", "Fiction", "Historical Fiction", "Romance"].includes(activeGenre);
+  const isDrama = ["Drama", "Fiction", "Historical Fiction"].includes(activeGenre);
+  const isRomance = activeGenre === "Romance";
   const isHorror = activeGenre === "Horror";
   const isFantasy = ["Fantasy", "Sci-Fi"].includes(activeGenre);
   const isDarkRomance = activeGenre === "Dark Romance";
@@ -2018,6 +2019,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 if (isHorror) return ratingRow("💀","Scare Factor:",skullFactor,setSkullFactor,hoverSkull,setHoverSkull,"sk_skull_factor",["Spooked","Creepy","Frightening","Terrifying","Nightmare Fuel"],"#5A2A2A");
                 if (isFantasy) return ratingRow("🌍","World Building:",worldBuilding,setWorldBuilding,hoverWorld,setHoverWorld,"sk_world_building",["Surface","Layered","Rich","Immersive","Universe"],"#2A5A3A");
                 if (isDarkRomance) return ratingRow("🖤","Dark Factor:",darkFactor,setDarkFactor,hoverDark,setHoverDark,"sk_dark_factor",["Soft","Moody","Intense","Twisted","Unhinged"],"#3A2A4A");
+                if (isRomance) return ratingRow("🌶️","Spice Level:",spice,setSpice,hoverSpice,setHoverSpice,"sk_spice",["Mild","Warm","Medium","Hot","🔥 Fiery"],modalTheme.accent);
                 if (isThriller) return (
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                   <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap", minWidth: 60 }}>Lights Out:</span>
