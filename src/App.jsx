@@ -11180,6 +11180,7 @@ export default function App() {
         // Lifetime free StoryKeeper access for whitelisted emails
         const LIFETIME_EMAILS = [
           "msbratt23@gmail.com",
+          "ebratt13@yahoo.com",
         ];
         if (LIFETIME_EMAILS.includes(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
