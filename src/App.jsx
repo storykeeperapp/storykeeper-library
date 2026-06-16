@@ -2957,6 +2957,359 @@ function FavoritesShelf({ onClose }) {
   );
 }
 
+function TBRShelf({ onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [tbrBooks, setTbrBooks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; }
+  });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [uploadCover, setUploadCover] = useState(null);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualAuthor, setManualAuthor] = useState("");
+  const [showManual, setShowManual] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [moveTarget, setMoveTarget] = useState(null); // { book, index }
+  const [moveMediaType, setMoveMediaType] = useState("ebooks");
+  const coverUploadRef = useRef(null);
+  const scrollRef = useRef(null);
+  const [atTop, setAtTop] = useState(true);
+
+  const saveTbr = (books) => {
+    setTbrBooks(books);
+    localStorage.setItem("sk_tbr_books", JSON.stringify(books));
+  };
+
+  const addBook = (book) => {
+    const already = tbrBooks.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+    if (already) { setMsg("Already on your TBR!"); setTimeout(() => setMsg(""), 2000); return; }
+    const updated = [...tbrBooks, { ...book, addedAt: Date.now() }];
+    saveTbr(updated);
+    setSearchQuery(""); setSearchResults([]); setShowSearch(false);
+    setMsg(`"${book.title}" added to TBR!`); setTimeout(() => setMsg(""), 2500);
+  };
+
+  const removeBook = (index) => {
+    const updated = tbrBooks.filter((_, i) => i !== index);
+    saveTbr(updated);
+  };
+
+  const confirmMoveToLibrary = (platformId) => {
+    const { book, index } = moveTarget;
+    const isAudio = moveMediaType === "audiobooks";
+    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const already = userBooks.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+    if (!already) {
+      userBooks.push({
+        ...book,
+        type: moveMediaType,
+        mediaType: isAudio ? "audiobook" : "ebook",
+        platform: platformId,
+        status: "unread",
+        addedAt: Date.now(),
+      });
+      localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+    }
+    removeBook(index);
+    setMoveTarget(null);
+    setMsg(`"${book.title}" added to your library!`); setTimeout(() => setMsg(""), 2500);
+  };
+
+  const searchBooks = async (q) => {
+    if (!q.trim()) { setSearchResults([]); return; }
+    setSearching(true);
+
+    // Search local cache first
+    const lower = q.toLowerCase();
+    const localHits = [];
+    Object.values(library).forEach(genreBooks => {
+      genreBooks.forEach(b => {
+        if ((b.title?.toLowerCase().includes(lower) || b.author?.toLowerCase().includes(lower)) &&
+            !localHits.some(h => h.isbn === b.isbn && h.title === b.title)) {
+          localHits.push(b);
+        }
+      });
+    });
+    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    userBooks.forEach(b => {
+      if ((b.title?.toLowerCase().includes(lower) || b.author?.toLowerCase().includes(lower)) &&
+          !localHits.some(h => h.isbn === b.isbn && h.title === b.title)) {
+        localHits.push(b);
+      }
+    });
+
+    if (localHits.length >= 5) {
+      setSearchResults(localHits.slice(0, 10));
+      setSearching(false);
+      return;
+    }
+
+    // Fall back to Google Books
+    try {
+      const gKey = localStorage.getItem("sk_google_api_key") || "";
+      const keySuffix = gKey ? `&key=${gKey}` : "";
+      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=10&langRestrict=en${keySuffix}`);
+      const data = await res.json();
+      const gResults = (data.items || []).map(item => ({
+        title: item.volumeInfo?.title || "Unknown",
+        author: (item.volumeInfo?.authors || []).join(", "),
+        isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
+        cover: item.volumeInfo?.imageLinks?.thumbnail?.replace("http:", "https:") || null,
+        description: item.volumeInfo?.description || "",
+      }));
+      const combined = [...localHits, ...gResults.filter(g => !localHits.some(l => l.title === g.title))];
+      setSearchResults(combined.slice(0, 10));
+    } catch {
+      setSearchResults(localHits);
+    }
+    setSearching(false);
+  };
+
+  const handleCoverUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxH = 300;
+        const scale = Math.min(maxH / img.height, 1);
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        setUploadCover(canvas.toDataURL("image/jpeg", 0.85));
+        setShowManual(true);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Rows of 4 for display
+  const rows = [];
+  for (let i = 0; i < tbrBooks.length; i += 4) rows.push(tbrBooks.slice(i, i + 4));
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 200,
+      backgroundColor: "#F8F1E4",
+      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundSize: "cover", backgroundPosition: "center",
+    }}>
+      <button onClick={onClose} style={{
+        position: "absolute", top: 56, left: 20,
+        padding: "8px 18px", borderRadius: "50px", border: "1px solid #8B5E3C",
+        cursor: "pointer",
+        background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
+        color: "#3A2A1A",
+        fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
+        fontWeight: 700, fontStyle: "italic", fontSize: 15, letterSpacing: "0.5px",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.12)", zIndex: 201,
+        opacity: atTop ? 1 : 0, pointerEvents: atTop ? "auto" : "none", transition: "opacity 0.25s ease",
+      }}>← Return to Reading Nook</button>
+
+      <button onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })} style={{
+        position: "fixed", bottom: 32, right: 20, zIndex: 202,
+        background: "#8B5E3C", border: "none", borderRadius: "50%", width: 40, height: 40,
+        color: "#fff", fontSize: 18, cursor: "pointer",
+        opacity: atTop ? 0 : 1, pointerEvents: atTop ? "none" : "auto", transition: "opacity 0.25s ease",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>↑</button>
+
+      <div ref={scrollRef} onScroll={e => setAtTop(e.currentTarget.scrollTop < 40)}
+        style={{ height: "100%", overflowY: "auto", paddingTop: 100, paddingBottom: 60 }}>
+
+        <h1 style={{
+          textAlign: "center", fontFamily: '"Baskerville", "Book Antiqua", Georgia, serif',
+          fontSize: 28, color: "#3A2A1A", marginBottom: 4, fontStyle: "italic",
+        }}>📚 My TBR Shelf</h1>
+        <p style={{ textAlign: "center", fontSize: 13, color: "#6B4C2A", marginBottom: 24, fontFamily: "Georgia, serif" }}>
+          Books you want to read — your wishlist, all in one place.
+        </p>
+
+        {/* Add buttons */}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 20, paddingInline: 20 }}>
+          <button onClick={() => { setShowSearch(v => !v); setShowManual(false); }}
+            style={{ flex: 1, maxWidth: 180, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: showSearch ? "#8B5E3C" : "rgba(255,255,255,0.6)", color: showSearch ? "#fff" : "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+            🔍 Search Books
+          </button>
+          <button onClick={() => { setShowManual(v => !v); setShowSearch(false); setUploadCover(null); setManualTitle(""); setManualAuthor(""); }}
+            style={{ flex: 1, maxWidth: 180, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: showManual ? "#8B5E3C" : "rgba(255,255,255,0.6)", color: showManual ? "#fff" : "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+            ✏️ Add Manually
+          </button>
+        </div>
+
+        {msg && <div style={{ textAlign: "center", fontSize: 13, color: "#5C3A1E", marginBottom: 12, fontStyle: "italic", fontFamily: "Georgia, serif" }}>{msg}</div>}
+
+        {/* Search panel */}
+        {showSearch && (
+          <div style={{ marginInline: 20, marginBottom: 20, background: "rgba(255,255,255,0.75)", borderRadius: 12, padding: 16, backdropFilter: "blur(4px)" }}>
+            <input
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); searchBooks(e.target.value); }}
+              placeholder="Search by title or author..."
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 14, fontFamily: "Georgia, serif", outline: "none" }}
+            />
+            {searching && <div style={{ textAlign: "center", padding: 12, color: "#8B5E3C", fontSize: 13 }}>Searching...</div>}
+            {searchResults.map((book, i) => (
+              <div key={i} onClick={() => addBook(book)} style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "10px 0",
+                borderBottom: "1px solid #D4B896", cursor: "pointer",
+              }}>
+                {book.cover
+                  ? <img src={book.cover} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                  : <div style={{ width: 36, height: 52, background: "#C4A882", borderRadius: 4, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📖</div>
+                }
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#3A2A1A", fontFamily: "Georgia, serif" }}>{book.title}</div>
+                  {book.author && <div style={{ fontSize: 11, color: "#6B4C2A" }}>{book.author}</div>}
+                </div>
+                <div style={{ fontSize: 11, color: "#8B5E3C", fontWeight: 600 }}>+ Add</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Manual add panel */}
+        {showManual && (
+          <div style={{ marginInline: 20, marginBottom: 20, background: "rgba(255,255,255,0.75)", borderRadius: 12, padding: 16, backdropFilter: "blur(4px)" }}>
+            <input ref={coverUploadRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleCoverUpload} />
+            <div onClick={() => coverUploadRef.current?.click()} style={{
+              width: 80, height: 110, margin: "0 auto 14px", borderRadius: 6,
+              border: "2px dashed #8B5E3C", background: uploadCover ? "none" : "rgba(255,255,255,0.5)",
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+            }}>
+              {uploadCover
+                ? <img src={uploadCover} alt="cover" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <div style={{ textAlign: "center", color: "#8B5E3C", fontSize: 11 }}>📷<br/>Upload<br/>Cover</div>
+              }
+            </div>
+            <input value={manualTitle} onChange={e => setManualTitle(e.target.value)} placeholder="Book title *"
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 13, fontFamily: "Georgia, serif", outline: "none", marginBottom: 8 }} />
+            <input value={manualAuthor} onChange={e => setManualAuthor(e.target.value)} placeholder="Author"
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 13, fontFamily: "Georgia, serif", outline: "none", marginBottom: 12 }} />
+            <button onClick={() => {
+              if (!manualTitle.trim()) { setMsg("Please enter a title."); setTimeout(() => setMsg(""), 2000); return; }
+              addBook({ title: manualTitle.trim(), author: manualAuthor.trim(), cover: uploadCover || null });
+              setManualTitle(""); setManualAuthor(""); setUploadCover(null); setShowManual(false);
+            }} style={{ width: "100%", padding: "10px", borderRadius: 8, background: "#8B5E3C", border: "none", color: "#fff", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600, cursor: "pointer" }}>
+              Add to TBR
+            </button>
+          </div>
+        )}
+
+        {/* TBR books grid */}
+        {tbrBooks.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "40px 20px", color: "#6B4C2A", fontFamily: "Georgia, serif", fontSize: 14, fontStyle: "italic" }}>
+            Your TBR shelf is empty. Search for books or add them manually above!
+          </div>
+        ) : (
+          rows.map((row, ri) => (
+            <div key={ri} style={{ marginBottom: 40, paddingInline: 12 }}>
+              {/* Shelf row */}
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-start", flexWrap: "wrap" }}>
+                {row.map((book, bi) => {
+                  const idx = ri * 4 + bi;
+                  return (
+                    <div key={idx} style={{ width: "calc(25% - 8px)", minWidth: 70, maxWidth: 100, position: "relative" }}>
+                      <div style={{ position: "relative", paddingBottom: 8 }}>
+                        {book.cover
+                          ? <img src={book.cover} alt={book.title} style={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", borderRadius: 4, boxShadow: "2px 3px 8px rgba(0,0,0,0.25)", display: "block" }} />
+                          : <div style={{ width: "100%", aspectRatio: "2/3", background: "linear-gradient(135deg, #8B5E3C, #C4A882)", borderRadius: 4, boxShadow: "2px 3px 8px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", padding: 6, boxSizing: "border-box" }}>
+                              <span style={{ fontSize: 10, color: "#fff", textAlign: "center", fontFamily: "Georgia, serif", lineHeight: 1.3 }}>{book.title}</span>
+                            </div>
+                        }
+                        {/* Action buttons */}
+                        <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                          <button onClick={() => { setMoveTarget({ book, index: idx }); setMoveMediaType("ebooks"); }} title="Move to library"
+                            style={{ flex: 1, padding: "4px 0", borderRadius: 4, background: "#8B5E3C", border: "none", color: "#fff", fontSize: 9, cursor: "pointer", fontFamily: "Georgia, serif" }}>
+                            + Library
+                          </button>
+                          <button onClick={() => removeBook(idx)} title="Remove"
+                            style={{ width: 24, padding: "4px 0", borderRadius: 4, background: "rgba(0,0,0,0.15)", border: "none", color: "#3A2A1A", fontSize: 11, cursor: "pointer" }}>
+                            ×
+                          </button>
+                        </div>
+                        <div style={{ fontSize: 9, color: "#3A2A1A", textAlign: "center", marginTop: 4, fontFamily: "Georgia, serif", lineHeight: 1.2, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                          {book.title}
+                        </div>
+                        {book.author && <div style={{ fontSize: 8, color: "#6B4C2A", textAlign: "center", marginTop: 2, fontFamily: "Georgia, serif" }}>{book.author}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Shelf plank */}
+              <div style={{ height: 14, background: "linear-gradient(to bottom, #8B5E3C, #6B4326)", borderRadius: "0 0 4px 4px", boxShadow: "0 4px 8px rgba(0,0,0,0.3)", marginTop: 2 }} />
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Move to Library modal */}
+      {moveTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={() => setMoveTarget(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#F8F1E4", borderRadius: 16, padding: 24, width: "100%", maxWidth: 340,
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+          }}>
+            <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#3A2A1A", textAlign: "center" }}>Add to Library</h3>
+            <p style={{ margin: "0 0 16px", fontSize: 12, color: "#6B4C2A", textAlign: "center", fontStyle: "italic" }}>"{moveTarget.book.title}"</p>
+
+            {/* eBook or Audiobook */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              {[{ id: "ebooks", label: "📖 eBook" }, { id: "audiobooks", label: "🎧 Audiobook" }].map(opt => (
+                <button key={opt.id} onClick={() => setMoveMediaType(opt.id)} style={{
+                  flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, cursor: "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                  background: moveMediaType === opt.id ? "#8B5E3C" : "rgba(255,255,255,0.6)",
+                  color: moveMediaType === opt.id ? "#fff" : "#3A2A1A",
+                  border: `1px solid ${moveMediaType === opt.id ? "#8B5E3C" : "#C4A882"}`,
+                }}>{opt.label}</button>
+              ))}
+            </div>
+
+            {/* Platform selection */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Where did you get it?</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+              {(moveMediaType === "audiobooks" ? AUDIO_PLATFORMS : EBOOK_PLATFORMS).map(p => (
+                <button key={p.id} onClick={() => confirmMoveToLibrary(p.id)} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8,
+                  background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
+                  cursor: "pointer", textAlign: "left", fontFamily: '"Palatino Linotype", Palatino, serif',
+                }}>
+                  <span style={{ fontSize: 20 }}>{p.emoji}</span>
+                  <span style={{ fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>{p.name}</span>
+                </button>
+              ))}
+              <button onClick={() => confirmMoveToLibrary("other")} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8,
+                background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
+                cursor: "pointer", textAlign: "left", fontFamily: '"Palatino Linotype", Palatino, serif',
+              }}>
+                <span style={{ fontSize: 20 }}>📦</span>
+                <span style={{ fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>Other / Physical</span>
+              </button>
+            </div>
+
+            <button onClick={() => setMoveTarget(null)} style={{
+              width: "100%", marginTop: 14, padding: "9px", borderRadius: 8,
+              background: "none", border: "1px solid #C4A882", color: "#6B4C2A",
+              cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+            }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatsPage({ onClose, mediaType: initialMediaType }) {
   const [mediaType, setMediaType] = useState(initialMediaType || "ebooks");
   const [calMonth, setCalMonth] = useState(new Date());
@@ -9691,6 +10044,12 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
   const [editingBio, setEditingBio] = React.useState(false);
   const [bioInput, setBioInput] = React.useState("");
   const [bioMsg, setBioMsg] = React.useState("");
+  const [topBooks, setTopBooks] = React.useState(() => {
+    try { return JSON.parse(authUser?.user_metadata?.top_books || "null") || []; } catch { return []; }
+  });
+  const [editingTopBooks, setEditingTopBooks] = React.useState(false);
+  const [topBooksInput, setTopBooksInput] = React.useState([]);
+  const [topBooksMsg, setTopBooksMsg] = React.useState("");
   const fileRef = React.useRef(null);
 
   // Book stats
@@ -9874,6 +10233,79 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
               style={{ background: th.bgMuted, borderRadius: 8, padding: "12px 14px", fontSize: 13, color: bio ? th.text : th.textSoft, fontStyle: bio ? "normal" : "italic", cursor: "pointer", minHeight: 48, lineHeight: 1.6 }}
             >
               {bio || "Tap to add a bio..."}
+            </div>
+          )}
+        </div>
+
+        {/* Top Books */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>My Top Books</div>
+            {!editingTopBooks && (
+              <button onClick={() => { setTopBooksInput(topBooks.length ? [...topBooks] : [{ title: "", author: "" }]); setEditingTopBooks(true); setTopBooksMsg(""); }}
+                style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "3px 10px", fontSize: 11, color: th.textSoft, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                {topBooks.length ? "Edit" : "+ Add"}
+              </button>
+            )}
+          </div>
+          {editingTopBooks ? (
+            <div>
+              {topBooksInput.map((book, i) => (
+                <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                  <div style={{ fontSize: 12, color: th.accent, fontWeight: 700, width: 18, textAlign: "center", flexShrink: 0 }}>{i + 1}</div>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <input
+                      value={book.title}
+                      onChange={e => { const b = [...topBooksInput]; b[i] = { ...b[i], title: e.target.value }; setTopBooksInput(b); }}
+                      placeholder="Book title"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgMuted, color: th.text, fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif', outline: "none" }}
+                    />
+                    <input
+                      value={book.author}
+                      onChange={e => { const b = [...topBooksInput]; b[i] = { ...b[i], author: e.target.value }; setTopBooksInput(b); }}
+                      placeholder="Author"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bgMuted, color: th.text, fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif', outline: "none" }}
+                    />
+                  </div>
+                  <button onClick={() => { const b = topBooksInput.filter((_, j) => j !== i); setTopBooksInput(b); }}
+                    style={{ background: "none", border: "none", color: th.textSoft, cursor: "pointer", fontSize: 16, padding: "0 4px", flexShrink: 0 }}>×</button>
+                </div>
+              ))}
+              {topBooksInput.length < 10 && (
+                <button onClick={() => setTopBooksInput([...topBooksInput, { title: "", author: "" }])}
+                  style={{ width: "100%", padding: "8px", borderRadius: 8, background: "none", border: `1px dashed ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 10 }}>
+                  + Add another book
+                </button>
+              )}
+              {topBooksMsg && <div style={{ fontSize: 12, color: th.accent, marginBottom: 8 }}>{topBooksMsg}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { setEditingTopBooks(false); setTopBooksMsg(""); }}
+                  style={{ flex: 1, padding: "9px", borderRadius: 8, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+                <button onClick={async () => {
+                  const filtered = topBooksInput.filter(b => b.title.trim());
+                  const { error } = await supabaseRef.current.auth.updateUser({ data: { top_books: JSON.stringify(filtered) } });
+                  if (error) { setTopBooksMsg("Could not save. Try again."); return; }
+                  setTopBooks(filtered);
+                  setEditingTopBooks(false);
+                  setTopBooksMsg("");
+                }} style={{ flex: 1, padding: "9px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
+              </div>
+            </div>
+          ) : topBooks.length ? (
+            <div style={{ background: th.bgMuted, borderRadius: 8, overflow: "hidden" }}>
+              {topBooks.map((book, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: i < topBooks.length - 1 ? `1px solid ${th.border}` : "none" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: th.accent, width: 18, flexShrink: 0 }}>{i + 1}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, color: th.text, fontWeight: 600 }}>{book.title}</div>
+                    {book.author && <div style={{ fontSize: 11, color: th.textSoft }}>{book.author}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ background: th.bgMuted, borderRadius: 8, padding: "12px 14px", fontSize: 13, color: th.textSoft, fontStyle: "italic" }}>
+              Tap "+ Add" to create your top books list.
             </div>
           )}
         </div>
@@ -10289,6 +10721,10 @@ export default function App() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#favorites" || localStorage.getItem("sk_current_page") === "favorites";
   });
+  const [showTBR, setShowTBR] = useState(() => {
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#tbr" || localStorage.getItem("sk_current_page") === "tbr";
+  });
   const [showStats, setShowStats] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#stats" || localStorage.getItem("sk_current_page") === "stats";
@@ -10359,12 +10795,13 @@ export default function App() {
     else if (showStats) page = "stats";
     else if (showPlatforms) page = "platforms";
     else if (showFavorites) page = "favorites";
+    else if (showTBR) page = "tbr";
     else if (showSubscription) page = "subscription";
     else if (showProfile) page = "profile";
     else if (showSettings) page = "settings";
     localStorage.setItem("sk_current_page", page);
     localStorage.setItem("sk_last_hash", window.location.hash);
-  }, [genre, showStats, showPlatforms, showFavorites, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre, showCommunity]);
+  }, [genre, showStats, showPlatforms, showFavorites, showTBR, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre, showCommunity]);
 
   // Save hash right before unload (catches pull-to-refresh on iOS)
   useEffect(() => {
@@ -10384,6 +10821,7 @@ export default function App() {
       const h = window.location.hash;
       setShowPlatforms(h === "#platforms");
       setShowFavorites(h === "#favorites");
+      setShowTBR(h === "#tbr");
       setShowStats(h === "#stats");
       setShowSubscription(h === "#subscription");
       setShowProfile(h === "#profile");
@@ -10478,6 +10916,11 @@ export default function App() {
         <FavoritesShelf onClose={() => { setShowFavorites(false); window.location.hash = ""; }} />
       )}
 
+      {/* TBR SHELF PAGE */}
+      {showTBR && (
+        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; }} />
+      )}
+
       {/* PLATFORMS PAGE */}
       {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; }} mediaType={mediaType} th={th} themeKey={themeKey} />}
 
@@ -10555,7 +10998,7 @@ export default function App() {
           color: "#F5ECD7",
           cursor: "pointer",
           padding: "4px 10px",
-          display: (showPlatforms || showFavorites || showStats || showSubscription || genre) ? "none" : "flex",
+          display: (showPlatforms || showFavorites || showTBR || showStats || showSubscription || genre) ? "none" : "flex",
           alignItems: "center",
           gap: 5,
           fontFamily: "Georgia, serif",
@@ -10722,6 +11165,7 @@ export default function App() {
           { key: "profile",       label: "👤 My Profile",            action: () => { setShowSidebar(false); setShowProfile(true); window.location.hash = "#profile"; } },
           { key: "platforms",     label: "🔗 Platform Connections", action: () => { setShowSidebar(false); setShowPlatforms(true); window.location.hash = "#platforms"; } },
           { key: "favorites",     label: "❤️ My Favorites",         action: () => { setShowSidebar(false); setShowFavorites(true); window.location.hash = "#favorites"; } },
+          { key: "tbr",           label: "📚 My TBR Shelf",          action: () => { setShowSidebar(false); setShowTBR(true); window.location.hash = "#tbr"; } },
           { key: "stats",         label: "📖 My Story So Far",        action: () => { setShowSidebar(false); setShowStats(true); window.location.hash = "#stats"; } },
           { key: "subscription",  label: "🗝️ Subscription",          action: () => { setShowSidebar(false); setShowSubscription(true); window.location.hash = "#subscription"; } },
           { key: "contact",       label: "✉️ Contact Us",             action: () => { setShowSidebar(false); window.location.href = "mailto:support@thestorykeeper.co"; } },
