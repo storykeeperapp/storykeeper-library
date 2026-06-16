@@ -147,6 +147,51 @@ function normalizeAuthor(author) {
   return firstAuthor;
 }
 
+const ADMIN_EMAIL = "msbratt23@gmail.com";
+
+const COMMUNITY_RULES = [
+  { emoji: "🤝", title: "Be kind & respectful", body: "Treat every reader the way you'd want to be treated. Disagreements about books are welcome; personal attacks are not." },
+  { emoji: "📚", title: "Keep it about books", body: "Posts should relate to reading, books, authors, or the genre you're in. This isn't a general chat board." },
+  { emoji: "⚠️", title: "No spoilers without warning", body: "Always start your post with ⚠️ SPOILER if you're discussing plot details. Not everyone reads at the same pace." },
+  { emoji: "🚫", title: "No hate speech or harassment", body: "Zero tolerance for content that targets anyone based on race, gender, religion, sexuality, or any other identity." },
+  { emoji: "📣", title: "No spam or self-promotion", body: "Don't post links, advertise services, or repeatedly post the same content." },
+  { emoji: "🌿", title: "Keep it family-friendly in general groups", body: "Dark Romance and Horror groups may discuss mature themes, but explicit content is not permitted anywhere." },
+  { emoji: "📖", title: "Respect the book club format", body: "In book clubs, stay on topic with the current read. Off-topic discussion belongs in the genre group." },
+  { emoji: "🛡️", title: "Reports are taken seriously", body: "If you see something that violates these rules, use the Report button. Repeated violations will result in removal from the community." },
+];
+
+const BANNED_WORDS = [
+  "fuck","shit","bitch","asshole","cunt","nigger","nigga","faggot","retard","whore","slut",
+  "kike","spic","chink","wetback","tranny","rape","molest","pedophile","nazi","kill yourself",
+  "kys","go die","hate you","piece of shit","motherfucker","cocksucker",
+];
+
+const containsBannedWords = (text) => {
+  const lower = text.toLowerCase();
+  return BANNED_WORDS.some(w => lower.includes(w));
+};
+
+const checkToxicity = async (text) => {
+  const apiKey = import.meta.env.VITE_PERSPECTIVE_API_KEY;
+  if (!apiKey) return false;
+  try {
+    const res = await fetch(
+      `https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          comment: { text },
+          requestedAttributes: { TOXICITY: {} },
+        }),
+      }
+    );
+    const data = await res.json();
+    const score = data?.attributeScores?.TOXICITY?.summaryScore?.value || 0;
+    return score > 0.85;
+  } catch { return false; }
+};
+
 const ALL_GENRES = [
   "Fantasy", "Mystery & Thriller", "Sci-Fi", "Romance",
   "Self Help", "Dark Romance", "Fiction", "Historical Fiction",
@@ -5280,16 +5325,14 @@ const TIERS = [
       "TBR shelf",
       "Bio & top books on profile",
       "Social links on profile",
-      "View community discussions & book clubs",
       "Book of the Month pick",
     ],
     locked: [
       "Platform imports",
       "Genre customization",
       "Drag-and-drop reordering",
-      "Post in discussions & book clubs",
+      "Community discussions & book clubs",
       "Connect social accounts",
-      "Create your own book club",
     ],
   },
   {
@@ -5313,13 +5356,14 @@ const TIERS = [
       "2 platform imports",
       "Genre drag-and-drop reordering",
       "Reading status tracking",
-      "Post in community discussions & book clubs",
+      "View community discussions (read-only)",
       "Connect TikTok & social accounts",
       "TBR shelf, bio & top books",
     ],
     locked: [
       "Genre customization",
-      "Create your own book club",
+      "Post in discussions",
+      "Book clubs",
       "Reading stats & story calendar",
     ],
   },
@@ -5346,7 +5390,6 @@ const TIERS = [
       "Re-detect genres",
       "Search your library",
       "Reading stats & story calendar",
-      "Create your own book club",
       "Full community profile visible to others",
       "Cloud sync across up to 2 devices",
     ],
@@ -9217,6 +9260,7 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
   const canRead = ["storyteller", "librarian", "storykeeper"].includes(userTier);
   const canPost = ["librarian", "storykeeper"].includes(userTier);
   const hasBookClub = ["librarian", "storykeeper"].includes(userTier);
+  const canViewCommunity = canRead;
   const [showBotm, setShowBotm] = React.useState(false);
 
   const [memberCounts, setMemberCounts]   = React.useState({});
@@ -9302,21 +9346,21 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
         {/* Tier notice */}
         {!authUser ? (
           <div style={{ ...cardStyle, textAlign: "center", padding: 24, marginBottom: 20 }}>
-            <div style={{ fontSize: 13, color: th.textSoft }}>Sign in to join groups and participate in the community.</div>
+            <div style={{ fontSize: 13, color: th.textSoft }}>Sign in to access community features.</div>
           </div>
-        ) : !canRead ? (
+        ) : !canViewCommunity ? (
           <div style={{ ...cardStyle, textAlign: "center", padding: 24, marginBottom: 20, background: th.accent + "12", borderColor: th.accent + "40" }}>
-            <div style={{ fontSize: 14, color: th.text, marginBottom: 8, fontWeight: 600 }}>Upgrade to access Community features</div>
-            <div style={{ fontSize: 13, color: th.textSoft, marginBottom: 12 }}>All paid plans include access to genre groups. Librarian and StoryKeeper plans include full posting access and Book Club.</div>
+            <div style={{ fontSize: 14, color: th.text, marginBottom: 8, fontWeight: 600 }}>Upgrade to access Community</div>
+            <div style={{ fontSize: 13, color: th.textSoft, marginBottom: 12 }}>The Storyteller plan and above unlocks community discussions. Librarian and StoryKeeper unlock full posting and book clubs.</div>
             <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>View Plans</button>
           </div>
         ) : (
           <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
             <div style={{ background: canPost ? "#6B8C5E22" : th.bgMuted, border: `1px solid ${canPost ? "#6B8C5E" : th.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: canPost ? "#3A5C2E" : th.textSoft }}>
-              {canPost ? "✓ Full group access" : "👁 Read-only access"}
+              {canPost ? "✓ Full posting access" : "👁 Read-only discussions"}
             </div>
             <div style={{ background: hasBookClub ? "#8C5E6B22" : th.bgMuted, border: `1px solid ${hasBookClub ? "#8C5E6B" : th.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: hasBookClub ? "#5C2E3A" : th.textSoft }}>
-              {hasBookClub ? "✓ Book Club included" : "🔒 Book Club — Librarian+"}
+              {hasBookClub ? "✓ Book Clubs included" : "🔒 Book Clubs — Librarian+"}
             </div>
           </div>
         )}
@@ -9499,6 +9543,26 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   const [likedPosts, setLikedPosts]     = React.useState(new Set());
   const [showMembers, setShowMembers]   = React.useState(false);
   const [members, setMembers]           = React.useState([]);
+  const [reported, setReported]         = React.useState(new Set());
+  const [rulesOpen, setRulesOpen]       = React.useState(false);
+  const [showRulesModal, setShowRulesModal] = React.useState(false);
+  const [rulesAgreed, setRulesAgreed]   = React.useState(() => !!localStorage.getItem("sk_rules_agreed"));
+
+  const handleReport = async (contentId, contentType, contentText, contentUsername) => {
+    if (!authUser) return;
+    if (reported.has(contentId)) return;
+    await supabaseRef.current.from("reported_content").insert({
+      content_id: contentId,
+      content_type: contentType,
+      content_text: contentText,
+      content_username: contentUsername,
+      reported_by: authUser.id,
+      reporter_username: username,
+      context: genre,
+      status: "pending",
+    });
+    setReported(prev => new Set([...prev, contentId]));
+  };
 
   React.useEffect(() => {
     if (!authUser || !supabaseRef.current) return;
@@ -9549,10 +9613,14 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   const handlePost = async () => {
     if (!postContent.trim()) { setPostMsg("Please write something."); return; }
     if (!isMember) { setPostMsg("Join the group to post."); return; }
+    const text = postContent.trim();
+    if (containsBannedWords(text)) { setPostMsg("Your post contains language that isn't allowed. Please revise and try again."); return; }
+    const toxic = await checkToxicity(text);
+    if (toxic) { setPostMsg("Your post was flagged as potentially harmful. Please revise and try again."); return; }
     const sb = supabaseRef.current;
     const { error } = await sb.from("group_posts").insert({
       genre, user_id: authUser.id, username, post_type: postType,
-      content: postContent.trim(),
+      content: text,
       book_title: postBook.trim() || null,
       book_author: postAuthor.trim() || null,
     });
@@ -9592,8 +9660,12 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
 
   const handleComment = async (postId) => {
     if (!commentText.trim() || !authUser || !isMember) return;
+    const text = commentText.trim();
+    if (containsBannedWords(text)) { setPostMsg("Your comment contains language that isn't allowed."); return; }
+    const toxic = await checkToxicity(text);
+    if (toxic) { setPostMsg("Your comment was flagged as potentially harmful. Please revise."); return; }
     await supabaseRef.current.from("group_comments").insert({
-      post_id: postId, user_id: authUser.id, username, content: commentText.trim(),
+      post_id: postId, user_id: authUser.id, username, content: text,
     });
     await supabaseRef.current.from("group_posts")
       .update({ comment_count: (posts.find(p => p.id === postId)?.comment_count || 0) + 1 }).eq("id", postId);
@@ -9669,6 +9741,27 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
               )}
             </div>
 
+            {/* Community Rules Banner */}
+            <div style={{ ...cardStyle, marginBottom: 16, background: `${th.accent}10`, borderColor: `${th.accent}40` }}>
+              <button onClick={() => setRulesOpen(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: th.accent, fontFamily: '"Palatino Linotype", Palatino, serif' }}>🛡️ Community Rules</span>
+                <span style={{ fontSize: 12, color: th.textSoft }}>{rulesOpen ? "▲ Hide" : "▼ Show"}</span>
+              </button>
+              {rulesOpen && (
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {COMMUNITY_RULES.map((r, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <span style={{ fontSize: 16, flexShrink: 0 }}>{r.emoji}</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: th.text }}>{r.title}</div>
+                        <div style={{ fontSize: 12, color: th.textSoft, lineHeight: 1.5, marginTop: 2 }}>{r.body}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Storyteller read-only notice */}
             {canRead && !canPost && (
               <div style={{ ...cardStyle, background: th.accent + "15", borderColor: th.accent + "40", textAlign: "center", padding: 12, marginBottom: 16 }}>
@@ -9676,9 +9769,36 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
               </div>
             )}
 
+            {/* First-post rules agreement modal */}
+            {showRulesModal && (
+              <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                <div style={{ background: th.bg, borderRadius: 16, padding: 24, width: "100%", maxWidth: 400, maxHeight: "80vh", overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif', boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                  <h3 style={{ margin: "0 0 4px", fontSize: 18, color: th.text, textAlign: "center" }}>🛡️ Community Rules</h3>
+                  <p style={{ margin: "0 0 16px", fontSize: 12, color: th.textSoft, textAlign: "center" }}>Please read and agree before posting.</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+                    {COMMUNITY_RULES.map((r, i) => (
+                      <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: th.bgMuted, borderRadius: 8, padding: "10px 12px" }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{r.emoji}</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: th.text }}>{r.title}</div>
+                          <div style={{ fontSize: 11, color: th.textSoft, lineHeight: 1.5, marginTop: 2 }}>{r.body}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => { localStorage.setItem("sk_rules_agreed", "1"); setRulesAgreed(true); setShowRulesModal(false); setShowNewPost(true); }} style={{ width: "100%", padding: "12px", borderRadius: 10, background: th.accent, border: "none", color: th.bg, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8 }}>
+                    I Agree — Let Me Post
+                  </button>
+                  <button onClick={() => setShowRulesModal(false)} style={{ width: "100%", padding: "10px", borderRadius: 10, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* New Post button */}
             {canPost && isMember && !showNewPost && (
-              <button onClick={() => setShowNewPost(true)} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
+              <button onClick={() => { if (!rulesAgreed) { setShowRulesModal(true); } else { setShowNewPost(true); } }} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
                 + New Post
               </button>
             )}
@@ -9775,6 +9895,15 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                     }}>
                       💬 {post.comment_count || 0} {post.comment_count === 1 ? "comment" : "comments"}
                     </button>
+                    {authUser && post.user_id !== authUser.id && (
+                      <button onClick={() => handleReport(post.id, "group_post", post.content, post.username)} style={{
+                        background: "none", border: "none", cursor: reported.has(post.id) ? "default" : "pointer",
+                        color: reported.has(post.id) ? "#6B8C5E" : th.textSoft, fontSize: 12, padding: 0,
+                        fontFamily: '"Palatino Linotype", Palatino, serif', marginLeft: "auto",
+                      }}>
+                        {reported.has(post.id) ? "✓ Reported" : "⚑ Report"}
+                      </button>
+                    )}
                   </div>
 
                   {expandedPost === post.id && (
@@ -9783,6 +9912,15 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                         <div key={c.id} style={{ marginBottom: 10, paddingLeft: 12, borderLeft: `2px solid ${th.border}` }}>
                           <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{c.username}</span>
                           <span style={{ fontSize: 11, color: th.textSoft, marginLeft: 6 }}>{new Date(c.created_at).toLocaleDateString()}</span>
+                          {authUser && c.user_id !== authUser.id && (
+                            <button onClick={() => handleReport(c.id, "group_comment", c.content, c.username)} style={{
+                              background: "none", border: "none", cursor: reported.has(c.id) ? "default" : "pointer",
+                              color: reported.has(c.id) ? "#6B8C5E" : th.textSoft, fontSize: 11, padding: 0, float: "right",
+                              fontFamily: '"Palatino Linotype", Palatino, serif',
+                            }}>
+                              {reported.has(c.id) ? "✓" : "⚑"}
+                            </button>
+                          )}
                           <div style={{ color: th.text, fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>{c.content}</div>
                         </div>
                       ))}
@@ -9868,6 +10006,20 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
   const [expandedPost, setExpandedPost] = React.useState(null);
   const [postReplies, setPostReplies] = React.useState({});
   const [replyText, setReplyText] = React.useState("");
+  const [reportedBC, setReportedBC] = React.useState(new Set());
+  const [rulesOpenBC, setRulesOpenBC] = React.useState(false);
+  const [showRulesModalBC, setShowRulesModalBC] = React.useState(false);
+  const [rulesAgreedBC, setRulesAgreedBC] = React.useState(() => !!localStorage.getItem("sk_rules_agreed"));
+
+  const handleReportBC = async (contentId, contentType, contentText, contentUsername) => {
+    if (!authUser || reportedBC.has(contentId)) return;
+    await supabaseRef.current.from("reported_content").insert({
+      content_id: contentId, content_type: contentType, content_text: contentText,
+      content_username: contentUsername, reported_by: authUser.id,
+      reporter_username: username, context: genre, status: "pending",
+    });
+    setReportedBC(prev => new Set([...prev, contentId]));
+  };
 
   React.useEffect(() => {
     if (!authUser || !supabaseRef.current) return;
@@ -9939,8 +10091,12 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
   const handlePost = async () => {
     if (!newPost.trim()) return;
     if (!authUser || !username) { setPostMsg("Sign in and set a username to post."); return; }
+    const text = newPost.trim();
+    if (containsBannedWords(text)) { setPostMsg("Your post contains language that isn't allowed. Please revise and try again."); return; }
+    const toxic = await checkToxicity(text);
+    if (toxic) { setPostMsg("Your post was flagged as potentially harmful. Please revise and try again."); return; }
     const { error } = await supabaseRef.current.from("book_club_posts").insert({
-      user_id: authUser.id, username, genre, post_type: "discussion", content: newPost.trim(),
+      user_id: authUser.id, username, genre, post_type: "discussion", content: text,
     });
     if (error) { setPostMsg("Error posting."); return; }
     setNewPost(""); setPostMsg("");
@@ -9955,8 +10111,12 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
 
   const handleReply = async (postId) => {
     if (!replyText.trim() || !authUser || !username) return;
+    const text = replyText.trim();
+    if (containsBannedWords(text)) { setPostMsg("Your reply contains language that isn't allowed."); return; }
+    const toxic = await checkToxicity(text);
+    if (toxic) { setPostMsg("Your reply was flagged as potentially harmful. Please revise."); return; }
     await supabaseRef.current.from("book_club_replies").insert({
-      post_id: postId, user_id: authUser.id, username, content: replyText.trim(),
+      post_id: postId, user_id: authUser.id, username, content: text,
     });
     setReplyText("");
     loadReplies(postId);
@@ -10116,19 +10276,76 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
             {/* DISCUSSION */}
             <div style={{ marginTop: 8 }}>
               <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>💬 Club Discussion</h3>
+
+              {/* Community Rules Banner */}
+              <div style={{ ...cardStyle, marginBottom: 16, background: `${th.accent}10`, borderColor: `${th.accent}40` }}>
+                <button onClick={() => setRulesOpenBC(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: th.accent, fontFamily: '"Palatino Linotype", Palatino, serif' }}>🛡️ Community Rules</span>
+                  <span style={{ fontSize: 12, color: th.textSoft }}>{rulesOpenBC ? "▲ Hide" : "▼ Show"}</span>
+                </button>
+                {rulesOpenBC && (
+                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                    {COMMUNITY_RULES.map((r, i) => (
+                      <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{r.emoji}</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: th.text }}>{r.title}</div>
+                          <div style={{ fontSize: 12, color: th.textSoft, lineHeight: 1.5, marginTop: 2 }}>{r.body}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* First-post rules modal */}
+              {showRulesModalBC && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                  <div style={{ background: th.bg, borderRadius: 16, padding: 24, width: "100%", maxWidth: 400, maxHeight: "80vh", overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif', boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                    <h3 style={{ margin: "0 0 4px", fontSize: 18, color: th.text, textAlign: "center" }}>🛡️ Community Rules</h3>
+                    <p style={{ margin: "0 0 16px", fontSize: 12, color: th.textSoft, textAlign: "center" }}>Please read and agree before posting.</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+                      {COMMUNITY_RULES.map((r, i) => (
+                        <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: th.bgMuted, borderRadius: 8, padding: "10px 12px" }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{r.emoji}</span>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: th.text }}>{r.title}</div>
+                            <div style={{ fontSize: 11, color: th.textSoft, lineHeight: 1.5, marginTop: 2 }}>{r.body}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={() => { localStorage.setItem("sk_rules_agreed", "1"); setRulesAgreedBC(true); setShowRulesModalBC(false); }} style={{ width: "100%", padding: "12px", borderRadius: 10, background: th.accent, border: "none", color: th.bg, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8 }}>
+                      I Agree — Let Me Post
+                    </button>
+                    <button onClick={() => setShowRulesModalBC(false)} style={{ width: "100%", padding: "10px", borderRadius: 10, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {authUser && username ? (
                 <div style={{ ...cardStyle, marginBottom: 16 }}>
-                  <textarea
-                    placeholder={`Share your thoughts about ${genre} books…`}
-                    value={newPost}
-                    onChange={e => setNewPost(e.target.value)}
-                    rows={3}
-                    style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }}
-                  />
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                    <button onClick={handlePost} style={btnStyle(th.accent)}>Post</button>
-                  </div>
-                  {postMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 4 }}>{postMsg}</div>}
+                  {!rulesAgreedBC ? (
+                    <button onClick={() => setShowRulesModalBC(true)} style={{ width: "100%", padding: "12px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                      ✏️ Write a Post — Agree to Rules First
+                    </button>
+                  ) : (
+                    <>
+                      <textarea
+                        placeholder={`Share your thoughts about ${genre} books…`}
+                        value={newPost}
+                        onChange={e => setNewPost(e.target.value)}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }}
+                      />
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                        <button onClick={handlePost} style={btnStyle(th.accent)}>Post</button>
+                      </div>
+                      {postMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 4 }}>{postMsg}</div>}
+                    </>
+                  )}
                 </div>
               ) : (
                 <div style={{ ...cardStyle, textAlign: "center", color: th.textSoft, fontSize: 14 }}>
@@ -10149,9 +10366,20 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
                     <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
                   </div>
                   <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>{post.content}</div>
-                  <button onClick={() => togglePost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: th.textSoft, fontSize: 12, padding: 0 }}>
-                    {expandedPost === post.id ? "Hide replies" : `Replies (${postReplies[post.id]?.length ?? "…"})`}
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <button onClick={() => togglePost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: th.textSoft, fontSize: 12, padding: 0 }}>
+                      {expandedPost === post.id ? "Hide replies" : `Replies (${postReplies[post.id]?.length ?? "…"})`}
+                    </button>
+                    {authUser && post.user_id !== authUser.id && (
+                      <button onClick={() => handleReportBC(post.id, "book_club_post", post.content, post.username)} style={{
+                        background: "none", border: "none", cursor: reportedBC.has(post.id) ? "default" : "pointer",
+                        color: reportedBC.has(post.id) ? "#6B8C5E" : th.textSoft, fontSize: 12, padding: 0, marginLeft: "auto",
+                        fontFamily: '"Palatino Linotype", Palatino, serif',
+                      }}>
+                        {reportedBC.has(post.id) ? "✓ Reported" : "⚑ Report"}
+                      </button>
+                    )}
+                  </div>
 
                   {expandedPost === post.id && (
                     <div style={{ marginTop: 10, paddingLeft: 12, borderLeft: `2px solid ${th.border}` }}>
@@ -10159,6 +10387,15 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
                         <div key={r.id} style={{ marginBottom: 8 }}>
                           <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{r.username}</span>
                           <span style={{ fontSize: 12, color: th.textSoft, marginLeft: 6 }}>{new Date(r.created_at).toLocaleDateString()}</span>
+                          {authUser && r.user_id !== authUser.id && (
+                            <button onClick={() => handleReportBC(r.id, "book_club_reply", r.content, r.username)} style={{
+                              background: "none", border: "none", cursor: reportedBC.has(r.id) ? "default" : "pointer",
+                              color: reportedBC.has(r.id) ? "#6B8C5E" : th.textSoft, fontSize: 11, padding: 0, float: "right",
+                              fontFamily: '"Palatino Linotype", Palatino, serif',
+                            }}>
+                              {reportedBC.has(r.id) ? "✓" : "⚑"}
+                            </button>
+                          )}
                           <div style={{ color: th.text, fontSize: 13, lineHeight: 1.5, marginTop: 2 }}>{r.content}</div>
                         </div>
                       ))}
@@ -10647,6 +10884,113 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
   );
 }
 
+function AdminDashboard({ authUser, supabaseRef, onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [reports, setReports] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [activeTab, setActiveTab] = React.useState("pending");
+  const [actionMsg, setActionMsg] = React.useState("");
+
+  const loadReports = async () => {
+    setLoading(true);
+    const { data } = await supabaseRef.current
+      .from("reported_content")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    setReports(data || []);
+    setLoading(false);
+  };
+
+  React.useEffect(() => { loadReports(); }, []);
+
+  const updateStatus = async (id, status) => {
+    await supabaseRef.current.from("reported_content").update({ status, resolved_at: new Date().toISOString() }).eq("id", id);
+    setActionMsg(`Marked as ${status}.`);
+    setTimeout(() => setActionMsg(""), 2000);
+    loadReports();
+  };
+
+  const deletePost = async (report) => {
+    const tableMap = {
+      group_post: "group_posts",
+      group_comment: "group_comments",
+      book_club_post: "book_club_posts",
+      book_club_reply: "book_club_replies",
+    };
+    const table = tableMap[report.content_type];
+    if (table) await supabaseRef.current.from(table).delete().eq("id", report.content_id);
+    await updateStatus(report.id, "deleted");
+  };
+
+  const filtered = reports.filter(r => activeTab === "all" || r.status === activeTab);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: th.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+      <div style={{ maxWidth: 700, margin: "0 auto", padding: "20px 16px 80px" }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0" }}>‹</button>
+          <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>🛡️ Admin — Moderation Dashboard</h2>
+        </div>
+
+        {actionMsg && <div style={{ background: "#6B8C5E22", border: "1px solid #6B8C5E", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: "#3A5C2E" }}>{actionMsg}</div>}
+
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          {["pending", "dismissed", "deleted", "all"].map(tab => (
+            <button key={tab} onClick={() => setActiveTab(tab)} style={{
+              padding: "7px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: 600,
+              fontFamily: '"Palatino Linotype", Palatino, serif', textTransform: "capitalize",
+              background: activeTab === tab ? th.accent : th.bgMuted,
+              color: activeTab === tab ? th.bg : th.textSoft,
+              border: `1px solid ${activeTab === tab ? th.accent : th.border}`,
+            }}>{tab} {tab !== "all" && `(${reports.filter(r => r.status === tab).length})`}</button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: th.textSoft }}>Loading reports...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40, color: th.textSoft, fontStyle: "italic" }}>No {activeTab} reports.</div>
+        ) : (
+          filtered.map(r => (
+            <div key={r.id} style={{ background: th.bgMuted, border: `1px solid ${r.status === "pending" ? "#C4803C" : th.border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                <div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: th.accent, textTransform: "uppercase", letterSpacing: 1 }}>{r.content_type?.replace(/_/g, " ")}</span>
+                  <span style={{ fontSize: 11, color: th.textSoft, marginLeft: 10 }}>{r.context}</span>
+                </div>
+                <span style={{ fontSize: 11, color: th.textSoft }}>{new Date(r.created_at).toLocaleDateString()}</span>
+              </div>
+              <div style={{ background: th.bg, borderRadius: 8, padding: "10px 12px", marginBottom: 10, fontSize: 13, color: th.text, lineHeight: 1.6, borderLeft: "3px solid #C4803C" }}>
+                "{r.content_text}"
+              </div>
+              <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 12 }}>
+                Posted by <strong>@{r.content_username}</strong> · Reported by <strong>@{r.reporter_username}</strong>
+              </div>
+              {r.status === "pending" && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => deletePost(r)} style={{ flex: 1, padding: "8px", borderRadius: 8, background: "#8C3A3A", border: "none", color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+                    🗑 Delete Post
+                  </button>
+                  <button onClick={() => updateStatus(r.id, "dismissed")} style={{ flex: 1, padding: "8px", borderRadius: 8, background: th.bg, border: `1px solid ${th.border}`, color: th.textSoft, fontSize: 12, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              {r.status !== "pending" && (
+                <div style={{ fontSize: 11, color: th.textSoft, fontStyle: "italic" }}>
+                  {r.status === "deleted" ? "✓ Post deleted" : "✓ Dismissed"} · {r.resolved_at ? new Date(r.resolved_at).toLocaleDateString() : ""}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [showHome, setShowHome] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
@@ -10905,6 +11249,8 @@ export default function App() {
     return h === "#subscription" || localStorage.getItem("sk_current_page") === "subscription";
   });
   const [showAbout, setShowAbout] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const isAdmin = authUser?.email === ADMIN_EMAIL;
   const [showSettings, setShowSettings] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#settings" || localStorage.getItem("sk_current_page") === "settings";
@@ -11085,6 +11431,11 @@ export default function App() {
       {/* TBR SHELF PAGE */}
       {showTBR && (
         <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; }} />
+      )}
+
+      {/* ADMIN DASHBOARD */}
+      {showAdmin && isAdmin && (
+        <AdminDashboard authUser={authUser} supabaseRef={supabaseRef} onClose={() => setShowAdmin(false)} />
       )}
 
       {/* PLATFORMS PAGE */}
@@ -11336,6 +11687,7 @@ export default function App() {
           { key: "subscription",  label: "🗝️ Subscription",          action: () => { setShowSidebar(false); setShowSubscription(true); window.location.hash = "#subscription"; } },
           { key: "contact",       label: "✉️ Contact Us",             action: () => { setShowSidebar(false); window.location.href = "mailto:support@thestorykeeper.co"; } },
           { key: "about",         label: "💗 About StoryKeeper",      action: () => { setShowSidebar(false); setShowAbout(true); } },
+          ...(isAdmin ? [{ key: "admin", label: "🛡️ Moderation Dashboard", action: () => { setShowSidebar(false); setShowAdmin(true); } }] : []),
           ...(!authUser ? [{ key: "signin", label: "🔐 Sign In / Sign Up", action: () => { setShowSidebar(false); setAuthMode("signin"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess(""); setShowAuthModal(true); } }] : [{ key: "signout", label: "🚪 Sign Out", action: handleSignOut }]),
         ].map((item) => (
           <div
