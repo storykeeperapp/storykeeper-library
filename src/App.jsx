@@ -5277,11 +5277,19 @@ const TIERS = [
       "eBooks & Audiobooks toggle",
       "Manual book adding",
       "Basic reading status tracking",
+      "TBR shelf",
+      "Bio & top books on profile",
+      "Social links on profile",
+      "View community discussions & book clubs",
+      "Book of the Month pick",
     ],
     locked: [
       "Platform imports",
       "Genre customization",
       "Drag-and-drop reordering",
+      "Post in discussions & book clubs",
+      "Connect social accounts",
+      "Create your own book club",
     ],
   },
   {
@@ -5305,9 +5313,14 @@ const TIERS = [
       "2 platform imports",
       "Genre drag-and-drop reordering",
       "Reading status tracking",
+      "Post in community discussions & book clubs",
+      "Connect TikTok & social accounts",
+      "TBR shelf, bio & top books",
     ],
     locked: [
       "Genre customization",
+      "Create your own book club",
+      "Reading stats & story calendar",
     ],
   },
   {
@@ -5332,6 +5345,10 @@ const TIERS = [
       "Rename & custom genre images",
       "Re-detect genres",
       "Search your library",
+      "Reading stats & story calendar",
+      "Create your own book club",
+      "Full community profile visible to others",
+      "Cloud sync across up to 2 devices",
     ],
     locked: [],
   },
@@ -5353,9 +5370,11 @@ const TIERS = [
     features: [
       "Unlimited books",
       "Everything in The Librarian",
-      "Cloud sync across devices",
+      "Cloud sync across unlimited devices",
       "Priority support",
-      "Early access to new features",
+      "Early access to new community features",
+      "Exclusive StoryKeeper badge on profile & posts",
+      "First access to author Q&As & exclusive events",
     ],
     locked: [],
   },
@@ -9085,12 +9104,120 @@ const SOCIAL_PLATFORMS = [
   { id: "x_twitter", label: "X",         emoji: "🐦", color: "#14171A", prefix: "https://x.com/", placeholder: "@yourhandle" },
 ];
 
+function BookOfTheMonthPage({ onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [botm, setBotm] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [added, setAdded] = useState(false);
+
+  useEffect(() => {
+    fetch("/book-of-the-month.json?t=" + Date.now())
+      .then(r => r.json())
+      .then(data => { setBotm(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const monthLabel = botm?.month
+    ? new Date(botm.month + "-02").toLocaleDateString("en-US", { month: "long", year: "numeric" })
+    : "";
+
+  const addToTBR = () => {
+    if (!botm) return;
+    const tbr = (() => { try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; } })();
+    const already = tbr.some(b => b.title === botm.title);
+    if (!already) {
+      tbr.push({ title: botm.title, author: botm.author, isbn: botm.isbn || "", cover: botm.cover || null, addedAt: Date.now() });
+      localStorage.setItem("sk_tbr_books", JSON.stringify(tbr));
+    }
+    setAdded(true);
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 2100,
+      backgroundColor: "#F8F1E4",
+      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundSize: "cover", backgroundPosition: "center",
+      overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif',
+    }}>
+      <div style={{ maxWidth: 500, margin: "0 auto", padding: "60px 24px 80px" }}>
+
+        <button onClick={onClose} style={{
+          background: "none", border: "none", cursor: "pointer", color: "#8B5E3C",
+          fontSize: 22, padding: "0 0 0 0", marginBottom: 20, display: "flex", alignItems: "center", gap: 6,
+          fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700,
+        }}>‹ Back to Community</button>
+
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#8B5E3C", textTransform: "uppercase", marginBottom: 8 }}>
+            📖 Book of the Month
+          </div>
+          <h1 style={{ fontSize: 26, color: "#3A2A1A", margin: "0 0 4px", fontStyle: "italic" }}>{monthLabel}</h1>
+          <div style={{ width: 60, height: 2, background: "#8B5E3C", margin: "12px auto 0" }} />
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: "center", color: "#8B5E3C", fontSize: 14, padding: 40 }}>Loading...</div>
+        ) : !botm ? (
+          <div style={{ textAlign: "center", color: "#6B4C2A", fontSize: 14, padding: 40, fontStyle: "italic" }}>No book selected for this month yet. Check back soon!</div>
+        ) : (
+          <>
+            {/* Book cover */}
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+              <div style={{ position: "relative" }}>
+                {botm.cover
+                  ? <img src={botm.cover} alt={botm.title} style={{ width: 160, height: 240, objectFit: "cover", borderRadius: 6, boxShadow: "4px 6px 20px rgba(0,0,0,0.35)" }} />
+                  : <div style={{ width: 160, height: 240, background: "linear-gradient(135deg, #8B5E3C, #C4A882)", borderRadius: 6, boxShadow: "4px 6px 20px rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, boxSizing: "border-box" }}>
+                      <span style={{ color: "#fff", fontSize: 14, textAlign: "center", fontStyle: "italic" }}>{botm.title}</span>
+                    </div>
+                }
+                {botm.genre && (
+                  <div style={{ position: "absolute", top: -10, right: -10, background: "#8B5E3C", color: "#fff", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>{botm.genre}</div>
+                )}
+              </div>
+            </div>
+
+            {/* Title & author */}
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <h2 style={{ fontSize: 22, color: "#3A2A1A", margin: "0 0 6px", fontStyle: "italic" }}>{botm.title}</h2>
+              <div style={{ fontSize: 15, color: "#6B4C2A" }}>by {botm.author}</div>
+            </div>
+
+            {/* Note */}
+            {botm.note && (
+              <div style={{
+                background: "rgba(255,255,255,0.6)", borderRadius: 12, padding: "18px 20px",
+                marginBottom: 28, borderLeft: "3px solid #8B5E3C",
+                fontSize: 14, color: "#3A2A1A", lineHeight: 1.7, fontStyle: "italic",
+              }}>
+                "{botm.note}"
+              </div>
+            )}
+
+            {/* Add to TBR */}
+            <button onClick={addToTBR} disabled={added} style={{
+              width: "100%", padding: "14px", borderRadius: 10,
+              background: added ? "#6B8C5E" : "#8B5E3C", border: "none",
+              color: "#fff", fontSize: 15, fontWeight: 700, cursor: added ? "default" : "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+              boxShadow: "0 3px 10px rgba(0,0,0,0.2)", transition: "background 0.2s",
+            }}>
+              {added ? "✓ Added to Your TBR Shelf!" : "📚 Add to My TBR Shelf"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookClub, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
   const canRead = ["storyteller", "librarian", "storykeeper"].includes(userTier);
   const canPost = ["librarian", "storykeeper"].includes(userTier);
   const hasBookClub = ["librarian", "storykeeper"].includes(userTier);
+  const [showBotm, setShowBotm] = React.useState(false);
 
   const [memberCounts, setMemberCounts]   = React.useState({});
   const [socialLinks, setSocialLinks]     = React.useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
@@ -9289,6 +9416,23 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
             )}
           </div>
         )}
+
+        {/* Book of the Month */}
+        <div onClick={() => setShowBotm(true)} style={{
+          ...cardStyle, marginBottom: 20, cursor: "pointer",
+          background: `linear-gradient(135deg, ${th.accent}22, ${th.bgMuted})`,
+          border: `1px solid ${th.accent}55`,
+          display: "flex", alignItems: "center", gap: 14,
+        }}>
+          <div style={{ fontSize: 36 }}>📖</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: th.accent, textTransform: "uppercase", letterSpacing: 1, marginBottom: 3 }}>Book of the Month</div>
+            <div style={{ fontSize: 15, color: th.text, fontWeight: 700, fontStyle: "italic" }}>See this month's pick →</div>
+            <div style={{ fontSize: 12, color: th.textSoft, marginTop: 2 }}>Add it to your TBR shelf with one tap</div>
+          </div>
+        </div>
+
+        {showBotm && <BookOfTheMonthPage onClose={() => setShowBotm(false)} />}
 
         {/* Genre list */}
         <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>Genre Groups & Book Clubs</h3>
