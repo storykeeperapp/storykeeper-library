@@ -3046,24 +3046,46 @@ function TBRShelf({ onClose }) {
       return;
     }
 
-    // Fall back to Google Books
-    try {
-      const gKey = localStorage.getItem("sk_google_api_key") || "";
-      const keySuffix = gKey ? `&key=${gKey}` : "";
-      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=10&langRestrict=en${keySuffix}`);
-      const data = await res.json();
-      const gResults = (data.items || []).map(item => ({
-        title: item.volumeInfo?.title || "Unknown",
-        author: (item.volumeInfo?.authors || []).join(", "),
-        isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
-        cover: item.volumeInfo?.imageLinks?.thumbnail?.replace("http:", "https:") || null,
-        description: item.volumeInfo?.description || "",
-      }));
-      const combined = [...localHits, ...gResults.filter(g => !localHits.some(l => l.title === g.title))];
-      setSearchResults(combined.slice(0, 10));
-    } catch {
-      setSearchResults(localHits);
+    // Fetch Google Books and Open Library in parallel
+    const gKey = localStorage.getItem("sk_google_api_key") || "";
+    const keySuffix = gKey ? `&key=${gKey}` : "";
+
+    const [gData, olData] = await Promise.allSettled([
+      fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=10&langRestrict=en${keySuffix}`).then(r => r.json()),
+      fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=10&fields=title,author_name,isbn,cover_i`).then(r => r.json()),
+    ]);
+
+    const gResults = gData.status === "fulfilled"
+      ? (gData.value.items || []).map(item => ({
+          title: item.volumeInfo?.title || "Unknown",
+          author: (item.volumeInfo?.authors || []).join(", "),
+          isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
+          cover: item.volumeInfo?.imageLinks?.thumbnail?.replace("http:", "https:") || null,
+          description: item.volumeInfo?.description || "",
+          source: "Google Books",
+        }))
+      : [];
+
+    const olResults = olData.status === "fulfilled"
+      ? (olData.value.docs || []).map(doc => ({
+          title: doc.title || "Unknown",
+          author: (doc.author_name || []).join(", "),
+          isbn: (doc.isbn || [])[0] || "",
+          cover: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : null,
+          source: "Open Library",
+        }))
+      : [];
+
+    // Merge: local first, then Google Books, then Open Library — deduplicate by title
+    const seen = new Set(localHits.map(b => b.title.toLowerCase()));
+    const merged = [...localHits];
+    for (const b of [...gResults, ...olResults]) {
+      if (!seen.has(b.title.toLowerCase())) {
+        seen.add(b.title.toLowerCase());
+        merged.push(b);
+      }
     }
+    setSearchResults(merged.slice(0, 15));
     setSearching(false);
   };
 
