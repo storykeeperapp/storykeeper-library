@@ -11175,11 +11175,19 @@ export default function App() {
       const user = session?.user ?? null;
       setAuthUser(user);
       if (user) {
-        // Load subscription tier from Supabase
-        sb.from("user_subscriptions").select("tier").eq("user_id", user.id).maybeSingle()
-          .then(({ data }) => {
-            localStorage.setItem("sk_user_tier", data?.tier || "reluctant");
-          });
+        // Lifetime free StoryKeeper access for whitelisted emails
+        const LIFETIME_EMAILS = [
+          "msbratt23@gmail.com",
+        ];
+        if (LIFETIME_EMAILS.includes(user.email)) {
+          localStorage.setItem("sk_user_tier", "storykeeper");
+        } else {
+          // Load subscription tier from Supabase
+          sb.from("user_subscriptions").select("tier").eq("user_id", user.id).maybeSingle()
+            .then(({ data }) => {
+              localStorage.setItem("sk_user_tier", data?.tier || "reluctant");
+            });
+        }
       } else {
         localStorage.setItem("sk_user_tier", "reluctant");
       }
