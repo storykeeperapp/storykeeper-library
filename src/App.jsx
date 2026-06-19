@@ -14802,8 +14802,7 @@ export default function App() {
   };
 
   // Auto-resume sound after refresh if it was on.
-  // Browsers block autoplay without a user gesture, so we test-play and fall back
-  // to showing a "tap to resume" state if blocked.
+  // Safari mobile blocks autoplay — so we show sound as "on" and resume on first user tap.
   useEffect(() => {
     if (localStorage.getItem("sk_sound") !== "on") return;
     const ctx = { rainA: new Audio("/sounds/rain-thunder.mp3"), rainB: new Audio("/sounds/rain-thunder.mp3"), fire: new Audio("/sounds/fire.mp3"), activeRain: "A", xfadeInterval: null, xfadeTimer: null };
@@ -14811,16 +14810,23 @@ export default function App() {
     const playPromise = ctx.rainA.play();
     if (playPromise !== undefined) {
       playPromise.then(() => {
-        // Autoplay allowed — start full audio system
+        // Autoplay allowed (desktop/non-Safari)
         ctx.rainA.pause();
         ctx.rainA.currentTime = 0;
         startAudio(ctx);
         audioRef.current = ctx;
         setSoundOn(true);
       }).catch(() => {
-        // Autoplay blocked — reset so user knows to tap
-        localStorage.setItem("sk_sound", "off");
-        setSoundOn(false);
+        // Autoplay blocked (Safari mobile) — show as on, resume on first tap
+        setSoundOn(true);
+        const resume = () => {
+          startAudio(ctx);
+          audioRef.current = ctx;
+          document.removeEventListener("touchstart", resume);
+          document.removeEventListener("click", resume);
+        };
+        document.addEventListener("touchstart", resume, { once: true });
+        document.addEventListener("click", resume, { once: true });
       });
     } else {
       startAudio(ctx);
