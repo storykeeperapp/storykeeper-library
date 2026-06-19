@@ -9098,24 +9098,22 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
         background: "linear-gradient(to bottom, rgba(248,241,228,0.98) 0%, rgba(248,241,228,0.92) 100%)",
         borderBottom: "1px solid rgba(139,94,60,0.3)",
       }}>
-        {/* Row 1: Back + genre title */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        {/* Row 1: genre title only */}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 17, color: "#3A2010", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {genre}
+          </div>
+          <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic" }}>
+            {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : mediaType === "audiobooks" ? "Audiobooks" : "Physical Books"}
+          </div>
+        </div>
+        {/* Row 2: Back + action buttons */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <button onClick={onClose} style={{
             background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
             borderRadius: 20, padding: "5px 12px", color: "#5C3A1E", cursor: "pointer",
             fontFamily: "Georgia, serif", fontSize: 13, flexShrink: 0,
           }}>← Back</button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 17, color: "#3A2010", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {genre}
-            </div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic" }}>
-              {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : mediaType === "audiobooks" ? "Audiobooks" : "Physical Books"}
-            </div>
-          </div>
-        </div>
-        {/* Row 2: action buttons */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <button onClick={onToggleMediaType} style={{
             background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
             borderRadius: 16, padding: "5px 10px", color: "#5C3A1E", cursor: "pointer",
