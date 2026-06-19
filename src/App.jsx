@@ -216,6 +216,13 @@ async function fetchBookSearch(q) {
   } catch { return []; }
 }
 
+const TIER_BOOK_LIMITS = {
+  reluctant: 250,
+  storyteller: 2000,
+  librarian: 5000,
+  storykeeper: Infinity,
+};
+
 const ALL_GENRES = [
   "Classics", "Cookbooks", "Cozy Mystery", "Dark Romance", "Drama",
   "Fantasy", "Fiction", "Gardening & Landscaping", "Health & Wellness",
@@ -3777,6 +3784,12 @@ function AddToLibraryModal({ onClose, th }) {
     const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
     const already = userBooks.some(b => (b.isbn && b.isbn === selected.isbn) || b.title === selected.title);
     if (already) { setMsg("This book is already in your library!"); return; }
+    const tier = localStorage.getItem("sk_user_tier") || "reluctant";
+    const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+    if (userBooks.length >= limit) {
+      setMsg(`You've reached your ${limit.toLocaleString()}-book limit. Upgrade to add more.`);
+      return;
+    }
     const isAudio = mediaType === "audiobooks";
     userBooks.push({
       ...selected,
@@ -4006,6 +4019,13 @@ function TBRShelf({ onClose }) {
     const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
     const already = userBooks.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
     if (!already) {
+      const tier = localStorage.getItem("sk_user_tier") || "reluctant";
+      const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+      if (userBooks.length >= limit) {
+        setMsg(`You've reached your ${limit.toLocaleString()}-book limit. Upgrade to add more.`);
+        setTimeout(() => setMsg(""), 3000);
+        return;
+      }
       userBooks.push({
         ...book,
         type: moveMediaType,
