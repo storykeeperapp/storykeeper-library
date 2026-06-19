@@ -15229,7 +15229,7 @@ export default function App() {
       if (authMode === "signup") {
         const { error } = await sb.auth.signUp({ email: authEmail, password: authPassword });
         if (error) throw error;
-        setAuthSuccess("Check your email to confirm your account!");
+        setAuthSuccess("Check your email to confirm your account! If you don't see it within a few minutes, check your spam or junk folder.");
       } else {
         const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
         if (error) throw error;
