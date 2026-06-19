@@ -9337,13 +9337,15 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   );
 }
 
-function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound }) {
+function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound, active }) {
   const [pickerGenre, setPickerGenre] = useState(null);
   const [botanicalOverrides, setBotanicalOverrides] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_mobile_botanicals") || "{}"); } catch { return {}; }
   });
   const [reorderMode, setReorderMode] = useState(false);
   const [dragIndex, setDragIndex] = useState(null);
+  // Reset reorder mode when returning to home screen
+  useEffect(() => { if (active) { setReorderMode(false); setDragIndex(null); } }, [active]);
   const dragOverIndexRef = useRef(null);
   const longPressRef = useRef(null);
   const genreScrollRef = useRef(null);
@@ -15939,6 +15941,7 @@ export default function App() {
       {isMobile && (
         <div style={{ display: showHome ? "block" : "none", position: "fixed", inset: 0, zIndex: 500 }}>
           <MobileHomeView
+            active={showHome}
             mediaType={mediaType}
             isTablet={isTablet}
             isPWA={isPWA}
