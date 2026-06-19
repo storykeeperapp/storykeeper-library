@@ -15069,15 +15069,23 @@ export default function App() {
       if (user && event === "INITIAL_SESSION") {
         syncFromCloud(user);
         fetchCommunityAuthorGenres();
-        // Apply saved theme from account (syncs across devices)
+        // Fetch fresh user data to get latest metadata (session object can be stale)
+        sb.auth.getUser().then(({ data: { user: freshUser } }) => {
+          const cloudTheme = freshUser?.user_metadata?.theme;
+          if (cloudTheme && SK_THEMES[cloudTheme]) {
+            setThemeKey(cloudTheme);
+            localStorage.setItem("sk_theme", cloudTheme);
+          }
+        });
+      }
+      // On actual sign-in, do full sync + onboarding
+      if (user && (event === "SIGNED_IN" || event === "USER_UPDATED")) {
+        // Apply saved theme on sign-in (covers new device login)
         const cloudTheme = user.user_metadata?.theme;
         if (cloudTheme && SK_THEMES[cloudTheme]) {
           setThemeKey(cloudTheme);
           localStorage.setItem("sk_theme", cloudTheme);
         }
-      }
-      // On actual sign-in, do full sync + onboarding
-      if (user && (event === "SIGNED_IN" || event === "USER_UPDATED")) {
         const pulled = await syncFromCloud(user);
         if (!pulled) await syncToCloud(user);
         // Always restore username from Supabase on sign-in (handles new devices + sign-out/in)
