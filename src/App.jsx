@@ -14742,6 +14742,10 @@ export default function App() {
   }, []);
 
   const [showHome, setShowHome] = useState(() => {
+    // Only restore page position on a browser reload — fresh PWA launches always go home
+    const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+    const isReload = navType === "reload";
+    if (!isReload) return true;
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     if (h && h !== "#") return false;
     const saved = localStorage.getItem("sk_current_page");
@@ -14749,6 +14753,9 @@ export default function App() {
     return true;
   });
   const [genre, setGenre] = useState(() => {
+    const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+    const isReload = navType === "reload";
+    if (!isReload) return null;
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     if (h.startsWith("#genre=")) return decodeURIComponent(h.slice(7));
     const saved = localStorage.getItem("sk_current_page");
@@ -15156,14 +15163,20 @@ export default function App() {
   const [nests, setNests] = useState(DEFAULT_ASSIGNMENTS);
   const [openNestId, setOpenNestId] = useState(null);
   const [showFavorites, setShowFavorites] = useState(() => {
+    const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+    if (navType !== "reload") return false;
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#favorites" || localStorage.getItem("sk_current_page") === "favorites";
   });
   const [showTBR, setShowTBR] = useState(() => {
+    const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+    if (navType !== "reload") return false;
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#tbr" || localStorage.getItem("sk_current_page") === "tbr";
   });
   const [showStats, setShowStats] = useState(() => {
+    const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+    if (navType !== "reload") return false;
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#stats" || localStorage.getItem("sk_current_page") === "stats";
   });
