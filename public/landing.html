@@ -487,16 +487,72 @@
 
   <script>
     let yearly = false;
-    const prices = {
-      storyteller:  { monthly: "$4.99",  yearly: "$49.99", mperiod: "per month", yperiod: "per year — save $9.89"  },
-      librarian:    { monthly: "$9.99",  yearly: "$99.99", mperiod: "per month", yperiod: "per year — save $19.89" },
-      storykeeper:  { monthly: "$14.99", yearly: "$149.99", mperiod: "per month", yperiod: "per year — save $29.89" },
+
+    // Currency detection based on browser locale
+    const currencyPrices = {
+      GBP: {
+        storyteller:  { monthly: "£3.99",  yearly: "£39.99", mperiod: "per month", yperiod: "per year — save £7.89"  },
+        librarian:    { monthly: "£7.99",  yearly: "£79.99", mperiod: "per month", yperiod: "per year — save £15.89" },
+        storykeeper:  { monthly: "£11.99", yearly: "£119.99", mperiod: "per month", yperiod: "per year — save £23.89" },
+      },
+      EUR: {
+        storyteller:  { monthly: "€4.99",  yearly: "€49.99", mperiod: "per month", yperiod: "per year — save €9.89"  },
+        librarian:    { monthly: "€9.99",  yearly: "€99.99", mperiod: "per month", yperiod: "per year — save €19.89" },
+        storykeeper:  { monthly: "€13.99", yearly: "€139.99", mperiod: "per month", yperiod: "per year — save €27.89" },
+      },
+      CAD: {
+        storyteller:  { monthly: "CA$6.99",  yearly: "CA$69.99", mperiod: "per month", yperiod: "per year — save CA$13.89"  },
+        librarian:    { monthly: "CA$13.99", yearly: "CA$139.99", mperiod: "per month", yperiod: "per year — save CA$27.89" },
+        storykeeper:  { monthly: "CA$19.99", yearly: "CA$199.99", mperiod: "per month", yperiod: "per year — save CA$39.89" },
+      },
+      AUD: {
+        storyteller:  { monthly: "AU$7.99",  yearly: "AU$79.99", mperiod: "per month", yperiod: "per year — save AU$15.89"  },
+        librarian:    { monthly: "AU$15.99", yearly: "AU$159.99", mperiod: "per month", yperiod: "per year — save AU$31.89" },
+        storykeeper:  { monthly: "AU$22.99", yearly: "AU$229.99", mperiod: "per month", yperiod: "per year — save AU$45.89" },
+      },
+      USD: {
+        storyteller:  { monthly: "$4.99",  yearly: "$49.99", mperiod: "per month", yperiod: "per year — save $9.89"  },
+        librarian:    { monthly: "$9.99",  yearly: "$99.99", mperiod: "per month", yperiod: "per year — save $19.89" },
+        storykeeper:  { monthly: "$14.99", yearly: "$149.99", mperiod: "per month", yperiod: "per year — save $29.89" },
+      },
     };
+
+    const localeToCurrency = { 'en-GB': 'GBP', 'en-AU': 'AUD', 'en-CA': 'CAD' };
+    const countryToCurrency = { GB: 'GBP', AU: 'AUD', CA: 'CAD', IE: 'EUR', DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', NL: 'EUR', PT: 'EUR', BE: 'EUR', AT: 'EUR', FI: 'EUR', GR: 'EUR' };
+
+    function detectCurrency() {
+      const locale = navigator.language || navigator.languages?.[0] || 'en-US';
+      if (localeToCurrency[locale]) return localeToCurrency[locale];
+      const region = locale.split('-')[1]?.toUpperCase();
+      if (region && countryToCurrency[region]) return countryToCurrency[region];
+      return 'USD';
+    }
+
+    const currency = detectCurrency();
+    const prices = currencyPrices[currency] || currencyPrices.USD;
+
+    // Show currency indicator if not USD
+    if (currency !== 'USD') {
+      const note = document.createElement('p');
+      note.style.cssText = 'text-align:center;font-size:13px;color:#8B6A4A;margin-top:-16px;margin-bottom:24px;';
+      note.textContent = 'Prices shown in ' + currency + '. Final charge processed in your local currency by Stripe.';
+      const pricingSection = document.querySelector('.pricing-grid');
+      if (pricingSection) pricingSection.parentNode.insertBefore(note, pricingSection);
+    }
+
     const links = {
       storyteller:  { monthly: "https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00", yearly: "https://buy.stripe.com/3cI00ia772Ni5Fw4jXeQM01" },
       librarian:    { monthly: "https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02", yearly: "https://buy.stripe.com/aFa3cu4MN5Zu6JAdUxeQM03" },
       storykeeper:  { monthly: "https://buy.stripe.com/bJe9AS5QRew04BscQteQM04", yearly: "https://buy.stripe.com/4gMeVca7773y6JA7w9eQM05" },
     };
+
+    // Apply detected currency prices on load
+    ['storyteller','librarian','storykeeper'].forEach(t => {
+      const priceEl = document.getElementById('price-' + t);
+      const periodEl = document.getElementById('period-' + t);
+      if (priceEl) priceEl.textContent = prices[t].monthly;
+      if (periodEl) periodEl.textContent = prices[t].mperiod;
+    });
 
     function toggleBilling() {
       yearly = !yearly;
