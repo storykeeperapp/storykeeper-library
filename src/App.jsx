@@ -9151,7 +9151,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
       {/* Header */}
       <div style={{
         flexShrink: 0,
-        paddingTop: isPWA && isIOS ? "calc(env(safe-area-inset-top) + 12px)" : "14px",
+        paddingTop: isPWA && isIOS ? "calc(env(safe-area-inset-top) + 12px)" : "56px",
         paddingLeft: isTablet ? 24 : 16, paddingRight: isTablet ? 24 : 16, paddingBottom: 10,
         position: "relative", zIndex: 1,
         background: "linear-gradient(to bottom, rgba(248,241,228,0.98) 0%, rgba(248,241,228,0.92) 100%)",
