@@ -3804,9 +3804,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
     window.dispatchEvent(new CustomEvent("sk-books-changed"));
     setAdded(true);
     setMsg(`"${selected.title}" added to your library!`);
-    // Warn at 90% of limit
-    const tier = localStorage.getItem("sk_user_tier") || "reluctant";
-    const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+    // Warn at 90% of limit (reuse tier/limit already declared above)
     if (limit !== Infinity && userBooks.length >= Math.floor(limit * 0.9)) {
       setTimeout(() => setShowLimitWarning(true), 1000);
     } else {
@@ -3976,14 +3974,14 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
         </div>
       </div>
       {showLimitWarning && (() => {
-        const tier = localStorage.getItem("sk_user_tier") || "reluctant";
-        const limit = TIER_BOOK_LIMITS[tier] ?? 250;
-        const tierLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
-        const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+        const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
+        const wLimit = TIER_BOOK_LIMITS[wTier] ?? 250;
+        const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
+        const wBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
         return <LimitWarningModal
-          currentCount={userBooks.length}
-          limit={limit}
-          tierName={tierLabels[tier] || tier}
+          currentCount={wBooks.length}
+          limit={wLimit}
+          tierName={wLabels[wTier] || wTier}
           onUpgrade={() => { setShowLimitWarning(false); onClose(); onOpenSubscription?.(); }}
           onDismiss={() => { setShowLimitWarning(false); onClose(); }}
         />;
@@ -4380,14 +4378,14 @@ function TBRShelf({ onClose, onOpenSubscription }) {
         </div>
       )}
       {showLimitWarning && (() => {
-        const tier = localStorage.getItem("sk_user_tier") || "reluctant";
-        const limit = TIER_BOOK_LIMITS[tier] ?? 250;
-        const tierLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
-        const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+        const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
+        const wLimit = TIER_BOOK_LIMITS[wTier] ?? 250;
+        const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
+        const wBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
         return <LimitWarningModal
-          currentCount={userBooks.length}
-          limit={limit}
-          tierName={tierLabels[tier] || tier}
+          currentCount={wBooks.length}
+          limit={wLimit}
+          tierName={wLabels[wTier] || wTier}
           onUpgrade={() => { setShowLimitWarning(false); onOpenSubscription?.(); }}
           onDismiss={() => setShowLimitWarning(false)}
         />;
