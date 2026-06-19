@@ -3722,7 +3722,7 @@ function BarcodeScannerModal({ onDetected, onClose }) {
   );
 }
 
-function AddToLibraryModal({ onClose, th }) {
+function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [allResults, setAllResults] = useState([]);
@@ -3734,6 +3734,7 @@ function AddToLibraryModal({ onClose, th }) {
   const [status, setStatus] = useState("unread");
   const [msg, setMsg] = useState("");
   const [added, setAdded] = useState(false);
+  const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
@@ -3803,7 +3804,14 @@ function AddToLibraryModal({ onClose, th }) {
     window.dispatchEvent(new CustomEvent("sk-books-changed"));
     setAdded(true);
     setMsg(`"${selected.title}" added to your library!`);
-    setTimeout(() => onClose(), 1800);
+    // Warn at 90% of limit
+    const tier = localStorage.getItem("sk_user_tier") || "reluctant";
+    const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+    if (limit !== Infinity && userBooks.length >= Math.floor(limit * 0.9)) {
+      setTimeout(() => setShowLimitWarning(true), 1000);
+    } else {
+      setTimeout(() => onClose(), 1800);
+    }
   };
 
   return (
@@ -3967,11 +3975,24 @@ function AddToLibraryModal({ onClose, th }) {
           )}
         </div>
       </div>
+      {showLimitWarning && (() => {
+        const tier = localStorage.getItem("sk_user_tier") || "reluctant";
+        const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+        const tierLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
+        const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+        return <LimitWarningModal
+          currentCount={userBooks.length}
+          limit={limit}
+          tierName={tierLabels[tier] || tier}
+          onUpgrade={() => { setShowLimitWarning(false); onClose(); onOpenSubscription?.(); }}
+          onDismiss={() => { setShowLimitWarning(false); onClose(); }}
+        />;
+      })()}
     </div>
   );
 }
 
-function TBRShelf({ onClose }) {
+function TBRShelf({ onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const [tbrBooks, setTbrBooks] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; }
@@ -3986,6 +4007,7 @@ function TBRShelf({ onClose }) {
   const [showManual, setShowManual] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [msg, setMsg] = useState("");
+  const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null); // { book, index }
   const [moveMediaType, setMoveMediaType] = useState("ebooks");
   const [moveGenre, setMoveGenre] = useState("");
@@ -4037,6 +4059,12 @@ function TBRShelf({ onClose }) {
       });
       localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
       window.dispatchEvent(new CustomEvent("sk-books-changed"));
+      // Warn at 90% of limit
+      const tier2 = localStorage.getItem("sk_user_tier") || "reluctant";
+      const limit2 = TIER_BOOK_LIMITS[tier2] ?? 250;
+      if (limit2 !== Infinity && userBooks.length >= Math.floor(limit2 * 0.9)) {
+        setTimeout(() => setShowLimitWarning(true), 800);
+      }
     }
     removeBook(index);
     setMoveTarget(null);
@@ -4351,6 +4379,19 @@ function TBRShelf({ onClose }) {
           </div>
         </div>
       )}
+      {showLimitWarning && (() => {
+        const tier = localStorage.getItem("sk_user_tier") || "reluctant";
+        const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+        const tierLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
+        const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+        return <LimitWarningModal
+          currentCount={userBooks.length}
+          limit={limit}
+          tierName={tierLabels[tier] || tier}
+          onUpgrade={() => { setShowLimitWarning(false); onOpenSubscription?.(); }}
+          onDismiss={() => setShowLimitWarning(false)}
+        />;
+      })()}
     </div>
   );
 }
@@ -10887,6 +10928,37 @@ function NewUserOnboarding({ userName, onImportGoodreads, onAddManually, onDismi
   );
 }
 
+function LimitWarningModal({ currentCount, limit, tierName, onUpgrade, onDismiss }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const pct = Math.round((currentCount / limit) * 100);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ background: th.bg, borderRadius: 16, padding: 32, maxWidth: 420, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.25)", fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
+        <h3 style={{ margin: "0 0 12px", fontSize: 20, color: th.text }}>You're Almost at Your Limit</h3>
+        <p style={{ margin: "0 0 8px", fontSize: 14, color: th.textMid, lineHeight: 1.7 }}>
+          You've used <strong>{currentCount.toLocaleString()}</strong> of your <strong>{limit.toLocaleString()}</strong> book limit ({pct}% full) on the <strong>{tierName}</strong> plan.
+        </p>
+        <p style={{ margin: "0 0 24px", fontSize: 14, color: th.textMid, lineHeight: 1.7 }}>
+          We want to make sure all of your books stay safe and in one place. To ensure your entire library is always imported, please consider upgrading your subscription.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={onUpgrade} style={{
+            background: th.accent, border: "none", borderRadius: 10, padding: "12px 24px",
+            color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>View Subscription Plans</button>
+          <button onClick={onDismiss} style={{
+            background: "none", border: `1px solid ${th.border}`, borderRadius: 10, padding: "10px 24px",
+            color: th.textSoft, fontSize: 13, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>Maybe Later</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PWAInstallModal({ isIOS, isAndroid, installPrompt, onInstall, onDismiss }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const canAutoInstall = !!installPrompt && !isIOS;
@@ -15434,7 +15506,7 @@ export default function App() {
 
       {/* TBR SHELF PAGE */}
       {showTBR && (
-        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; }} />
+        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; }} onOpenSubscription={() => { setShowTBR(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />
       )}
 
       {/* ADMIN DASHBOARD */}
@@ -15444,7 +15516,7 @@ export default function App() {
 
       {/* PLATFORMS PAGE */}
       {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} />}
-      {showAddToLibrary && <AddToLibraryModal onClose={() => setShowAddToLibrary(false)} th={th} />}
+      {showAddToLibrary && <AddToLibraryModal onClose={() => setShowAddToLibrary(false)} th={th} onOpenSubscription={() => { setShowAddToLibrary(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
 
       {/* SUBSCRIPTION PAGE */}
       {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; }} currentTier={userTier} />}
