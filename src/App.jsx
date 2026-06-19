@@ -15033,7 +15033,14 @@ export default function App() {
     if (!sb) return;
     supabaseRef.current = sb;
     sb.auth.getSession().then(({ data }) => {
-      setAuthUser(data.session?.user ?? null);
+      const sessionUser = data.session?.user ?? null;
+      setAuthUser(sessionUser);
+      // Apply theme immediately from session (before any auth events fire)
+      const cloudTheme = sessionUser?.user_metadata?.theme;
+      if (cloudTheme && SK_THEMES[cloudTheme]) {
+        setThemeKey(cloudTheme);
+        localStorage.setItem("sk_theme", cloudTheme);
+      }
     });
     const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
       const user = session?.user ?? null;
@@ -15067,14 +15074,6 @@ export default function App() {
       if (user && event === "INITIAL_SESSION") {
         syncFromCloud(user);
         fetchCommunityAuthorGenres();
-        // Fetch fresh user data to get latest metadata (session object can be stale)
-        sb.auth.getUser().then(({ data: { user: freshUser } }) => {
-          const cloudTheme = freshUser?.user_metadata?.theme;
-          if (cloudTheme && SK_THEMES[cloudTheme]) {
-            setThemeKey(cloudTheme);
-            localStorage.setItem("sk_theme", cloudTheme);
-          }
-        });
       }
       // On actual sign-in, do full sync + onboarding
       if (user && (event === "SIGNED_IN" || event === "USER_UPDATED")) {
