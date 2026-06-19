@@ -65,7 +65,8 @@ const SK_THEMES = {
 
 const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
-const needsDesc = (b) => !b.description && b.genre !== "Cookbooks";
+const SKIP_DESC_GENRES = ["Cookbooks", "Crafting", "Self Help", "Gardening & Landscaping", "Gardening", "Landscaping", "Health & Wellness", "Health", "Wellness", "DIY"];
+const needsDesc = (b) => !b.description && !SKIP_DESC_GENRES.includes(b.genre);
 function getSupabase() {
   const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
   return createClient(SUPABASE_URL, key);
@@ -192,12 +193,562 @@ const checkToxicity = async (text) => {
   } catch { return false; }
 };
 
+// Shared book search cache — avoids refetching the same query
+const _searchCache = new Map();
+async function fetchBookSearch(q) {
+  const key = q.toLowerCase().trim();
+  if (_searchCache.has(key)) return _searchCache.get(key);
+  try {
+    const res = await fetch(`/api/books-search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const results = (data.items || []).map(item => ({
+      title: item.volumeInfo?.title || "Unknown",
+      author: (item.volumeInfo?.authors || []).join(", "),
+      isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
+      cover: item.volumeInfo?.imageLinks?.thumbnail || null,
+      coverUrl: item.volumeInfo?.imageLinks?.thumbnail || null,
+      description: item.volumeInfo?.description || "",
+      genre: item.volumeInfo?.categories?.[0] || "",
+    }));
+    if (results.length > 0) _searchCache.set(key, results);
+    return results;
+  } catch { return []; }
+}
+
 const ALL_GENRES = [
-  "Fantasy", "Mystery & Thriller", "Sci-Fi", "Romance",
-  "Self Help", "Dark Romance", "Fiction", "Historical Fiction",
-  "Cookbooks", "Drama", "True Crime", "Gardening & Landscaping",
-  "Health & Wellness", "Home & DIY", "Classics", "Sewing & Crafts", "Cozy Mystery", "Horror", "Miscellaneous",
+  "Classics", "Cookbooks", "Cozy Mystery", "Dark Romance", "Drama",
+  "Fantasy", "Fiction", "Gardening & Landscaping", "Health & Wellness",
+  "Historical Fiction", "Home & DIY", "Horror", "Miscellaneous",
+  "Mystery & Thriller", "Romance", "Sci-Fi", "Self Help",
+  "Sewing & Crafts", "True Crime",
 ];
+
+// Built-in author → genre defaults. User-set rules (sk_author_genres) always take precedence.
+const AUTHOR_GENRE_DEFAULTS = {
+  // Horror
+  "stephen king": "Horror",
+  "r.l. stine": "Horror",
+  "dean koontz": "Horror",
+  "shirley jackson": "Horror",
+  "joe hill": "Horror",
+  "paul tremblay": "Horror",
+  "william peter blatty": "Horror",
+  "robert bloch": "Horror",
+  "ramsey campbell": "Horror",
+  "justin cronin": "Horror",
+  "daphne du maurier": "Horror",
+  "thomas harris": "Thriller",
+  "james herbert": "Horror",
+  "john ajvide lindqvist": "Horror",
+  "richard laymon": "Horror",
+  "josh malerman": "Horror",
+  "richard matheson": "Horror",
+  "robert r. mccammon": "Horror",
+  "robert r mccammon": "Horror",
+  "dan simmons": "Horror",
+  "bram stoker": "Horror",
+  "peter straub": "Horror",
+  "mary shelley": "Horror",
+  // Fantasy
+  "sarah j. maas": "Fantasy",
+  "sarah j maas": "Fantasy",
+  "rebecca yarros": "Fantasy",
+  "brandon sanderson": "Fantasy",
+  "george r.r. martin": "Fantasy",
+  "george r r martin": "Fantasy",
+  "j.r.r. tolkien": "Fantasy",
+  "j r r tolkien": "Fantasy",
+  "patrick rothfuss": "Fantasy",
+  "robin hobb": "Fantasy",
+  "terry pratchett": "Fantasy",
+  "neil gaiman": "Fantasy",
+  "naomi novik": "Fantasy",
+  "katherine arden": "Fantasy",
+  "v.e. schwab": "Fantasy",
+  "ve schwab": "Fantasy",
+  "victoria schwab": "Fantasy",
+  "joe abercrombie": "Fantasy",
+  "lloyd alexander": "Fantasy",
+  "ilona andrews": "Fantasy",
+  "stephanie garber": "Fantasy",
+  "alex aster": "Fantasy",
+  "jasmine mas": "Fantasy",
+  "briar boleyn": "Fantasy",
+  "devney perry": "Fantasy",
+  "caroline peckham": "Fantasy",
+  "suzanne valenti": "Fantasy",
+  "abigail owen": "Fantasy",
+  "harper l. woods": "Fantasy",
+  "harper l woods": "Fantasy",
+  "kerri maniscalco": "Fantasy",
+  "rachel gillig": "Fantasy",
+  "hans christian andersen": "Fantasy",
+  "e.t.a. hoffmann": "Fantasy",
+  "eta hoffmann": "Fantasy",
+  "piers anthony": "Fantasy",
+  "katherine applegate": "Fantasy",
+  "jennifer l. armentrout": "Fantasy",
+  "jennifer l armentrout": "Fantasy",
+  "leigh bardugo": "Fantasy",
+  "clive barker": "Horror",
+  "peter s. beagle": "Fantasy",
+  "peter s beagle": "Fantasy",
+  "holly black": "Fantasy",
+  "ray bradbury": "Science Fiction",
+  "marion zimmer bradley": "Fantasy",
+  "patricia briggs": "Fantasy",
+  "terry brooks": "Fantasy",
+  "lois mcmaster bujold": "Fantasy",
+  "jim butcher": "Fantasy",
+  "jacqueline carey": "Fantasy",
+  "lewis carroll": "Fantasy",
+  "cassandra clare": "Fantasy",
+  "susanna clarke": "Fantasy",
+  "suzanne collins": "Fantasy",
+  "stephen donaldson": "Fantasy",
+  "david eddings": "Fantasy",
+  "steven erikson": "Fantasy",
+  "raymond e. feist": "Fantasy",
+  "raymond e feist": "Fantasy",
+  "cornelia funke": "Fantasy",
+  "david gemmell": "Fantasy",
+  "terry goodkind": "Fantasy",
+  "laurell k. hamilton": "Fantasy",
+  "laurell k hamilton": "Fantasy",
+  "charlaine harris": "Fantasy",
+  "kim harrison": "Fantasy",
+  "robert e. howard": "Fantasy",
+  "robert e howard": "Fantasy",
+  "robert jordan": "Fantasy",
+  "diana wynne jones": "Fantasy",
+  "guy gavriel kay": "Fantasy",
+  "r.f. kuang": "Fantasy",
+  "rf kuang": "Fantasy",
+  "mercedes lackey": "Fantasy",
+  "c.s. lewis": "Fantasy",
+  "cs lewis": "Fantasy",
+  "madeleine l'engle": "Fantasy",
+  "madeleine lengle": "Fantasy",
+  "h.p. lovecraft": "Horror",
+  "hp lovecraft": "Horror",
+  "scott lynch": "Fantasy",
+  "lev grossman": "Fantasy",
+  "anne mccaffrey": "Fantasy",
+  "seanan mcguire": "Fantasy",
+  "richelle mead": "Fantasy",
+  "stephenie meyer": "Fantasy",
+  "china miéville": "Fantasy",
+  "china mieille": "Fantasy",
+  "robin mckinley": "Fantasy",
+  "michael moorcock": "Fantasy",
+  "tamsyn muir": "Fantasy",
+  "marissa meyer": "Fantasy",
+  "garth nix": "Fantasy",
+  "nnedi okorafor": "Fantasy",
+  "christopher paolini": "Fantasy",
+  "tamora pierce": "Fantasy",
+  "philip pullman": "Fantasy",
+  "anne rice": "Horror",
+  "rick riordan": "Fantasy",
+  "j.k. rowling": "Fantasy",
+  "jk rowling": "Fantasy",
+  "veronica roth": "Fantasy",
+  "r.a. salvatore": "Fantasy",
+  "ra salvatore": "Fantasy",
+  "andrzej sapkowski": "Fantasy",
+  "samantha shannon": "Fantasy",
+  "darren shan": "Horror",
+  "maggie stiefvater": "Fantasy",
+  "trudi canavan": "Fantasy",
+  "brent weeks": "Fantasy",
+  "tad williams": "Fantasy",
+  "roger zelazny": "Fantasy",
+  // Romance
+  "nora roberts": "Romance",
+  "j.d. robb": "Romance",
+  "jd robb": "Romance",
+  "julia quinn": "Romance",
+  "lisa kleypas": "Romance",
+  "susan mallery": "Romance",
+  "debbie macomber": "Romance",
+  "nalini singh": "Romance",
+  "courtney milan": "Romance",
+  "talia hibbert": "Romance",
+  "emily henry": "Romance",
+  "helen hoang": "Romance",
+  "jane austen": "Romance",
+  "barbara cartland": "Romance",
+  "danielle steel": "Romance",
+  "nicholas sparks": "Romance",
+  "kristin hannah": "Romance",
+  "sylvia day": "Romance",
+  "e.l. james": "Romance",
+  "el james": "Romance",
+  "georgette heyer": "Romance",
+  "jayne ann krentz": "Romance",
+  "amanda quick": "Romance",
+  "jayne castle": "Romance",
+  "johanna lindsey": "Romance",
+  "judith mcnaught": "Romance",
+  "mary balogh": "Romance",
+  "lora leigh": "Romance",
+  "jill shalvis": "Romance",
+  "robyn carr": "Romance",
+  "susan elizabeth phillips": "Romance",
+  "loretta chase": "Romance",
+  "eloisa james": "Romance",
+  "sabrina jeffries": "Romance",
+  "sherrilyn kenyon": "Romance",
+  "lynsay sands": "Romance",
+  "gena showalter": "Romance",
+  "lavryle spencer": "Romance",
+  "kathleen e. woodiwiss": "Romance",
+  "kathleen woodiwiss": "Romance",
+  "jenny han": "Romance",
+  "colleen hoover": "Romance",
+  "maeve binchy": "Romance",
+  "rosamunde pilcher": "Romance",
+  "barbara taylor bradford": "Romance",
+  "diana palmer": "Romance",
+  "brenda jackson": "Romance",
+  "meg cabot": "Romance",
+  "stephanie laurens": "Romance",
+  "julia london": "Romance",
+  "jude deveraux": "Romance",
+  "julie garwood": "Romance",
+  "janet dailey": "Romance",
+  "catherine coulter": "Romance",
+  "nora ephron": "Romance",
+  "mary jo putney": "Romance",
+  "brenda novak": "Romance",
+  "karen robards": "Romance",
+  "j.r. ward": "Romance",
+  "jr ward": "Romance",
+  "maya banks": "Romance",
+  "anne stuart": "Romance",
+  "virginia henley": "Romance",
+  "bertrice small": "Romance",
+  "heather graham": "Romance",
+  // Dark Romance
+  "h.d. carlton": "Dark Romance",
+  "hd carlton": "Dark Romance",
+  "penelope douglas": "Dark Romance",
+  "ana huang": "Dark Romance",
+  "rina kent": "Dark Romance",
+  "sara cate": "Dark Romance",
+  "katee robert": "Dark Romance",
+  "skye warren": "Dark Romance",
+  "pepper winters": "Dark Romance",
+  "c.j. roberts": "Dark Romance",
+  "cj roberts": "Dark Romance",
+  "willow winters": "Dark Romance",
+  "aleatha romig": "Dark Romance",
+  "ker dukey": "Dark Romance",
+  "k.a. knight": "Dark Romance",
+  "ka knight": "Dark Romance",
+  "tate james": "Dark Romance",
+  "j. bree": "Dark Romance",
+  "j bree": "Dark Romance",
+  "harley laroux": "Dark Romance",
+  "callie hart": "Fantasy",
+  "navessa allen": "Dark Romance",
+  "tillie cole": "Dark Romance",
+  "tarryn fisher": "Dark Romance",
+  "shantel tessier": "Dark Romance",
+  "meagan brandy": "Dark Romance",
+  "clarissa wild": "Dark Romance",
+  "anna zaires": "Dark Romance",
+  "sierra simone": "Dark Romance",
+  "helen hardt": "Dark Romance",
+  "kitty thomas": "Dark Romance",
+  "b.b. easton": "Dark Romance",
+  "bb easton": "Dark Romance",
+  "penelope black": "Dark Romance",
+  "runyx": "Dark Romance",
+  "j.t. geissinger": "Dark Romance",
+  "jt geissinger": "Dark Romance",
+  // Thriller / Mystery
+  "james patterson": "Thriller",
+  "lee child": "Thriller",
+  "gillian flynn": "Thriller",
+  "tana french": "Mystery",
+  "agatha christie": "Mystery",
+  "louise penny": "Mystery",
+  "harlan coben": "Thriller",
+  "john grisham": "Thriller",
+  "michael connelly": "Mystery",
+  "karin slaughter": "Thriller",
+  // Classic mystery / detective
+  "arthur conan doyle": "Mystery",
+  "raymond chandler": "Mystery",
+  "dashiell hammett": "Mystery",
+  "dorothy l. sayers": "Mystery",
+  "g. k. chesterton": "Mystery",
+  "g.k. chesterton": "Mystery",
+  "edgar allan poe": "Mystery",
+  "p. d. james": "Mystery",
+  "pd james": "Mystery",
+  "ruth rendell": "Mystery",
+  "margery allingham": "Mystery",
+  "ngaio marsh": "Mystery",
+  "josephine tey": "Mystery",
+  "patricia wentworth": "Mystery",
+  "john dickson carr": "Mystery",
+  "ellery queen": "Mystery",
+  "rex stout": "Mystery",
+  "erle stanley gardner": "Mystery",
+  "sue grafton": "Mystery",
+  "sara paretsky": "Mystery",
+  "janet evanovich": "Mystery",
+  "mary higgins clark": "Mystery",
+  "carol higgins clark": "Mystery",
+  "ann cleeves": "Mystery",
+  "colin dexter": "Mystery",
+  "reginald hill": "Mystery",
+  "caroline graham": "Mystery",
+  "ann granger": "Mystery",
+  "donna leon": "Mystery",
+  "andrea camilleri": "Mystery",
+  "alexander mccall smith": "Mystery",
+  "peter robinson": "Mystery",
+  "peter may": "Mystery",
+  "minette walters": "Mystery",
+  "lawrence block": "Mystery",
+  "robert b. parker": "Mystery",
+  "robert crais": "Mystery",
+  "james lee burke": "Mystery",
+  "val mcdermid": "Thriller",
+  "ian rankin": "Mystery",
+  "henning mankell": "Mystery",
+  "stieg larsson": "Thriller",
+  "jo nesbø": "Thriller",
+  "jo nesbo": "Thriller",
+  "arnaldur indriðason": "Mystery",
+  "arnaldur indridason": "Mystery",
+  "patricia cornwell": "Thriller",
+  "patricia highsmith": "Thriller",
+  "jeffery deaver": "Thriller",
+  "dennis lehane": "Thriller",
+  "michael crichton": "Thriller",
+  "john le carré": "Thriller",
+  "john le carre": "Thriller",
+  "eric ambler": "Thriller",
+  "john buchan": "Thriller",
+  "elmore leonard": "Thriller",
+  "peter james": "Thriller",
+  "simon beckett": "Thriller",
+  "mark billingham": "Thriller",
+  "james ellroy": "Mystery",
+  "john mortimer": "Mystery",
+  "kerry greenwood": "Mystery",
+  "james m. cain": "Mystery",
+  "james m cain": "Mystery",
+  "george v. higgins": "Mystery",
+  "george v higgins": "Mystery",
+  "james hadley chase": "Thriller",
+  "edgar wallace": "Mystery",
+  "james crumley": "Mystery",
+  "loren d. estleman": "Mystery",
+  "bill pronzini": "Mystery",
+  "marcia muller": "Mystery",
+  "linda fairstein": "Thriller",
+  "kathy reichs": "Thriller",
+  "laura lippman": "Mystery",
+  "lisa scottoline": "Thriller",
+  "lisa unger": "Thriller",
+  "simon kernick": "Thriller",
+  "karen rose": "Thriller",
+  "john connolly": "Mystery",
+  "ken bruen": "Mystery",
+  "adrian mckinty": "Mystery",
+  "denise mina": "Mystery",
+  "peter dickinson": "Mystery",
+  "michael dibdin": "Mystery",
+  "anne perry": "Mystery",
+  "ellis peters": "Mystery",
+  "c. j. sansom": "Mystery",
+  "cj sansom": "Mystery",
+  "dorothy b. hughes": "Mystery",
+  "dorothy b hughes": "Mystery",
+  "margaret millar": "Mystery",
+  "georges simenon": "Mystery",
+  "gaston leroux": "Mystery",
+  "mickey spillane": "Mystery",
+  "cornell woolrich": "Mystery",
+  "max allan collins": "Mystery",
+  "donald e. westlake": "Mystery",
+  "donald e westlake": "Mystery",
+  "ross macdonald": "Mystery",
+  "john d. macdonald": "Mystery",
+  "john d macdonald": "Mystery",
+  "joe r. lansdale": "Mystery",
+  "joe r lansdale": "Mystery",
+  "carl hiaasen": "Mystery",
+  "tim dorsey": "Mystery",
+  // Detective fiction (new from detective fiction list, not already covered above)
+  "kate atkinson": "Mystery",
+  "m. c. beaton": "Mystery",
+  "m.c. beaton": "Mystery",
+  "rhys bowen": "Mystery",
+  "john burdett": "Mystery",
+  "michel bussi": "Mystery",
+  "cara black": "Mystery",
+  "barbara cleverly": "Mystery",
+  "clive cussler": "Thriller",
+  "lindsey davis": "Mystery",
+  "elizabeth george": "Mystery",
+  "martha grimes": "Mystery",
+  "john harvey": "Mystery",
+  "tony hillerman": "Mystery",
+  "darynda jones": "Mystery",
+  "philip kerr": "Thriller",
+  "laurie r. king": "Mystery",
+  "laurie r king": "Mystery",
+  "camilla läckberg": "Mystery",
+  "camilla lackberg": "Mystery",
+  "peter lovesey": "Mystery",
+  "lisa lutz": "Mystery",
+  "ed mcbain": "Mystery",
+  "walter mosley": "Mystery",
+  "john sandford": "Thriller",
+  "martin cruz smith": "Mystery",
+  "barbara vine": "Mystery",
+  "jacqueline winspear": "Mystery",
+  "martin walker": "Mystery",
+  "stuart woods": "Thriller",
+  "joseph wambaugh": "Mystery",
+  "émile gaboriau": "Mystery",
+  "emile gaboriau": "Mystery",
+  "r. austin freeman": "Mystery",
+  "r austin freeman": "Mystery",
+  // Thriller (new from thriller list, not already covered above)
+  "jeffrey archer": "Thriller",
+  "david baldacci": "Thriller",
+  "linwood barclay": "Thriller",
+  "steve berry": "Thriller",
+  "sandra brown": "Thriller",
+  "dan brown": "Thriller",
+  "tom clancy": "Thriller",
+  "charles cumming": "Thriller",
+  "len deighton": "Thriller",
+  "nelson demille": "Thriller",
+  "barry eisler": "Thriller",
+  "joseph finder": "Thriller",
+  "ian fleming": "Thriller",
+  "vince flynn": "Thriller",
+  "frederick forsyth": "Thriller",
+  "alan furst": "Thriller",
+  "meg gardiner": "Thriller",
+  "tess gerritsen": "Thriller",
+  "robert goddard": "Thriller",
+  "jack higgins": "Thriller",
+  "robert harris": "Thriller",
+  "tami hoag": "Thriller",
+  "gregg hurwitz": "Thriller",
+  "greg iles": "Thriller",
+  "joseph kanon": "Thriller",
+  "alex kava": "Thriller",
+  "robert ludlum": "Thriller",
+  "helen macinnes": "Thriller",
+  "alistair maclean": "Thriller",
+  "brad meltzer": "Thriller",
+  "alex michaelides": "Thriller",
+  "deon meyer": "Thriller",
+  "nicci french": "Thriller",
+  "james rollins": "Thriller",
+  "daniel silva": "Thriller",
+  "olen steinhauer": "Thriller",
+  "brad thor": "Thriller",
+  "scott turow": "Thriller",
+  // Science Fiction
+  "andy weir": "Science Fiction",
+  "isaac asimov": "Science Fiction",
+  "arthur c. clarke": "Science Fiction",
+  "arthur c clarke": "Science Fiction",
+  "philip k. dick": "Science Fiction",
+  "philip k dick": "Science Fiction",
+  "ursula k. le guin": "Science Fiction",
+  "ursula k le guin": "Science Fiction",
+  "n.k. jemisin": "Science Fiction",
+  "nk jemisin": "Science Fiction",
+  "liu cixin": "Science Fiction",
+  "becky chambers": "Science Fiction",
+  "douglas adams": "Science Fiction",
+  "brian aldiss": "Science Fiction",
+  "poul anderson": "Science Fiction",
+  "margaret atwood": "Science Fiction",
+  "j.g. ballard": "Science Fiction",
+  "jg ballard": "Science Fiction",
+  "iain m. banks": "Science Fiction",
+  "iain m banks": "Science Fiction",
+  "stephen baxter": "Science Fiction",
+  "greg bear": "Science Fiction",
+  "gregory benford": "Science Fiction",
+  "david brin": "Science Fiction",
+  "octavia e. butler": "Science Fiction",
+  "octavia butler": "Science Fiction",
+  "orson scott card": "Science Fiction",
+  "c.j. cherryh": "Science Fiction",
+  "cj cherryh": "Science Fiction",
+  "ted chiang": "Science Fiction",
+  "james s.a. corey": "Science Fiction",
+  "james s a corey": "Science Fiction",
+  "ernest cline": "Science Fiction",
+  "samuel r. delany": "Science Fiction",
+  "samuel r delany": "Science Fiction",
+  "cory doctorow": "Science Fiction",
+  "philip jose farmer": "Science Fiction",
+  "william gibson": "Science Fiction",
+  "joe haldeman": "Science Fiction",
+  "robert a. heinlein": "Science Fiction",
+  "robert a heinlein": "Science Fiction",
+  "frank herbert": "Science Fiction",
+  "aldous huxley": "Science Fiction",
+  "ann leckie": "Science Fiction",
+  "larry niven": "Science Fiction",
+  "george orwell": "Science Fiction",
+  "frederik pohl": "Science Fiction",
+  "alastair reynolds": "Science Fiction",
+  "kim stanley robinson": "Science Fiction",
+  "carl sagan": "Science Fiction",
+  "john scalzi": "Science Fiction",
+  "robert silverberg": "Science Fiction",
+  "neal stephenson": "Science Fiction",
+  "jules verne": "Science Fiction",
+  "kurt vonnegut": "Science Fiction",
+  "h.g. wells": "Science Fiction",
+  "hg wells": "Science Fiction",
+  "martha wells": "Science Fiction",
+  "connie willis": "Science Fiction",
+  "john wyndham": "Science Fiction",
+  "timothy zahn": "Science Fiction",
+  "vernor vinge": "Science Fiction",
+  "harlan ellison": "Science Fiction",
+  // Historical Fiction
+  "ken follett": "Historical Fiction",
+  "diana gabaldon": "Historical Fiction",
+  "hilary mantel": "Historical Fiction",
+  "edward rutherfurd": "Historical Fiction",
+  // Literary Fiction
+  "colson whitehead": "Literary Fiction",
+  "toni morrison": "Literary Fiction",
+  "cormac mccarthy": "Literary Fiction",
+  "donna tartt": "Literary Fiction",
+  // Nonfiction
+  "malcolm gladwell": "Nonfiction",
+  "brené brown": "Nonfiction",
+  "brene brown": "Nonfiction",
+  "james clear": "Nonfiction",
+  "michelle obama": "Nonfiction",
+  "trevor noah": "Nonfiction",
+};
+
+function getAuthorGenre(author, userRules = {}, communityMap = {}) {
+  const key = (author || "").toLowerCase().trim();
+  if (!key) return null;
+  return userRules[key] || communityMap[key] || AUTHOR_GENRE_DEFAULTS[key] || null;
+}
 
 // Map Open Library / Google Books subjects to our genres
 function detectGenreFromTitle(title = "") {
@@ -920,11 +1471,12 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const ebookProgressMode = localStorage.getItem("sk_ebook_progress_mode") || "page";
   const audiobookProgressMode = localStorage.getItem("sk_audiobook_progress_mode") || "chapter";
   const progressMode = mediaType === "audiobooks" ? audiobookProgressMode : ebookProgressMode;
-  const modalTheme = SK_THEMES[localStorage.getItem("sk_theme") || "cozy"] || SK_THEMES.cozy;
+  const modalTheme = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const thAccent = modalTheme.accent;
   const [imgError, setImgError] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showAuthorRulePrompt, setShowAuthorRulePrompt] = useState(false);
   const [showProgressPrompt, setShowProgressPrompt] = useState(false);
   const [promptPercent, setPromptPercent] = useState(null);
   const [rating, setRating] = useState(() => { try { return JSON.parse(localStorage.getItem("sk_ratings") || "{}")[isbn] || 0; } catch { return 0; } });
@@ -1100,6 +1652,10 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
         localStorage.setItem("sk_user_books", JSON.stringify(all));
       }
     } catch { /* ignore */ }
+    // If this book was in Fiction and is being moved, offer to save author rule
+    if (book.author && (book.genre === "Fiction" || selectedGenre === "Fiction") && newGenre !== "Fiction") {
+      setShowAuthorRulePrompt(true);
+    }
     if (onBookEdited) onBookEdited({ ...book, genre: newGenre });
   };
 
@@ -1227,7 +1783,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 300,
+        zIndex: 8000,
         background: "rgba(20,14,8,0.72)",
         display: "flex",
         alignItems: "center",
@@ -1652,6 +2208,38 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 </span>
               )}
             </div>
+            {showAuthorRulePrompt && book.author && (
+              <div style={{ background: modalTheme.bgMuted, border: `1px solid ${modalTheme.accent}`, borderRadius: 8, padding: "10px 14px", margin: "8px 0", fontSize: 13, fontFamily: "Georgia, serif", color: modalTheme.text }}>
+                <div style={{ marginBottom: 8 }}>Always put books by <strong>{book.author}</strong> in <strong>{selectedGenre}</strong>?</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => {
+                    try {
+                      const rules = JSON.parse(localStorage.getItem("sk_author_genres") || "{}");
+                      rules[book.author.toLowerCase().trim()] = selectedGenre;
+                      localStorage.setItem("sk_author_genres", JSON.stringify(rules));
+                      // Apply rule to all existing books by this author
+                      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+                      all.forEach(b => {
+                        if (b.author?.toLowerCase().trim() === book.author.toLowerCase().trim()) {
+                          b.genre = selectedGenre;
+                          if (b.isbn) overrides[b.isbn] = selectedGenre;
+                        }
+                      });
+                      localStorage.setItem("sk_user_books", JSON.stringify(all));
+                      localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
+                      if (authUser) syncAuthorGenreVotes(authUser, rules);
+                    } catch { /* ignore */ }
+                    setShowAuthorRulePrompt(false);
+                  }} style={{ padding: "5px 14px", background: modalTheme.accent, color: modalTheme.bg, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                    Yes, always
+                  </button>
+                  <button onClick={() => setShowAuthorRulePrompt(false)} style={{ padding: "5px 14px", background: "none", border: `1px solid ${modalTheme.accent}`, borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: modalTheme.accent }}>
+                    Just this book
+                  </button>
+                </div>
+              </div>
+            )}
 
             {divider}
 
@@ -2337,6 +2925,13 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
   useEffect(() => {
     setAllShelfBooks(loadBooks());
   }, [refreshKey, genre, mediaType]);
+
+  useEffect(() => {
+    const onBooksChanged = () => setRefreshKey(k => k + 1);
+    window.addEventListener("sk-books-changed", onBooksChanged);
+    return () => window.removeEventListener("sk-books-changed", onBooksChanged);
+  }, []);
+
   const sortBooks = (arr) => {
     if (sortBy === "title") return [...arr].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
     if (sortBy === "author") return [...arr].sort((a, b) => {
@@ -2503,7 +3098,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           letterSpacing: "1.5px",
           marginBottom: 6,
         }}>
-          {mediaType === "ebooks" ? "📚" : "🎧"} {genre}
+          {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {genre}
         </h1>
         <p style={{
           fontFamily: '"Palatino Linotype", Palatino, serif',
@@ -2511,7 +3106,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           fontStyle: "italic",
           fontSize: 15,
         }}>
-          {mediaType === "ebooks" ? "📘" : "🎧"} {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : "Audiobooks"} in this collection
+          {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : mediaType === "audiobooks" ? "Audiobooks" : "Physical Books"} in this collection
         </p>
 
         {/* Filter + Sort bar */}
@@ -2686,18 +3281,29 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           );
         })}
 
-        {books.length === 0 && (
-          <p style={{
-            textAlign: "center",
-            fontFamily: '"Palatino Linotype", Palatino, serif',
-            fontStyle: "italic",
-            color: "#6B4E32",
-            fontSize: 16,
-            marginTop: 40,
-          }}>
-            No books found for this filter.
-          </p>
-        )}
+        {books.length === 0 && (() => {
+          const totalUserBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]").length; } catch { return 0; } })();
+          const totalLibrary = Object.values(library).flat().filter(b => b.type === mediaType).length;
+          const hasAnyBooks = totalUserBooks > 0 || totalLibrary > 0;
+          return hasAnyBooks ? (
+            <p style={{ textAlign: "center", fontFamily: '"Palatino Linotype", Palatino, serif', fontStyle: "italic", color: "#6B4E32", fontSize: 16, marginTop: 40 }}>
+              No books found for this filter.
+            </p>
+          ) : (
+            <div style={{ textAlign: "center", padding: "48px 24px", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
+              <h3 style={{ margin: "0 0 10px", fontSize: 20, color: "#3A2A1A" }}>Your library is empty</h3>
+              <p style={{ margin: "0 0 24px", fontSize: 14, color: "#6B4E32", lineHeight: 1.7, maxWidth: 300, marginLeft: "auto", marginRight: "auto" }}>
+                Import your books from Kindle, Goodreads, Audible, and more to get started.
+              </p>
+              <button onClick={onClose} style={{
+                padding: "11px 28px", borderRadius: 10, fontSize: 14,
+                border: "none", background: "#6B4E32", color: "#fff", cursor: "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif',
+              }}>← Go Import Books</button>
+            </div>
+          );
+        })()}
       </div>
 
       </div>{/* end scrollable content */}
@@ -3004,6 +3610,354 @@ function FavoritesShelf({ onClose }) {
   );
 }
 
+function BarcodeScannerModal({ onDetected, onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const videoRef = React.useRef(null);
+  const streamRef = React.useRef(null);
+  const [status, setStatus] = React.useState("starting"); // starting | scanning | unsupported | error
+  const [lastScan, setLastScan] = React.useState("");
+  const detectorRef = React.useRef(null);
+  const scanningRef = React.useRef(true);
+
+  React.useEffect(() => {
+    if (!("BarcodeDetector" in window)) {
+      setStatus("unsupported");
+      return;
+    }
+    detectorRef.current = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then(stream => {
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+          setStatus("scanning");
+          scanLoop();
+        }
+      })
+      .catch(() => setStatus("error"));
+
+    async function scanLoop() {
+      if (!scanningRef.current) return;
+      const video = videoRef.current;
+      if (!video || video.readyState < 2) { requestAnimationFrame(scanLoop); return; }
+      try {
+        const barcodes = await detectorRef.current.detect(video);
+        for (const b of barcodes) {
+          const raw = b.rawValue.replace(/[^0-9]/g, "");
+          if ((raw.length === 13 || raw.length === 10) && raw !== lastScan) {
+            setLastScan(raw);
+            scanningRef.current = false;
+            onDetected(raw);
+            return;
+          }
+        }
+      } catch {}
+      if (scanningRef.current) requestAnimationFrame(scanLoop);
+    }
+
+    return () => {
+      scanningRef.current = false;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  const close = () => {
+    scanningRef.current = false;
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 9999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "relative", width: "100%", maxWidth: 420, padding: "0 16px" }}>
+        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, fontWeight: 700, color: "#fff", textAlign: "center", marginBottom: 16 }}>
+          📷 Scan Book Barcode
+        </div>
+
+        {status === "unsupported" && (
+          <div style={{ background: "#fff8ee", borderRadius: 12, padding: 20, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 14, color: "#5C3A1E" }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>😕</div>
+            <strong>Barcode scanning isn't supported on this browser.</strong>
+            <div style={{ marginTop: 8, color: "#8B5E3C" }}>Try Chrome on Android or Safari on iOS 17+. You can also search by title instead.</div>
+          </div>
+        )}
+
+        {status === "error" && (
+          <div style={{ background: "#fff8ee", borderRadius: 12, padding: 20, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 14, color: "#5C3A1E" }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>📵</div>
+            <strong>Camera access denied.</strong>
+            <div style={{ marginTop: 8, color: "#8B5E3C" }}>Allow camera access in your browser settings and try again.</div>
+          </div>
+        )}
+
+        {(status === "starting" || status === "scanning") && (
+          <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#000" }}>
+            <video ref={videoRef} playsInline muted style={{ width: "100%", display: "block", maxHeight: 360, objectFit: "cover" }} />
+            {/* scanning overlay */}
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <div style={{ width: "75%", height: 80, border: "2px solid rgba(255,200,80,0.9)", borderRadius: 8, boxShadow: "0 0 0 2000px rgba(0,0,0,0.35)" }} />
+            </div>
+            {status === "scanning" && (
+              <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 13, color: "rgba(255,255,255,0.85)" }}>
+                Point the barcode at the yellow box
+              </div>
+            )}
+          </div>
+        )}
+
+        <button onClick={close} style={{ marginTop: 20, width: "100%", padding: "12px 0", background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 10, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700 }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddToLibraryModal({ onClose, th }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [allResults, setAllResults] = useState([]);
+  const [visibleCount, setVisibleCount] = useState(15);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [mediaType, setMediaType] = useState("ebooks");
+  const [genre, setGenre] = useState("");
+  const [status, setStatus] = useState("unread");
+  const [msg, setMsg] = useState("");
+  const [added, setAdded] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const inputRef = useRef(null);
+  const debounceRef = useRef(null);
+  const activeQuery = useRef("");
+
+  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 100); }, []);
+
+  const thm = th || SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+
+  const search = async (q) => {
+    if (!q.trim() || q.trim().length < 2) { setResults([]); setSearching(false); return; }
+    activeQuery.current = q;
+    setSearching(true);
+    const lower = q.toLowerCase();
+    const localBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const localMatches = localBooks.filter(b =>
+      (b.title || "").toLowerCase().includes(lower) || (b.author || "").toLowerCase().includes(lower)
+    ).map(b => ({
+      title: b.title,
+      author: b.author || "",
+      isbn: b.isbn || "",
+      cover: b.cover || b.coverUrl || null,
+      coverUrl: b.cover || b.coverUrl || null,
+      description: b.description || "",
+      genre: b.genre || "",
+      _fromLocal: true,
+    }));
+    setVisibleCount(15);
+    if (localMatches.length > 0) { setAllResults(localMatches); setResults(localMatches.slice(0, 15)); }
+    try {
+      const gResults = await fetchBookSearch(q);
+      if (activeQuery.current !== q) return;
+      const seen = new Set(localMatches.map(b => b.title?.toLowerCase()));
+      const external = gResults.filter(b => !seen.has((b.title || "").toLowerCase()));
+      const localCapped = localMatches.slice(0, 5);
+      const merged = [...localCapped, ...external];
+      setAllResults(merged);
+      setResults(merged.slice(0, 15));
+    } catch {
+      if (activeQuery.current === q) { setAllResults(localMatches); setResults(localMatches.slice(0, 15)); }
+    } finally {
+      if (activeQuery.current === q) setSearching(false);
+    }
+  };
+
+  const handleAdd = () => {
+    if (!selected) return;
+    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const already = userBooks.some(b => (b.isbn && b.isbn === selected.isbn) || b.title === selected.title);
+    if (already) { setMsg("This book is already in your library!"); return; }
+    const isAudio = mediaType === "audiobooks";
+    userBooks.push({
+      ...selected,
+      type: mediaType,
+      mediaType: isAudio ? "audiobook" : mediaType === "physical" ? "physical" : "ebook",
+      genre: genre || selected.genre || "Fiction",
+      status,
+      addedAt: Date.now(),
+    });
+    localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+    window.dispatchEvent(new CustomEvent("sk-books-changed"));
+    setAdded(true);
+    setMsg(`"${selected.title}" added to your library!`);
+    setTimeout(() => onClose(), 1800);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 700, background: "rgba(20,10,4,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, boxSizing: "border-box", overflow: "hidden" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: thm.bg, borderRadius: 16, width: "min(420px, calc(100vw - 32px))", maxHeight: "90vh", overflowY: "auto", overflowX: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.5)", fontFamily: '"Palatino Linotype", Palatino, serif', flexShrink: 0 }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ padding: "20px 20px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0, fontSize: 18, color: thm.text }}>📖 Add Book to Library</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: thm.textSoft, cursor: "pointer" }}>✕</button>
+        </div>
+
+        <div style={{ padding: 20, boxSizing: "border-box", width: "100%" }}>
+          {!selected ? (
+            <>
+              {/* Search */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  value={query}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setQuery(val);
+                    clearTimeout(debounceRef.current);
+                    debounceRef.current = setTimeout(() => search(val), 500);
+                  }}
+                  placeholder="Search by title or author…"
+                  style={{ flex: 1, minWidth: 0, width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${thm.border}`, background: thm.bgMuted, fontFamily: "Georgia, serif", fontSize: 16, color: thm.text, outline: "none", boxSizing: "border-box" }}
+                />
+                {query
+                  ? <button onClick={() => { setQuery(""); setResults([]); }} style={{ background: "none", border: "none", color: thm.textSoft, fontSize: 18, cursor: "pointer" }}>✕</button>
+                  : <button onClick={() => setShowScanner(true)} title="Scan barcode" style={{ background: thm.bgMuted, border: `1px solid ${thm.border}`, borderRadius: 8, padding: "0 12px", color: thm.accent, fontSize: 20, cursor: "pointer", flexShrink: 0 }}>📷</button>
+                }
+              </div>
+
+              {showScanner && (
+                <BarcodeScannerModal
+                  onDetected={async (isbn) => {
+                    setShowScanner(false);
+                    setQuery(isbn);
+                    setSearching(true);
+                    try {
+                      const results = await fetchBookSearch(isbn);
+                      setAllResults(results);
+                      setResults(results.slice(0, 15));
+                    } catch { setResults([]); }
+                    setSearching(false);
+                  }}
+                  onClose={() => setShowScanner(false)}
+                />
+              )}
+
+              {searching && <div style={{ textAlign: "center", fontSize: 12, color: thm.accent, fontStyle: "italic", padding: "8px 0" }}>⟳ Searching online…</div>}
+
+              {results.map((b, i) => (
+                <div key={i} onClick={() => { setSelected(b); setGenre(b.genre || ""); }}
+                  style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${thm.border}`, cursor: "pointer", alignItems: "center" }}>
+                  {b.coverUrl
+                    ? <img src={b.coverUrl} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
+                    : <div style={{ width: 36, height: 52, background: thm.bgMuted, borderRadius: 3, flexShrink: 0 }} />
+                  }
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: thm.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.title}</div>
+                    <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic" }}>{b.author}</div>
+                    {b._fromLocal && <div style={{ fontSize: 10, color: thm.accent, marginTop: 2, fontStyle: "normal" }}>✦ In your library</div>}
+                  </div>
+                </div>
+              ))}
+
+              {allResults.length > results.length && (
+                <button onClick={() => {
+                  const next = results.length + 15;
+                  setResults(allResults.slice(0, next));
+                }} style={{ width: "100%", padding: "10px", marginTop: 8, borderRadius: 8, border: `1px solid ${thm.border}`, background: "transparent", color: thm.textSoft, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                  Show more results ({allResults.length - results.length} remaining)
+                </button>
+              )}
+
+              {/* Manual entry if no results */}
+              {query.length > 1 && results.length === 0 && !searching && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic", marginBottom: 10, textAlign: "center" }}>Can't find it? Add it manually:</div>
+                  <button onClick={() => setSelected({ title: query, author: "", coverUrl: null, isbn: "", genre: "" })}
+                    style={{ width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${thm.accent}`, background: "transparent", color: thm.accent, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+                    + Add "{query}" manually
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Selected book confirmation */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 20, padding: 12, background: thm.bgMuted, borderRadius: 10 }}>
+                {selected.coverUrl
+                  ? <img src={selected.coverUrl} alt="" style={{ width: 48, height: 68, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                  : <div style={{ width: 48, height: 68, background: thm.border, borderRadius: 4, flexShrink: 0 }} />
+                }
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: thm.text }}>{selected.title}</div>
+                  <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic" }}>{selected.author}</div>
+                  <button onClick={() => { setSelected(null); setMsg(""); setAdded(false); }} style={{ marginTop: 6, background: "none", border: "none", color: thm.accent, fontSize: 11, cursor: "pointer", padding: 0, fontFamily: "Georgia, serif" }}>← Change book</button>
+                </div>
+              </div>
+
+              {/* Format */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: thm.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audio" }, { id: "physical", label: "📚 Physical" }].map(opt => (
+                  <button key={opt.id} onClick={() => setMediaType(opt.id)} style={{
+                    flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                    fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                    background: mediaType === opt.id ? thm.accent : thm.bgMuted,
+                    color: mediaType === opt.id ? thm.bg : thm.text,
+                    border: `1px solid ${mediaType === opt.id ? thm.accent : thm.border}`,
+                  }}>{opt.label}</button>
+                ))}
+              </div>
+
+              {/* Genre */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: thm.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Genre</div>
+              <select value={genre} onChange={e => setGenre(e.target.value)} style={{
+                width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${thm.border}`,
+                background: thm.bgMuted, fontSize: 13, fontFamily: "Georgia, serif", color: thm.text, outline: "none", marginBottom: 16,
+              }}>
+                <option value="">— Select a genre —</option>
+                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+
+              {/* Reading status */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: thm.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Reading Status</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                {[{ id: "unread", label: "📖 Want to Read" }, { id: "reading", label: "📚 Reading" }, { id: "finished", label: "✅ Finished" }].map(opt => (
+                  <button key={opt.id} onClick={() => setStatus(opt.id)} style={{
+                    flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, cursor: "pointer",
+                    fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                    background: status === opt.id ? thm.accent : thm.bgMuted,
+                    color: status === opt.id ? thm.bg : thm.text,
+                    border: `1px solid ${status === opt.id ? thm.accent : thm.border}`,
+                  }}>{opt.label}</button>
+                ))}
+              </div>
+
+              {msg && <div style={{ textAlign: "center", fontSize: 13, color: added ? "#4a7a4a" : "#8B3A2A", marginBottom: 12, fontStyle: "italic" }}>{msg}</div>}
+
+              <button onClick={handleAdd} disabled={added || !genre} style={{
+                width: "100%", padding: "12px", borderRadius: 10, border: "none",
+                background: added ? "#4a7a4a" : (!genre ? thm.border : thm.accent),
+                color: thm.bg, cursor: added || !genre ? "default" : "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700,
+              }}>
+                {added ? "✅ Added!" : !genre ? "Select a genre first" : "Add to My Library"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TBRShelf({ onClose }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const [tbrBooks, setTbrBooks] = useState(() => {
@@ -3017,11 +3971,14 @@ function TBRShelf({ onClose }) {
   const [manualTitle, setManualTitle] = useState("");
   const [manualAuthor, setManualAuthor] = useState("");
   const [showManual, setShowManual] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const [msg, setMsg] = useState("");
   const [moveTarget, setMoveTarget] = useState(null); // { book, index }
   const [moveMediaType, setMoveMediaType] = useState("ebooks");
+  const [moveGenre, setMoveGenre] = useState("");
   const coverUploadRef = useRef(null);
   const scrollRef = useRef(null);
+  const tbrDebounceRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
 
   const saveTbr = (books) => {
@@ -3052,12 +4009,14 @@ function TBRShelf({ onClose }) {
       userBooks.push({
         ...book,
         type: moveMediaType,
-        mediaType: isAudio ? "audiobook" : "ebook",
+        mediaType: isAudio ? "audiobook" : moveMediaType === "physical" ? "physical" : "ebook",
         platform: platformId,
+        genre: moveGenre || book.genre || "Fiction",
         status: "unread",
         addedAt: Date.now(),
       });
       localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+      window.dispatchEvent(new CustomEvent("sk-books-changed"));
     }
     removeBook(index);
     setMoveTarget(null);
@@ -3068,71 +4027,28 @@ function TBRShelf({ onClose }) {
     if (!q.trim()) { setSearchResults([]); return; }
     setSearching(true);
 
-    // Search local cache first
+    // Search local library first for instant results
     const lower = q.toLowerCase();
     const localHits = [];
-    Object.values(library).forEach(genreBooks => {
-      genreBooks.forEach(b => {
-        if ((b.title?.toLowerCase().includes(lower) || b.author?.toLowerCase().includes(lower)) &&
-            !localHits.some(h => h.isbn === b.isbn && h.title === b.title)) {
-          localHits.push(b);
-        }
-      });
-    });
     const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
-    userBooks.forEach(b => {
+    [...Object.values(library).flat(), ...userBooks].forEach(b => {
       if ((b.title?.toLowerCase().includes(lower) || b.author?.toLowerCase().includes(lower)) &&
-          !localHits.some(h => h.isbn === b.isbn && h.title === b.title)) {
-        localHits.push(b);
-      }
+          !localHits.some(h => h.title === b.title)) localHits.push(b);
     });
-
     if (localHits.length >= 5) {
       setSearchResults(localHits.slice(0, 10));
       setSearching(false);
       return;
     }
 
-    // Fetch Google Books and Open Library in parallel
-    const gKey = localStorage.getItem("sk_google_api_key") || "";
-    const keySuffix = gKey ? `&key=${gKey}` : "";
-
-    const [gData, olData] = await Promise.allSettled([
-      fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=10&langRestrict=en${keySuffix}`).then(r => r.json()),
-      fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=10&fields=title,author_name,isbn,cover_i`).then(r => r.json()),
-    ]);
-
-    const gResults = gData.status === "fulfilled"
-      ? (gData.value.items || []).map(item => ({
-          title: item.volumeInfo?.title || "Unknown",
-          author: (item.volumeInfo?.authors || []).join(", "),
-          isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
-          cover: item.volumeInfo?.imageLinks?.thumbnail?.replace("http:", "https:") || null,
-          description: item.volumeInfo?.description || "",
-          source: "Google Books",
-        }))
-      : [];
-
-    const olResults = olData.status === "fulfilled"
-      ? (olData.value.docs || []).map(doc => ({
-          title: doc.title || "Unknown",
-          author: (doc.author_name || []).join(", "),
-          isbn: (doc.isbn || [])[0] || "",
-          cover: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : null,
-          source: "Open Library",
-        }))
-      : [];
-
-    // Merge: local first, then Google Books, then Open Library — deduplicate by title
+    // Fetch from Google Books (cached)
+    const gResults = await fetchBookSearch(q);
     const seen = new Set(localHits.map(b => b.title.toLowerCase()));
     const merged = [...localHits];
-    for (const b of [...gResults, ...olResults]) {
-      if (!seen.has(b.title.toLowerCase())) {
-        seen.add(b.title.toLowerCase());
-        merged.push(b);
-      }
+    for (const b of gResults) {
+      if (!seen.has(b.title.toLowerCase())) { seen.add(b.title.toLowerCase()); merged.push(b); }
     }
-    setSearchResults(merged.slice(0, 15));
+    setSearchResults(merged.slice(0, 12));
     setSearching(false);
   };
 
@@ -3163,25 +4079,24 @@ function TBRShelf({ onClose }) {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 200,
+      position: "fixed", inset: 0, zIndex: 600,
       backgroundColor: "#F8F1E4",
       backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
       backgroundSize: "cover", backgroundPosition: "center",
     }}>
       <button onClick={onClose} style={{
-        position: "absolute", top: 56, left: 20,
-        padding: "8px 18px", borderRadius: "50px", border: "1px solid #8B5E3C",
+        position: "fixed", top: 16, left: 16,
+        padding: "10px 18px", borderRadius: "50px", border: "1px solid #8B5E3C",
         cursor: "pointer",
         background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
         color: "#3A2A1A",
         fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
-        fontWeight: 700, fontStyle: "italic", fontSize: 15, letterSpacing: "0.5px",
-        boxShadow: "0 2px 6px rgba(0,0,0,0.12)", zIndex: 201,
-        opacity: atTop ? 1 : 0, pointerEvents: atTop ? "auto" : "none", transition: "opacity 0.25s ease",
-      }}>← Return to Reading Nook</button>
+        fontWeight: 700, fontStyle: "italic", fontSize: 14, letterSpacing: "0.5px",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.12)", zIndex: 601,
+      }}>← Back</button>
 
       <button onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })} style={{
-        position: "fixed", bottom: 32, right: 20, zIndex: 202,
+        position: "fixed", bottom: 32, right: 20, zIndex: 602,
         background: "#8B5E3C", border: "none", borderRadius: "50%", width: 40, height: 40,
         color: "#fff", fontSize: 18, cursor: "pointer",
         opacity: atTop ? 0 : 1, pointerEvents: atTop ? "none" : "auto", transition: "opacity 0.25s ease",
@@ -3189,7 +4104,7 @@ function TBRShelf({ onClose }) {
       }}>↑</button>
 
       <div ref={scrollRef} onScroll={e => setAtTop(e.currentTarget.scrollTop < 40)}
-        style={{ height: "100%", overflowY: "auto", paddingTop: 100, paddingBottom: 60 }}>
+        style={{ height: "100%", overflowY: "auto", paddingTop: 70, paddingBottom: 60 }}>
 
         <h1 style={{
           textAlign: "center", fontFamily: '"Baskerville", "Book Antiqua", Georgia, serif',
@@ -3200,13 +4115,17 @@ function TBRShelf({ onClose }) {
         </p>
 
         {/* Add buttons */}
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 20, paddingInline: 20 }}>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 20, paddingInline: 20, flexWrap: "wrap" }}>
           <button onClick={() => { setShowSearch(v => !v); setShowManual(false); }}
-            style={{ flex: 1, maxWidth: 180, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: showSearch ? "#8B5E3C" : "rgba(255,255,255,0.6)", color: showSearch ? "#fff" : "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+            style={{ flex: 1, minWidth: 130, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: showSearch ? "#8B5E3C" : "rgba(255,255,255,0.6)", color: showSearch ? "#fff" : "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
             🔍 Search Books
           </button>
+          <button onClick={() => setShowScanner(true)}
+            style={{ flex: 1, minWidth: 130, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: "rgba(255,255,255,0.6)", color: "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+            📷 Scan Barcode
+          </button>
           <button onClick={() => { setShowManual(v => !v); setShowSearch(false); setUploadCover(null); setManualTitle(""); setManualAuthor(""); }}
-            style={{ flex: 1, maxWidth: 180, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: showManual ? "#8B5E3C" : "rgba(255,255,255,0.6)", color: showManual ? "#fff" : "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+            style={{ flex: 1, minWidth: 130, padding: "10px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: showManual ? "#8B5E3C" : "rgba(255,255,255,0.6)", color: showManual ? "#fff" : "#3A2A1A", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
             ✏️ Add Manually
           </button>
         </div>
@@ -3218,7 +4137,7 @@ function TBRShelf({ onClose }) {
           <div style={{ marginInline: 20, marginBottom: 20, background: "rgba(255,255,255,0.75)", borderRadius: 12, padding: 16, backdropFilter: "blur(4px)" }}>
             <input
               value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); searchBooks(e.target.value); }}
+              onChange={e => { const v = e.target.value; setSearchQuery(v); clearTimeout(tbrDebounceRef.current); tbrDebounceRef.current = setTimeout(() => searchBooks(v), 300); }}
               placeholder="Search by title or author..."
               style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 14, fontFamily: "Georgia, serif", outline: "none" }}
             />
@@ -3293,7 +4212,7 @@ function TBRShelf({ onClose }) {
                         }
                         {/* Action buttons */}
                         <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-                          <button onClick={() => { setMoveTarget({ book, index: idx }); setMoveMediaType("ebooks"); }} title="Move to library"
+                          <button onClick={() => { setMoveTarget({ book, index: idx }); setMoveMediaType("ebooks"); setMoveGenre(""); }} title="Move to library"
                             style={{ flex: 1, padding: "4px 0", borderRadius: 4, background: "#8B5E3C", border: "none", color: "#fff", fontSize: 9, cursor: "pointer", fontFamily: "Georgia, serif" }}>
                             + Library
                           </button>
@@ -3318,6 +4237,21 @@ function TBRShelf({ onClose }) {
         )}
       </div>
 
+      {/* Barcode scanner */}
+      {showScanner && (
+        <BarcodeScannerModal
+          onDetected={async (isbn) => {
+            setShowScanner(false);
+            setShowSearch(true);
+            setMoveMediaType("physical");
+            setMsg(`📷 Barcode scanned! Looking up ISBN ${isbn}…`);
+            await searchBooks(`isbn:${isbn}`);
+            setMsg("");
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
+
       {/* Move to Library modal */}
       {moveTarget && (
         <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -3333,7 +4267,7 @@ function TBRShelf({ onClose }) {
             {/* eBook or Audiobook */}
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {[{ id: "ebooks", label: "📖 eBook" }, { id: "audiobooks", label: "🎧 Audiobook" }].map(opt => (
+              {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audiobook" }, { id: "physical", label: "📚 Physical" }].map(opt => (
                 <button key={opt.id} onClick={() => setMoveMediaType(opt.id)} style={{
                   flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, cursor: "pointer",
                   fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
@@ -3344,28 +4278,50 @@ function TBRShelf({ onClose }) {
               ))}
             </div>
 
+            {/* Genre picker */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Genre</div>
+              <select value={moveGenre} onChange={e => setMoveGenre(e.target.value)} style={{
+                width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882",
+                background: "rgba(255,255,255,0.8)", fontSize: 13, fontFamily: "Georgia, serif",
+                color: "#3A2A1A", outline: "none", cursor: "pointer",
+              }}>
+                <option value="">— Auto-detect from book data —</option>
+                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+
             {/* Platform selection */}
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Where did you get it?</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
-              {(moveMediaType === "audiobooks" ? AUDIO_PLATFORMS : EBOOK_PLATFORMS).map(p => (
-                <button key={p.id} onClick={() => confirmMoveToLibrary(p.id)} style={{
+            {moveMediaType !== "physical" && <>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Where did you get it?</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+                {(moveMediaType === "audiobooks" ? AUDIO_PLATFORMS : EBOOK_PLATFORMS).map(p => (
+                  <button key={p.id} onClick={() => confirmMoveToLibrary(p.id)} style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8,
+                    background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
+                    cursor: "pointer", textAlign: "left", fontFamily: '"Palatino Linotype", Palatino, serif',
+                  }}>
+                    <span style={{ fontSize: 20 }}>{p.emoji}</span>
+                    <span style={{ fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>{p.name}</span>
+                  </button>
+                ))}
+                <button onClick={() => confirmMoveToLibrary("other")} style={{
                   display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8,
                   background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
                   cursor: "pointer", textAlign: "left", fontFamily: '"Palatino Linotype", Palatino, serif',
                 }}>
-                  <span style={{ fontSize: 20 }}>{p.emoji}</span>
-                  <span style={{ fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>{p.name}</span>
+                  <span style={{ fontSize: 20 }}>📦</span>
+                  <span style={{ fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>Other</span>
                 </button>
-              ))}
-              <button onClick={() => confirmMoveToLibrary("other")} style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8,
-                background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
-                cursor: "pointer", textAlign: "left", fontFamily: '"Palatino Linotype", Palatino, serif',
-              }}>
-                <span style={{ fontSize: 20 }}>📦</span>
-                <span style={{ fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>Other / Physical</span>
-              </button>
-            </div>
+              </div>
+            </>}
+            {moveMediaType === "physical" && (
+              <button onClick={() => confirmMoveToLibrary("physical")} style={{
+                width: "100%", padding: "12px", borderRadius: 8, marginTop: 4,
+                background: "#8B5E3C", border: "none", color: "#fff",
+                cursor: "pointer", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+              }}>📚 Add to Physical Shelf</button>
+            )}
 
             <button onClick={() => setMoveTarget(null)} style={{
               width: "100%", marginTop: 14, padding: "9px", borderRadius: 8,
@@ -3565,11 +4521,11 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           color: "#3A2A1A",
           textAlign: "center",
           marginBottom: 16,
-        }}>{mediaType === "audiobooks" ? "🎧 My Story So Far" : "📖 My Story So Far"}</h1>
+        }}>{mediaType === "audiobooks" ? "🎧 My Story So Far" : mediaType === "physical" ? "📚 My Story So Far" : "📖 My Story So Far"}</h1>
 
         {/* eBooks / Audiobooks toggle */}
         <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 30 }}>
-          {["ebooks", "audiobooks"].map(t => (
+          {["ebooks", "audiobooks", "physical"].map(t => (
             <button key={t} onClick={() => setMediaType(t)}
               style={{
                 padding: "8px 24px", borderRadius: 20, cursor: "pointer",
@@ -3579,7 +4535,7 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
                 color: mediaType === t ? "#F8F1E4" : "#6B4E32",
                 transition: "all 0.2s",
               }}>
-              {t === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
+              {t === "ebooks" ? "📱 eBooks" : t === "audiobooks" ? "🎧 Audiobooks" : "📚 Physical"}
             </button>
           ))}
         </div>
@@ -3588,11 +4544,11 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, marginBottom: 40 }}>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{finishedBooks.length}</div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Books Listened To" : "📚 Books Read"}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Books Listened To" : mediaType === "physical" ? "📚 Books Read" : "📱 Books Read"}</div>
           </div>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{readingBooks.length}</div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Currently Listening" : "📖 In Progress"}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Currently Listening" : mediaType === "physical" ? "📚 In Progress" : "📱 In Progress"}</div>
           </div>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{favCount}</div>
@@ -3604,11 +4560,11 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           </div>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{totalMinutesThisMonth > 0 ? formatMins(totalMinutesThisMonth) : "—"}</div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 This Month" : "📖 This Month"}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 This Month" : mediaType === "physical" ? "📚 This Month" : "📱 This Month"}</div>
           </div>
           <div style={cardStyle}>
             <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{totalMinutesAllTime > 0 ? formatMins(totalMinutesAllTime) : "—"}</div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Lifetime Listening Time" : "📖 Lifetime Reading Time"}</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? "🎧 Lifetime Listening Time" : mediaType === "physical" ? "📚 Lifetime Reading Time" : "📱 Lifetime Reading Time"}</div>
           </div>
           {mediaType === "ebooks" && (
             <div style={cardStyle}>
@@ -3759,7 +4715,7 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
                     {/* Year total box */}
                     <div style={{ ...cardStyle, display: "inline-flex", flexDirection: "column", alignItems: "center", marginBottom: 16, minWidth: 160 }}>
                       <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{yearTotal}</div>
-                      <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? `🎧 Books Listened To in ${yr}` : `📚 Books Read in ${yr}`}</div>
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? `🎧 Books Listened To in ${yr}` : mediaType === "physical" ? `📚 Books Read in ${yr}` : `📱 Books Read in ${yr}`}</div>
                     </div>
 
                     {/* Monthly boxes */}
@@ -3990,7 +4946,7 @@ function parseCSVLine(line) {
 }
 
 function parseCSV(text) {
-  const lines = text.split('\n').filter(l => l.trim());
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
   const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
   return lines.slice(1).map(line => {
@@ -4087,7 +5043,9 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
           const id10 = vol.industryIdentifiers?.find(i => i.type === "ISBN_10");
           const isbn = (id13 || id10)?.identifier || "";
           const pendingId = `bulk-${i}`;
-          const genre = detectGenre(vol.categories || [], title);
+          const bulkAuthor = (vol.authors || []).join(", ");
+          const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+          const genre = getAuthorGenre(bulkAuthor, authorRules, communityAuthorGenres) || detectGenre(vol.categories || [], title);
           const book = {
             _pendingId: pendingId,
             title: vol.title || title,
@@ -4209,8 +5167,10 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
         const audibleSeries = isAudible ? (row["series"] || "") : "";
         const chirpBlurb = isChirp ? (row["description"] || row["blurb"] || "") : "";
         const bfBlurb = isBookFunnel ? (row["description"] || row["blurb"] || "") : "";
-        const shelfGenre = isGoodreads
-          ? (detectGenreFromGoodreads(shelves, exclusiveShelf) || "Fiction")
+        const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+        const authorGenre = getAuthorGenre(author, authorRules, communityAuthorGenres);
+        const shelfGenre = authorGenre || (isGoodreads
+          ? (detectGenreFromGoodreads(shelves, exclusiveShelf) || detectGenreFromTitle(title) || "Fiction")
           : isApple
             ? (detectGenre([rawGenre], title) || "Fiction")
             : isAudible
@@ -4219,7 +5179,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
                 ? (detectGenre([chirpBlurb, title], title) || "Fiction")
                 : isBookFunnel
                   ? (detectGenre([bfBlurb, title], title) || "Romance")
-                  : (detectGenre([title], title) || "Fiction");
+                  : (detectGenre([title], title) || "Fiction"));
 
         // Status mapping
         let status = null;
@@ -4259,7 +5219,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
       books.forEach(b => { genreMap[b._csvIdx] = b.shelfGenre || "Fiction"; });
       setCsvGenres(genreMap);
 
-      if (!isGoodreads && books.length > 0) {
+      if (books.length > 0) {
         setCsvEnriching(true);
         setCsvEnrichProgress({ done: 0, total: books.length });
         const updatedGenres = { ...genreMap };
@@ -4370,7 +5330,9 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
                   if (!enrichedBooks[i].coverUrl && vol?.imageLinks?.thumbnail)
                     enrichedBooks[i].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://");
                   if (vol?.categories?.length) {
-                    const genre = detectGenre(vol.categories, b.title);
+                    const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+                    const cachedGenre = getAuthorGenre(b.author, authorRules, communityAuthorGenres);
+                    const genre = cachedGenre || detectGenre(vol.categories, b.title);
                     if (genre && genre !== "Fiction") updatedGenres[b._csvIdx] = genre;
                   }
                 }
@@ -4816,7 +5778,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   </div>
                   <label
                     onDragOver={e => { e.preventDefault(); setCsvDragOver(true); }}
-                    onDragLeave={() => setCsvDragOver(false)}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setCsvDragOver(false); }}
                     onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile({ target: { files: [f] } }); }}
                     style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
                     <span style={{ fontSize: 28 }}>📄</span>
@@ -4865,10 +5827,22 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 1 — Open {platform.name}
                   </div>
-                  <a href={platformConfig.url} target="_blank" rel="noopener noreferrer"
-                    style={{ display: "inline-block", padding: "7px 16px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, textDecoration: "none" }}>
-                    🔗 Open {platform.name} →
-                  </a>
+                  {isPWA ? (
+                    <div>
+                      <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", marginBottom: 8, lineHeight: 1.6 }}>
+                        You're in the app — tap <strong>Copy Link</strong> then open it in Safari or Chrome to access {platform.name}.
+                      </div>
+                      <button onClick={() => { navigator.clipboard.writeText(platformConfig.url).then(() => alert("✅ Link copied! Paste it in Safari or Chrome.")); }}
+                        style={{ display: "inline-block", padding: "7px 16px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, border: "none", cursor: "pointer" }}>
+                        📋 Copy {platform.name} Link
+                      </button>
+                    </div>
+                  ) : (
+                    <a href={platformConfig.url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: "inline-block", padding: "7px 16px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, textDecoration: "none" }}>
+                      🔗 Open {platform.name} →
+                    </a>
+                  )}
                 </div>
 
                 {/* Step 2: Run the console script */}
@@ -4876,24 +5850,33 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 2 — Export Your Library
                   </div>
-                  {platform.id === "audible" && (
-                    <div style={{ background: "#FFF8EE", border: "1px solid #C9A96E", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A" }}>
-                      <strong>Option A — Chrome Extension (easiest):</strong> Install the free <em>"Audible Library Exporter"</em> Chrome extension from the Chrome Web Store, then click its icon while on your Audible library page to download a CSV instantly. Skip to Step 3.
-                      <br /><br />
-                      <strong>Option B — Console Script (works in any browser):</strong> Follow the steps below.
+                  {isAdmin ? (<>
+                    {platform.id === "audible" && (
+                      <div style={{ background: "#FFF8EE", border: "1px solid #C9A96E", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A" }}>
+                        <strong>Option A — Chrome Extension (easiest):</strong> Install the free <em>"Audible Library Exporter"</em> Chrome extension from the Chrome Web Store, then click its icon while on your Audible library page to download a CSV instantly. Skip to Step 3.
+                        <br /><br />
+                        <strong>Option B — Console Script (works in any browser):</strong> Follow the steps below.
+                      </div>
+                    )}
+                    <ol style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", margin: "0 0 10px 0", paddingLeft: 18, lineHeight: 2 }}>
+                      <li>Press <strong>F12</strong> (Windows) or <strong>Cmd + Option + J</strong> (Mac) to open DevTools</li>
+                      <li>Click the <strong>Console</strong> tab at the top</li>
+                      <li>Click <strong>Copy Script</strong> below, then paste it into the Console and press <strong>Enter</strong></li>
+                      <li>Wait for it to finish — a CSV file will download automatically</li>
+                      {platform.id === "audible" && <li>The script scrolls through every page of your library automatically — larger libraries take a few minutes</li>}
+                    </ol>
+                    <pre style={{ background: "#2A1A0A", color: "#C9A96E", fontSize: 10, padding: 10, borderRadius: 6, overflowX: "auto", marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflowY: "auto" }}>
+                      {platform.id === "kindle" ? kindleScript : platform.id === "audible" ? audibleScript : platform.id === "bookfunnel" ? bookfunnelScript : chirpScript}
+                    </pre>
+                    <BookmarkletCopyButton code={platform.id === "kindle" ? kindleScript : platform.id === "audible" ? audibleScript : platform.id === "bookfunnel" ? bookfunnelScript : chirpScript} label="Copy Script" isScript />
+                  </>) : (
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", lineHeight: 1.7 }}>
+                      {platform.id === "audible"
+                        ? <>Install the free <strong>"Audible Library Exporter"</strong> Chrome extension from the Chrome Web Store, then click its icon while on your Audible library page to download a CSV. Then upload it in Step 3.</>
+                        : <>Visit {platform.name}, download your library export, and upload the CSV file in Step 3 below.</>
+                      }
                     </div>
                   )}
-                  <ol style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", margin: "0 0 10px 0", paddingLeft: 18, lineHeight: 2 }}>
-                    <li>Press <strong>F12</strong> (Windows) or <strong>Cmd + Option + J</strong> (Mac) to open DevTools</li>
-                    <li>Click the <strong>Console</strong> tab at the top</li>
-                    <li>Click <strong>Copy Script</strong> below, then paste it into the Console and press <strong>Enter</strong></li>
-                    <li>Wait for it to finish — a CSV file will download automatically</li>
-                    {platform.id === "audible" && <li>The script scrolls through every page of your library automatically — larger libraries take a few minutes</li>}
-                  </ol>
-                  <pre style={{ background: "#2A1A0A", color: "#C9A96E", fontSize: 10, padding: 10, borderRadius: 6, overflowX: "auto", marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflowY: "auto" }}>
-                    {platform.id === "kindle" ? kindleScript : platform.id === "audible" ? audibleScript : platform.id === "bookfunnel" ? bookfunnelScript : chirpScript}
-                  </pre>
-                  <BookmarkletCopyButton code={platform.id === "kindle" ? kindleScript : platform.id === "audible" ? audibleScript : platform.id === "bookfunnel" ? bookfunnelScript : chirpScript} label="Copy Script" isScript />
                 </div>
 
                 {/* Step 3: Upload */}
@@ -4903,7 +5886,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   </div>
                   <label
                     onDragOver={e => { e.preventDefault(); setCsvDragOver(true); }}
-                    onDragLeave={() => setCsvDragOver(false)}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setCsvDragOver(false); }}
                     onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile({ target: { files: [f] } }); }}
                     style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
                     <span style={{ fontSize: 28 }}>📄</span>
@@ -4979,7 +5962,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   </div>
                   <label
                     onDragOver={e => { e.preventDefault(); setCsvDragOver(true); }}
-                    onDragLeave={() => setCsvDragOver(false)}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setCsvDragOver(false); }}
                     onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile({ target: { files: [f] } }); }}
                     style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
                     <span style={{ fontSize: 28 }}>📄</span>
@@ -5306,7 +6289,7 @@ function PlatformCard({ platform, connected, onConnect, onDisconnect, onImportCl
   );
 }
 
-const STRIPE_PUBLISHABLE_KEY = "pk_test_51ThDnUAr0payYLN5JLGvjsxTrB9aQwoOGCMPJbmBuzgt3yOThq4qMcqgwwPKFU9AzCGmGkvfJOYgyrGTlFWRci6d00frFemSGG";
+const STRIPE_PUBLISHABLE_KEY = "pk_live_51ThDnUAr0payYLN5haFZlPikNJXl6vQ1QHBKK0oax17Iv1OFteQkre7atkcf9U6ZaWW5l3G2oYPk5t5qBTTLbKgZ00qnBR9Y3I";
 
 const TIERS = [
   {
@@ -5330,6 +6313,7 @@ const TIERS = [
       "Book of the Month pick",
     ],
     locked: [
+      "Physical book shelf",
       "Platform imports",
       "Genre customization",
       "Drag-and-drop reordering",
@@ -5345,16 +6329,25 @@ const TIERS = [
     priceNote: "per month",
     yearlyPrice: "$49.99",
     yearlyNote: "per year — save $9.89",
+    gbpPrice: "£4.99",
+    gbpPriceNote: "per month",
+    gbpYearlyPrice: "£49.99",
+    gbpYearlyNote: "per year — save £9.89",
     color: "#6B8C5E",
     highlight: false,
     stripeLinks: {
       monthly: "https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00",
       yearly:  "https://buy.stripe.com/3cI00ia772Ni5Fw4jXeQM01",
     },
+    stripeLinksGBP: {
+      monthly: "https://buy.stripe.com/8x29AS5QR5Zuc3UdUxeQM06",
+      yearly:  "https://buy.stripe.com/4gM28qfrrdrWgkag2FeQM09",
+    },
     features: [
       "Up to 500 eBooks + 500 Audiobooks",
+      "Physical book shelf",
       "All genre shelves",
-      "eBooks & Audiobooks toggle",
+      "eBooks, Audiobooks & Physical toggle",
       "2 platform imports",
       "Genre drag-and-drop reordering",
       "Reading status tracking",
@@ -5377,14 +6370,23 @@ const TIERS = [
     priceNote: "per month",
     yearlyPrice: "$99.99",
     yearlyNote: "per year — save $19.89",
+    gbpPrice: "£9.99",
+    gbpPriceNote: "per month",
+    gbpYearlyPrice: "£99.99",
+    gbpYearlyNote: "per year — save £19.89",
     color: "#5E6B8C",
     highlight: false,
     stripeLinks: {
       monthly: "https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02",
       yearly:  "https://buy.stripe.com/aFa3cu4MN5Zu6JAdUxeQM03",
     },
+    stripeLinksGBP: {
+      monthly: "https://buy.stripe.com/14AbJ03IJ4Vq5FwcQteQM07",
+      yearly:  "https://buy.stripe.com/4gM5kCcff0Fa6JA17LeQM08",
+    },
     features: [
       "Up to 2,000 books total",
+      "Physical book shelf",
       "All genre shelves",
       "Unlimited platform imports",
       "Full genre customization",
@@ -5405,12 +6407,20 @@ const TIERS = [
     priceNote: "per month",
     yearlyPrice: "$149.99",
     yearlyNote: "per year — save $29.89",
+    gbpPrice: "£14.99",
+    gbpPriceNote: "per month",
+    gbpYearlyPrice: "£149.99",
+    gbpYearlyNote: "per year — save £29.89",
     color: "#8C5E6B",
     highlight: true,
     badge: "Most Popular",
     stripeLinks: {
       monthly: "https://buy.stripe.com/bJe9AS5QRew04BscQteQM04",
       yearly:  "https://buy.stripe.com/4gMeVca7773y6JA7w9eQM05",
+    },
+    stripeLinksGBP: {
+      monthly: "https://buy.stripe.com/eVqaEWbbb0Fafg6dUxeQM0a",
+      yearly:  "https://buy.stripe.com/9B64gy7YZ3Rm0lcbMpeQM0b",
     },
     features: [
       "Unlimited books",
@@ -5419,7 +6429,7 @@ const TIERS = [
       "Priority support",
       "Early access to new community features",
       "Exclusive StoryKeeper badge on profile & posts",
-      "First access to author Q&As & exclusive events",
+      "First access to author Q&As & exclusive events (coming soon)",
     ],
     locked: [],
   },
@@ -5446,6 +6456,14 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
   const [billing, setBilling] = useState("monthly");
   const [hoveredTier, setHoveredTier] = useState(null);
   const [loadingTier, setLoadingTier] = useState(null);
+
+  const isUK = (() => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const lang = navigator.language || "";
+      return tz.startsWith("Europe/London") || lang === "en-GB";
+    } catch { return false; }
+  })();
 
   return (
     <div
@@ -5589,13 +6607,17 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
                     fontSize: 28, fontWeight: 700,
                     color: tier.highlight ? "#C9A96E" : tier.color,
                   }}>
-                    {billing === "yearly" && tier.yearlyPrice ? tier.yearlyPrice : tier.price}
+                    {isUK
+                      ? (billing === "yearly" && tier.gbpYearlyPrice ? tier.gbpYearlyPrice : (tier.gbpPrice || tier.price))
+                      : (billing === "yearly" && tier.yearlyPrice ? tier.yearlyPrice : tier.price)}
                   </span>
                   <span style={{
                     fontSize: 11, fontStyle: "italic", marginLeft: 4,
                     color: tier.highlight ? "rgba(248,241,228,0.7)" : "#8B6A50",
                   }}>
-                    {billing === "yearly" && tier.yearlyNote ? tier.yearlyNote : tier.priceNote}
+                    {isUK
+                      ? (billing === "yearly" && tier.gbpYearlyNote ? tier.gbpYearlyNote : (tier.gbpPriceNote || tier.priceNote))
+                      : (billing === "yearly" && tier.yearlyNote ? tier.yearlyNote : tier.priceNote)}
                   </span>
                 </div>
 
@@ -5608,16 +6630,24 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
 
                 {/* Features */}
                 <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px", fontSize: 12.5 }}>
-                  {tier.features.map(f => (
-                    <li key={f} style={{
-                      display: "flex", gap: 8, alignItems: "flex-start",
-                      marginBottom: 6,
-                      color: tier.highlight ? "#F8F1E4" : "#3A2A1A",
-                    }}>
-                      <span style={{ color: "#6AAE6A", flexShrink: 0, marginTop: 1 }}>✓</span>
-                      {f}
-                    </li>
-                  ))}
+                  {tier.features.map(f => {
+                    const isFuture = f.includes("(coming soon)");
+                    const label = isFuture ? f.replace(" (coming soon)", "") : f;
+                    return (
+                      <li key={f} style={{
+                        display: "flex", gap: 8, alignItems: "flex-start",
+                        marginBottom: 6,
+                        color: isFuture
+                          ? (tier.highlight ? "rgba(248,241,228,0.5)" : "#9A8878")
+                          : (tier.highlight ? "#F8F1E4" : "#3A2A1A"),
+                      }}>
+                        <span style={{ color: isFuture ? "#C9A96E" : "#6AAE6A", flexShrink: 0, marginTop: 1 }}>
+                          {isFuture ? "🕐" : "✓"}
+                        </span>
+                        <span>{label} {isFuture && <em style={{ fontSize: "0.85em", opacity: 0.8 }}>(coming soon)</em>}</span>
+                      </li>
+                    );
+                  })}
                   {tier.locked.map(f => (
                     <li key={f} style={{
                       display: "flex", gap: 8, alignItems: "flex-start",
@@ -5635,7 +6665,9 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
                   disabled={isActive}
                   onClick={() => {
                     if (isActive || !tier.stripeLinks) return;
-                    const link = billing === "yearly" ? tier.stripeLinks.yearly : tier.stripeLinks.monthly;
+                    const gbpLinks = tier.stripeLinksGBP;
+                    const gbpLink = isUK && gbpLinks ? (billing === "yearly" ? gbpLinks.yearly : gbpLinks.monthly) : null;
+                    const link = gbpLink || (billing === "yearly" ? tier.stripeLinks.yearly : tier.stripeLinks.monthly);
                     window.open(link, "_blank");
                   }}
                   style={{
@@ -5672,6 +6704,11 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
         }}>
           Cancel anytime. No hidden fees. Your library data is always yours. 🗝️
         </p>
+        {isUK && (
+          <p style={{ textAlign: "center", fontSize: 11, color: "#8B6A50", marginTop: 4 }}>
+            🇬🇧 Prices shown in GBP. UK VAT may apply at checkout.
+          </p>
+        )}
 
         {/* Secure payment badge */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 }}>
@@ -5683,7 +6720,7 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
   );
 }
 
-function PlatformPage({ onClose, mediaType, th, themeKey }) {
+function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin, isPWA }) {
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
   const [connections, setConnections] = useState(() => {
@@ -5724,18 +6761,14 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   const [apiKeyInput, setApiKeyInput] = useState(() => localStorage.getItem("sk_google_api_key") || "");
   const [isbndbKey, setIsbndbKey] = useState(() => localStorage.getItem("sk_isbndb_key") || "");
   const [isbndbKeyInput, setIsbndbKeyInput] = useState(() => localStorage.getItem("sk_isbndb_key") || "");
-  const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("sk_supabase_url") || "https://elmoftpybhfxqzkrhkwe.supabase.co");
-  const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("sk_supabase_key") || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM");
-  const [supabaseUrlInput, setSupabaseUrlInput] = useState(() => localStorage.getItem("sk_supabase_url") || "https://elmoftpybhfxqzkrhkwe.supabase.co");
-  const [supabaseKeyInput, setSupabaseKeyInput] = useState(() => localStorage.getItem("sk_supabase_key") || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM");
+  const [supabaseUrl] = useState(SUPABASE_URL);
+  const [supabaseKey] = useState(SUPABASE_ANON_KEY);
 
   useEffect(() => {
     localStorage.setItem("sk_connections", JSON.stringify(connections));
   }, [connections]);
 
   useEffect(() => {
-    if (!localStorage.getItem("sk_supabase_url")) localStorage.setItem("sk_supabase_url", "https://elmoftpybhfxqzkrhkwe.supabase.co");
-    if (!localStorage.getItem("sk_supabase_key")) localStorage.setItem("sk_supabase_key", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM");
     // Cleanup: strip LibraryThing placeholder descriptions
     if (!localStorage.getItem("sk_lt_desc_cleaned_v2")) {
       try {
@@ -5766,7 +6799,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
     // Clean up statuses, favorites, progress, dates for removed books
     if (removed.length > 0) {
       const removedIsbns = new Set(removed.map(b => b.isbn).filter(Boolean));
-      ["ebooks", "audiobooks"].forEach(mt => {
+      ["ebooks", "audiobooks", "physical"].forEach(mt => {
         ["sk_favorites", "sk_statuses", "sk_progress", "sk_dates"].forEach(key => {
           const stored = JSON.parse(localStorage.getItem(`${key}_${mt}`) || "{}");
           removedIsbns.forEach(isbn => { delete stored[isbn]; });
@@ -5891,10 +6924,19 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
     let enriched = 0;
     setEnrichProgress({ done: 0, total: needsEnrich.length, current: "", enriched: 0 });
 
+    const enrichAuthorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+
     for (const book of needsEnrich) {
       if (enrichStopRef.current) break;
       try {
         const idx = userBooks.findIndex(b => b === book);
+
+        // Check author map before hitting any API
+        const cachedAuthorGenre = getAuthorGenre(book.author, enrichAuthorRules, communityAuthorGenres);
+        if (cachedAuthorGenre && (!userBooks[idx].genre || userBooks[idx].genre === "Fiction")) {
+          userBooks[idx].genre = cachedAuthorGenre;
+        }
+
         const cleaned = cleanTitle(book.title);
         const normAuthor = normalizeAuthor(book.author);
 
@@ -6119,9 +7161,18 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
     let changed = 0;
     setRedetectProgress({ done: 0, total: userBooks.length, changed: 0, current: "" });
 
+    const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
     for (let i = 0; i < userBooks.length; i++) {
       if (redetectStopRef.current) break;
       const book = userBooks[i];
+      // Apply author rule first before hitting any API
+      const authorGenreHit = getAuthorGenre(book.author, authorRules, communityAuthorGenres);
+      if (authorGenreHit && userBooks[i].genre !== authorGenreHit) {
+        userBooks[i].genre = authorGenreHit;
+        changed++;
+        setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
+        continue;
+      }
       try {
         const cleaned = cleanTitle(book.title);
         const normAuthor = normalizeAuthor(book.author);
@@ -6291,6 +7342,8 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
               Fill in missing covers, authors, descriptions, and genres for books imported via CSV.
             </div>
 
+            {/* API Keys — admin only */}
+            {isAdmin && (<>
             {/* Google API Key */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: th.text, marginBottom: 3 }}>
@@ -6342,48 +7395,8 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
                 {isbndbKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
               </div>
             </div>
+            </>)}
 
-            {/* Community Cache (Supabase) */}
-            <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
-              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: th.text, marginBottom: 6 }}>
-                🌐 Community Book Cache
-              </div>
-              <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: th.textSoft, marginBottom: 8 }}>
-                Shared database — enriched books are contributed back so all users benefit.
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <input
-                  type="text"
-                  placeholder="Supabase Project URL"
-                  value={supabaseUrlInput}
-                  onChange={e => setSupabaseUrlInput(e.target.value)}
-                  style={{ padding: "4px 8px", fontFamily: "Georgia, serif", fontSize: 11, border: `1px solid ${th.border}`, borderRadius: 4, background: th.bgMuted, color: th.text }}
-                />
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="password"
-                    placeholder="Supabase anon key"
-                    value={supabaseKeyInput}
-                    onChange={e => setSupabaseKeyInput(e.target.value)}
-                    style={{ flex: 1, padding: "4px 8px", fontFamily: "Georgia, serif", fontSize: 11, border: `1px solid ${th.border}`, borderRadius: 4, background: th.bgMuted, color: th.text }}
-                  />
-                  <button
-                    onClick={() => {
-                      localStorage.setItem("sk_supabase_url", supabaseUrlInput);
-                      localStorage.setItem("sk_supabase_key", supabaseKeyInput);
-                      setSupabaseUrl(supabaseUrlInput);
-                      setSupabaseKey(supabaseKeyInput);
-                    }}
-                    style={{ padding: "4px 12px", background: th.accent, color: th.bg, border: "none", borderRadius: 4, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
-                  >
-                    Save
-                  </button>
-                </div>
-                {supabaseUrl && supabaseKey && (
-                  <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Community cache connected</span>
-                )}
-              </div>
-            </div>
 
             {/* Baseline count — how many still need enriching */}
             {!enriching && bookCounts.total > 0 && (() => {
@@ -6792,6 +7805,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   console.log('Upload sk_kindle_docs.json back in StoryKeeper.');
 })();`;
 
+          if (!isAdmin) return null;
           return (
             <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 10, padding: "18px 24px", marginBottom: 20 }}>
               <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700, color: th.text, marginBottom: 4 }}>
@@ -6957,6 +7971,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
             reader.readAsText(file);
           };
 
+          if (!isAdmin) return null;
           return (
             <div style={{
               background: th.bgMuted,
@@ -7014,9 +8029,11 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
         {/* StoryGraph Description Scraper */}
         {(() => {
           const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+          const SKIP_GENRES = SKIP_DESC_GENRES.map(g => g.toLowerCase());
           const eligible = allBooks
-            .map((b, i) => ({ isbn: b.isbn, title: b.title, author: b.author, _idx: i }))
-            .filter(b => !allBooks[b._idx].description && (b.isbn || b.title));
+            .map((b, i) => ({ isbn: b.isbn, title: b.title, author: b.author, genre: (b.genre || "").toLowerCase(), _idx: i }))
+            .filter(b => !allBooks[b._idx].description && (b.isbn || b.title))
+            .filter(b => !SKIP_GENRES.some(g => b.genre.includes(g)));
           const total = eligible.length;
 
           const buildSGScript = () => {
@@ -7033,59 +8050,86 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   function extractDesc(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
 
-    // StoryGraph description selectors
-    const selectors = [
-      '[data-book-show-target="description"]',
-      '.book-title-author-and-series ~ div p',
+    // Try og:description meta first — StoryGraph populates this reliably
+    const og = doc.querySelector('meta[property="og:description"]');
+    if (og) {
+      const txt = (og.getAttribute('content') || '').replace(/\\s+/g, ' ').trim();
+      if (txt.length > 30) return txt;
+    }
+
+    // Stimulus description target (book show page)
+    const stimTarget = doc.querySelector('[data-book-show-target="description"]');
+    if (stimTarget) {
+      const txt = stimTarget.textContent.replace(/\\s+/g, ' ').trim();
+      if (txt.length > 30) return txt;
+    }
+
+    // Paragraphs inside common description containers
+    const containers = [
       '.book-description',
       '#book-description',
       '[class*="description"]',
+      '.book-title-author-and-series ~ div',
     ];
-    for (const sel of selectors) {
+    for (const sel of containers) {
       const el = doc.querySelector(sel);
       if (el) {
-        const txt = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+        // Prefer first substantial <p> tag
+        const paras = Array.from(el.querySelectorAll('p'));
+        for (const p of paras) {
+          const txt = p.textContent.replace(/\\s+/g, ' ').trim();
+          if (txt.length > 50) return txt;
+        }
+        const txt = el.textContent.replace(/\\s+/g, ' ').trim();
         if (txt.length > 30) return txt;
       }
     }
 
-    // meta fallback
-    const meta = doc.querySelector('meta[property="og:description"]') || doc.querySelector('meta[name="description"]');
-    if (meta) {
-      const txt = (meta.getAttribute('content') || '').replace(/\\s+/g, ' ').trim();
-      if (txt.length > 30) return txt;
-    }
-    return '';
+    // Last resort: longest paragraph on the page that looks like a description
+    const allP = Array.from(doc.querySelectorAll('main p, article p, .content p'));
+    const best = allP
+      .map(p => p.textContent.replace(/\\s+/g, ' ').trim())
+      .filter(t => t.length > 80)
+      .sort((a, b) => b.length - a.length)[0];
+    return best || '';
   }
 
-  async function fetchBookPage(book) {
-    const queries = [];
-    if (book.title) {
-      const q = book.author ? book.title + ' ' + book.author : book.title;
-      queries.push('https://app.thestorygraph.com/browse?search_term=' + encodeURIComponent(q));
-    }
+  async function getBookDesc(book) {
+    const base = 'https://app.thestorygraph.com';
+    const opts = { credentials: 'include' };
 
-    for (const url of queries) {
+    // 1. Search for the book
+    const q = [book.title, book.author].filter(Boolean).join(' ');
+    let bookPageUrl = null;
+
+    try {
+      const searchRes = await fetch(base + '/browse?search_term=' + encodeURIComponent(q), opts);
+      const searchHtml = await searchRes.text();
+      const searchDoc = new DOMParser().parseFromString(searchHtml, 'text/html');
+
+      // Find result links — exclude nav/profile/shelf links, only match actual book pages
+      const links = Array.from(searchDoc.querySelectorAll('a[href*="/books/"]'));
+      const resultLink = links.find(a => {
+        const h = a.getAttribute('href') || '';
+        // Book pages: /books/<slug> — exclude /books/search, /books/recently-read etc.
+        return /^\\/books\\/[a-z0-9\\-]{5,}$/.test(h) || /\\/books\\/[a-z0-9\\-]{5,}$/.test(h);
+      });
+
+      if (resultLink) {
+        const href = resultLink.getAttribute('href');
+        bookPageUrl = href.startsWith('http') ? href : base + href;
+      }
+    } catch(e) {}
+
+    if (bookPageUrl) {
       try {
-        const res = await fetch(url, { credentials: 'include' });
-        const html = await res.text();
-
-        // Follow first book result link
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const bookLink = doc.querySelector('a[href*="/books/"]');
-        if (bookLink) {
-          const href = bookLink.getAttribute('href');
-          const bookUrl = href.startsWith('http') ? href : 'https://app.thestorygraph.com' + href;
-          const bookRes = await fetch(bookUrl, { credentials: 'include' });
-          const bookHtml = await bookRes.text();
-          const desc = extractDesc(bookHtml);
-          if (desc.length > 30) return desc;
-        }
-
-        const desc = extractDesc(html);
+        const bookRes = await fetch(bookPageUrl, opts);
+        const bookHtml = await bookRes.text();
+        const desc = extractDesc(bookHtml);
         if (desc.length > 30) return desc;
       } catch(e) {}
     }
+
     return '';
   }
 
@@ -7094,18 +8138,19 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
   for (let i = 0; i < BOOKS.length; i++) {
     const book = BOOKS[i];
     try {
-      const desc = await fetchBookPage(book);
+      const desc = await getBookDesc(book);
       if (desc.length > 30) {
         if (book.isbn) results[book.isbn] = desc;
         else results['_idx_' + book._idx] = desc;
         found++;
+        console.log('✅ [' + (i+1) + '/' + BOOKS.length + '] ' + book.title);
       } else {
         failed++;
+        console.log('❌ [' + (i+1) + '/' + BOOKS.length + '] ' + book.title);
       }
     } catch(e) { failed++; }
 
-    if (i % 20 === 0) console.log('[' + (i+1) + '/' + BOOKS.length + '] found: ' + found + ' | failed: ' + failed);
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
@@ -7149,6 +8194,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
             reader.readAsText(file);
           };
 
+          if (!isAdmin) return null;
           return (
             <div style={{
               background: th.bgMuted,
@@ -7466,6 +8512,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
             reader.readAsText(file);
           };
 
+          if (!isAdmin) return null;
           return (
             <div style={{
               background: th.bgMuted,
@@ -7585,6 +8632,75 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
           </button>
         </div>
 
+        {/* Mobile-friendly import section */}
+        <div style={{ marginBottom: 40 }}>
+          {sectionTitle("📱 Import on Mobile")}
+
+          {/* Goodreads — featured mobile option */}
+          <div style={{ background: th.bgMuted, border: `2px solid ${th.accent}`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <span style={{ fontSize: 28 }}>🌸</span>
+              <div>
+                <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700, color: th.text }}>Goodreads — Easiest Mobile Import</div>
+                <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, fontStyle: "italic" }}>Works on phone and tablet. Import your full reading history in seconds.</div>
+              </div>
+            </div>
+            <ol style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.text, margin: "0 0 12px 0", paddingLeft: 20, lineHeight: 2 }}>
+              <li><strong>First:</strong> open <strong>amazon.com</strong> in Safari and make sure you are fully signed in. Then open <strong>goodreads.com</strong> and sign in there too. Do this before anything else to avoid a sign-in loop.</li>
+              <li>On Goodreads, tap the menu icon → <strong>My Books</strong></li>
+              <li>Scroll all the way down to <strong>Import and Export</strong></li>
+              <li>Tap <strong>Export Library</strong> and wait for the export link to appear — <strong>do not leave this page</strong></li>
+              <li><strong>Long press</strong> the export link → tap <strong>Share</strong> → tap <strong>Save to Files</strong> to download the CSV</li>
+              <li>Come back here, tap <strong>Import from Goodreads</strong> below, then select the file from your Files app</li>
+            </ol>
+            <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 12, fontFamily: "Georgia, serif", color: th.textSoft, fontStyle: "italic" }}>
+              💡 If you keep getting sent back to the Amazon sign-in page, sign into Amazon in a separate tab first, then return to Goodreads and try the export again.
+            </div>
+            <button
+              onClick={() => setImportingPlatform(EBOOK_PLATFORMS.find(p => p.id === "goodreads"))}
+              style={{ padding: "10px 22px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+            >
+              🌸 Import from Goodreads
+            </button>
+          </div>
+
+          {/* Desktop-required platforms */}
+          <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 6 }}>
+              🖥️ Kindle, Audible & Chirp — Desktop Required
+            </div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, marginBottom: 14, lineHeight: 1.7 }}>
+              These platforms require a desktop browser to export your library. Do it on your computer, save the CSV file, then upload it here from any device — including your phone.
+            </div>
+            <button
+              onClick={() => {
+                const subject = encodeURIComponent("Import my books to StoryKeeper");
+                const body = encodeURIComponent("Reminder: import my Kindle/Audible library to StoryKeeper.\n\n1. Go to thestorykeeper.co/app on my desktop\n2. Open Platform Connections\n3. Click Import from Kindle or Audible\n4. Follow the steps to export and upload my CSV");
+                window.open(`mailto:?subject=${subject}&body=${body}`);
+              }}
+              style={{ padding: "9px 18px", background: "transparent", color: th.accent, border: `1px solid ${th.accent}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}
+            >
+              📧 Email Me a Reminder
+            </button>
+          </div>
+
+          {/* Manual add */}
+          <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 12, padding: "18px 20px" }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 6 }}>
+              ✏️ Add Books Manually
+            </div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, marginBottom: 14, lineHeight: 1.7 }}>
+              Search for any book by title or author and add it to your library instantly — no export needed.
+            </div>
+            <button
+              onClick={onAddManually || onClose}
+              style={{ padding: "9px 18px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}
+            >
+              🔍 Search for a Book
+            </button>
+          </div>
+        </div>
+
         {/* eBook Platforms */}
         <div style={{ marginBottom: 40 }}>
           {sectionTitle("📚 eBook Platforms")}
@@ -7639,6 +8755,7 @@ function PlatformPage({ onClose, mediaType, th, themeKey }) {
 
             setImportingPlatform(null);
             refreshBookCounts();
+            syncToCloud(authUser);
             const statusCount = newBooks.filter(b => b._status).length;
             alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${statusCount > 0 ? `\n📊 ${statusCount} books imported with reading status (finished/reading).` : ''}`);
           }}
@@ -7800,14 +8917,35 @@ function SearchBar({ mediaType, onSelectBook }) {
   );
 }
 
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+function useDeviceInfo() {
+  const getInfo = () => {
+    const w = window.innerWidth;
+    const ua = navigator.userAgent;
+    const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const isAndroid = /Android/.test(ua);
+    const isPWA = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    const isMobile = w < 768;
+    const isTablet = w >= 768 && w < 1024;
+    const isDesktop = w >= 1024;
+    return { isMobile, isTablet, isDesktop, isPWA, isIOS, isAndroid };
+  };
+  const [info, setInfo] = useState(getInfo);
   useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
+    const handler = () => setInfo(getInfo());
     window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
+    const mq = window.matchMedia("(display-mode: standalone)");
+    mq.addEventListener?.("change", handler);
+    return () => {
+      window.removeEventListener("resize", handler);
+      mq.removeEventListener?.("change", handler);
+    };
   }, []);
-  return isMobile;
+  return info;
+}
+
+function useIsMobile() {
+  const { isMobile, isTablet } = useDeviceInfo();
+  return isMobile || isTablet;
 }
 
 const MOBILE_BOTANICAL_POOL = [
@@ -7859,7 +8997,7 @@ const MOBILE_BOTANICAL_POOL = [
   { label: "Colorful Bouquet",     src: "/botanicals/rpx-16666974.png" },
 ];
 
-function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenSettings, onOpenStats, onOpenProfile, onOpenBookClub, onOpenGroup, autoOpenBook, onAutoOpenDone }) {
+function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenSettings, onOpenStats, onOpenProfile, onOpenBookClub, onOpenGroup, autoOpenBook, onAutoOpenDone, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound }) {
   const [filterQuery, setFilterQuery] = useState("");
   const [sortBy, setSortBy] = useState(() => localStorage.getItem("sk_shelf_sort") || "default");
   const [selectedBook, setSelectedBook] = useState(null);
@@ -7871,43 +9009,6 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
       if (onAutoOpenDone) onAutoOpenDone();
     }
   }, [autoOpenBook]);
-  const [soundOn, setSoundOn] = useState(false);
-  const audioRef = useRef(null);
-  const rainCtxRef = useRef(null);
-  const rainSourceRef = useRef(null);
-
-  const startRain = async () => {
-    if (rainCtxRef.current) return;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    rainCtxRef.current = ctx;
-    const buf = await fetch("/sounds/rain-thunder.ogg").then(r => r.arrayBuffer());
-    const decoded = await ctx.decodeAudioData(buf);
-    const src = ctx.createBufferSource();
-    src.buffer = decoded; src.loop = true;
-    const gain = ctx.createGain(); gain.gain.value = 0.85;
-    src.connect(gain); gain.connect(ctx.destination);
-    src.start(0);
-    rainSourceRef.current = src;
-  };
-
-  const stopRain = () => {
-    try { rainSourceRef.current?.stop(); } catch (_) {}
-    rainCtxRef.current?.close();
-    rainCtxRef.current = null; rainSourceRef.current = null;
-  };
-
-  const toggleSound = () => {
-    if (soundOn) {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current.volume = 0.08; }
-      stopRain();
-      setSoundOn(false);
-    } else {
-      if (audioRef.current) { audioRef.current.volume = 0.08; audioRef.current.play().catch(() => {}); }
-      startRain();
-      setSoundOn(true);
-    }
-  };
-
   const loadMobileBooks = () => {
     const genreOverrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
     const hiddenBooks = (() => { try { return new Set(JSON.parse(localStorage.getItem("sk_hidden_books") || "[]")); } catch { return new Set(); } })();
@@ -7937,6 +9038,12 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   useEffect(() => {
     setAllShelfBooks(loadMobileBooks());
   }, [refreshKey, genre, mediaType]);
+
+  useEffect(() => {
+    const onBooksChanged = () => setRefreshKey(k => k + 1);
+    window.addEventListener("sk-books-changed", onBooksChanged);
+    return () => window.removeEventListener("sk-books-changed", onBooksChanged);
+  }, []);
 
   const sortBooks = (arr) => {
     if (sortBy === "title") return [...arr].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -7981,42 +9088,48 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
     <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", zIndex: 550, overflowX: "hidden" }}>
       {/* Parchment background — separate fixed layer so it never scrolls */}
       <div style={{ position: "fixed", inset: 0, background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover', zIndex: 0, pointerEvents: "none" }} />
-      <audio ref={audioRef} loop src="/sounds/fire.mp3" />
 
       {/* Header */}
       <div style={{
-        flexShrink: 0, padding: "48px 16px 10px", position: "relative", zIndex: 1,
+        flexShrink: 0,
+        paddingTop: isPWA && isIOS ? "calc(env(safe-area-inset-top) + 12px)" : "14px",
+        paddingLeft: isTablet ? 24 : 16, paddingRight: isTablet ? 24 : 16, paddingBottom: 10,
+        position: "relative", zIndex: 1,
         background: "linear-gradient(to bottom, rgba(248,241,228,0.98) 0%, rgba(248,241,228,0.92) 100%)",
         borderBottom: "1px solid rgba(139,94,60,0.3)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        {/* Row 1: Back + genre title */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <button onClick={onClose} style={{
             background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
-            borderRadius: 20, padding: "6px 14px", color: "#5C3A1E", cursor: "pointer",
+            borderRadius: 20, padding: "5px 12px", color: "#5C3A1E", cursor: "pointer",
             fontFamily: "Georgia, serif", fontSize: 13, flexShrink: 0,
           }}>← Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 18, color: "#3A2010", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {mediaType === "ebooks" ? "📚" : "🎧"} {genre}
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 17, color: "#3A2010", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {genre}
             </div>
             <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic" }}>
-              {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : "Audiobooks"}
+              {filterQuery ? `${books.length} of ${allShelfBooks.length}` : books.length} {mediaType === "ebooks" ? "eBooks" : mediaType === "audiobooks" ? "Audiobooks" : "Physical Books"}
             </div>
           </div>
+        </div>
+        {/* Row 2: action buttons */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <button onClick={onToggleMediaType} style={{
             background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
-            borderRadius: 20, padding: "6px 10px", color: "#5C3A1E", cursor: "pointer",
-            fontFamily: "Georgia, serif", fontSize: 12, flexShrink: 0,
-          }}>{mediaType === "ebooks" ? "🎧" : "📚"}</button>
+            borderRadius: 16, padding: "5px 10px", color: "#5C3A1E", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 11, flexShrink: 0,
+          }}>{mediaType === "ebooks" ? "📱 eBooks" : mediaType === "audiobooks" ? "🎧 Audio" : "📚 Physical"}</button>
           <button onClick={onOpenGroup} style={{
             background: "rgba(94,107,140,0.15)", border: "1px solid rgba(94,107,140,0.5)",
-            borderRadius: 20, padding: "6px 10px", color: "#2E3A5C", cursor: "pointer",
-            fontFamily: "Georgia, serif", fontSize: 12, flexShrink: 0,
+            borderRadius: 16, padding: "5px 10px", color: "#2E3A5C", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 11, flexShrink: 0,
           }}>👥 Group</button>
           <button onClick={onOpenBookClub} style={{
             background: "rgba(107,140,94,0.15)", border: "1px solid rgba(107,140,94,0.5)",
-            borderRadius: 20, padding: "6px 10px", color: "#3A5C2E", cursor: "pointer",
-            fontFamily: "Georgia, serif", fontSize: 12, flexShrink: 0,
+            borderRadius: 16, padding: "5px 10px", color: "#3A5C2E", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 11, flexShrink: 0,
           }}>📚 Club</button>
         </div>
 
@@ -8051,14 +9164,14 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
             {filterQuery ? "No books match your search." : "No books in this collection yet."}
           </div>
         ) : (() => {
-          const perRowBooks = mediaType === "audiobooks" ? 3 : 5;
+          const perRowBooks = mediaType === "audiobooks" ? (isTablet ? 4 : 3) : (isTablet ? 7 : 5);
           const rows = [];
           for (let i = 0; i < books.length; i += perRowBooks) rows.push(books.slice(i, i + perRowBooks));
-          const bookGap = mediaType === "audiobooks" ? 6 : 3;
-          const rowMinH = mediaType === "audiobooks" ? 110 : 230;
-          const spineW = mediaType === "audiobooks" ? undefined : 44;
-          const plantW = mediaType === "audiobooks" ? 155 : 220;
-          const plantH = mediaType === "audiobooks" ? 380 : 760;
+          const bookGap = mediaType === "audiobooks" ? (isTablet ? 10 : 6) : (isTablet ? 5 : 3);
+          const rowMinH = mediaType === "audiobooks" ? (isTablet ? 150 : 110) : (isTablet ? 300 : 230);
+          const spineW = mediaType === "audiobooks" ? undefined : (isTablet ? 56 : 44);
+          const plantW = mediaType === "audiobooks" ? (isTablet ? 200 : 155) : (isTablet ? 280 : 220);
+          const plantH = mediaType === "audiobooks" ? (isTablet ? 500 : 380) : (isTablet ? 960 : 760);
 
           return rows.map((row, rowIndex) => {
             const layout = rowIndex % 3;
@@ -8123,7 +9236,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
         position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
         background: "rgba(248,241,228,0.97)", borderTop: "1px solid rgba(139,94,60,0.3)",
         display: "flex", justifyContent: "space-around", alignItems: "center",
-        padding: "10px 0 calc(10px + env(safe-area-inset-bottom))",
+        padding: `${isTablet ? "12px" : "10px"} env(safe-area-inset-right, 0px) calc(${isTablet ? "12px" : "10px"} + env(safe-area-inset-bottom)) env(safe-area-inset-left, 0px)`,
         pointerEvents: "all",
       }}>
         {[
@@ -8138,10 +9251,10 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
               background: "none", border: "none", cursor: "pointer",
               display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
               color: active ? "#8B2020" : "#5C3A1E",
-              fontFamily: "Georgia, serif", fontSize: 10, padding: "4px 8px",
+              fontFamily: "Georgia, serif", fontSize: isTablet ? 13 : 10, padding: "4px 12px",
               WebkitTapHighlightColor: "transparent", touchAction: "manipulation",
             }}>
-            <span style={{ fontSize: 22 }}>{icon}</span>
+            <span style={{ fontSize: isTablet ? 28 : 22 }}>{icon}</span>
             <span>{label}</span>
           </button>
         ))}
@@ -8167,37 +9280,79 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   );
 }
 
-function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile }) {
-  const [soundOn, setSoundOn] = useState(false);
+function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound }) {
   const [pickerGenre, setPickerGenre] = useState(null);
   const [botanicalOverrides, setBotanicalOverrides] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_mobile_botanicals") || "{}"); } catch { return {}; }
   });
+  const [reorderMode, setReorderMode] = useState(false);
+  const [dragIndex, setDragIndex] = useState(null);
+  const dragOverIndexRef = useRef(null);
   const longPressRef = useRef(null);
-  const audioRef = useRef(null);
-  const rainCtxRef = useRef(null);
-  const rainSourceRef = useRef(null);
+  const genreScrollRef = useRef(null);
+  const edgeScrollRef = useRef(null);
+  const [editingGenre, setEditingGenre] = useState(null); // { genre, index } — librarian+
+  const [editingName, setEditingName] = useState("");
+  const [showAddGenre, setShowAddGenre] = useState(false); // reluctant+
+  const [showCustomGenreForm, setShowCustomGenreForm] = useState(false); // librarian+
+  const [customGenreName, setCustomGenreName] = useState("");
+  const [customGenreNames, setCustomGenreNames] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sk_custom_genre_names") || "{}"); } catch { return {}; }
+  });
+  const fileInputRef = useRef(null);
+  const uploadingForGenreRef = useRef(null);
+
+  const canCustomize = ["librarian", "storykeeper"].includes(userTier);
+  const canReorder = ["storyteller", "librarian", "storykeeper"].includes(userTier);
+
+  const saveCustomName = (oldGenre, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldGenre) return;
+    const next = { ...customGenreNames, [oldGenre]: trimmed };
+    setCustomGenreNames(next);
+    localStorage.setItem("sk_custom_genre_names", JSON.stringify(next));
+  };
+
+  const deleteGenre = (genre) => {
+    const next = genreOrder.filter(g => g !== genre);
+    setGenreOrder(next);
+    localStorage.setItem("sk_mobile_genre_order", JSON.stringify(next));
+  };
+
+  const addPresetGenre = (genre) => {
+    const next = [...genreOrder, genre];
+    setGenreOrder(next);
+    localStorage.setItem("sk_mobile_genre_order", JSON.stringify(next));
+    setShowAddGenre(false);
+  };
+
+  const addCustomGenre = () => {
+    const name = customGenreName.trim();
+    if (!name) return;
+    const key = `__custom__${name}`;
+    const next = [...genreOrder, key];
+    setGenreOrder(next);
+    localStorage.setItem("sk_mobile_genre_order", JSON.stringify(next));
+    const names = { ...customGenreNames, [key]: name };
+    setCustomGenreNames(names);
+    localStorage.setItem("sk_custom_genre_names", JSON.stringify(names));
+    setCustomGenreName("");
+    setShowCustomGenreForm(false);
+    setShowAddGenre(false);
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    const genre = uploadingForGenreRef.current;
+    if (!file || !genre) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      saveBotanical(genre, ev.target.result);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
-
-  const startRain = async () => {
-    if (rainCtxRef.current) return;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    rainCtxRef.current = ctx;
-    const buf = await fetch("/sounds/rain-thunder.ogg").then(r => r.arrayBuffer());
-    const decoded = await ctx.decodeAudioData(buf);
-    const src = ctx.createBufferSource();
-    src.buffer = decoded; src.loop = true;
-    const gain = ctx.createGain(); gain.gain.value = 0.85;
-    src.connect(gain); gain.connect(ctx.destination);
-    src.start(0);
-    rainSourceRef.current = src;
-  };
-
-  const stopRain = () => {
-    try { rainSourceRef.current?.stop(); } catch (_) {}
-    rainCtxRef.current?.close();
-    rainCtxRef.current = null; rainSourceRef.current = null;
-  };
 
   const saveBotanical = (genre, src) => {
     const next = { ...botanicalOverrides, [genre]: src };
@@ -8206,10 +9361,108 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   };
 
   const startLongPress = (genre) => {
-    longPressRef.current = setTimeout(() => setPickerGenre(genre), 500);
+    longPressRef.current = setTimeout(() => {
+      if (!reorderMode) setReorderMode(true); // all tiers get manage mode on long press
+    }, 500);
   };
   const cancelLongPress = () => {
     if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+  };
+
+  const handleDragTouchStart = (e, index) => {
+    if (!reorderMode) return;
+    setDragIndex(index);
+    dragOverIndexRef.current = index;
+  };
+  const startEdgeScroll = (clientX) => {
+    if (!genreScrollRef.current) return;
+    const rect = genreScrollRef.current.getBoundingClientRect();
+    const edgeZone = 60;
+    const leftDist = clientX - rect.left;
+    const rightDist = rect.right - clientX;
+    let speed = 0;
+    if (leftDist < edgeZone) speed = -Math.ceil((edgeZone - leftDist) / 10);
+    else if (rightDist < edgeZone) speed = Math.ceil((edgeZone - rightDist) / 10);
+    if (edgeScrollRef.current) { clearInterval(edgeScrollRef.current); edgeScrollRef.current = null; }
+    if (speed !== 0) {
+      edgeScrollRef.current = setInterval(() => {
+        if (genreScrollRef.current) genreScrollRef.current.scrollLeft += speed * 3;
+      }, 16);
+    }
+  };
+  const stopEdgeScroll = () => {
+    if (edgeScrollRef.current) { clearInterval(edgeScrollRef.current); edgeScrollRef.current = null; }
+  };
+
+  const handleDragTouchMove = (e) => {
+    if (!reorderMode || dragIndex === null) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    startEdgeScroll(touch.clientX);
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    const tileEl = el?.closest("[data-genre-index]");
+    if (!tileEl) return;
+    const overIndex = parseInt(tileEl.dataset.genreIndex);
+    if (!isNaN(overIndex) && overIndex !== dragOverIndexRef.current) {
+      dragOverIndexRef.current = overIndex;
+      setGenreOrder(prev => {
+        const next = [...prev];
+        const [moved] = next.splice(dragIndex, 1);
+        next.splice(overIndex, 0, moved);
+        localStorage.setItem("sk_mobile_genre_order", JSON.stringify(next));
+        return next;
+      });
+      setDragIndex(overIndex);
+    }
+  };
+  const handleDragTouchEnd = () => {
+    stopEdgeScroll();
+    setDragIndex(null);
+    dragOverIndexRef.current = null;
+  };
+
+  const mouseDownTimerRef = useRef(null);
+  const mouseDraggingRef = useRef(false);
+
+  const handleMouseDown = (e, index) => {
+    if (reorderMode) {
+      setDragIndex(index);
+      dragOverIndexRef.current = index;
+      mouseDraggingRef.current = true;
+      return;
+    }
+    mouseDownTimerRef.current = setTimeout(() => {
+      setReorderMode(true);
+      setDragIndex(index);
+      dragOverIndexRef.current = index;
+      mouseDraggingRef.current = true;
+    }, 500);
+  };
+  const handleMouseMove = (e) => {
+    if (!mouseDraggingRef.current || dragIndex === null) return;
+    startEdgeScroll(e.clientX);
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const tileEl = el?.closest("[data-genre-index]");
+    if (!tileEl) return;
+    const overIndex = parseInt(tileEl.dataset.genreIndex);
+    if (!isNaN(overIndex) && overIndex !== dragOverIndexRef.current) {
+      dragOverIndexRef.current = overIndex;
+      setGenreOrder(prev => {
+        const next = [...prev];
+        const [moved] = next.splice(dragIndex, 1);
+        next.splice(overIndex, 0, moved);
+        localStorage.setItem("sk_mobile_genre_order", JSON.stringify(next));
+        return next;
+      });
+      setDragIndex(overIndex);
+    }
+  };
+  const handleMouseUp = () => {
+    if (mouseDownTimerRef.current) { clearTimeout(mouseDownTimerRef.current); mouseDownTimerRef.current = null; }
+    stopEdgeScroll();
+    mouseDraggingRef.current = false;
+    setDragIndex(null);
+    dragOverIndexRef.current = null;
   };
 
   const DEFAULT_LEFT = [
@@ -8230,20 +9483,21 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
     { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
   ];
 
-  const allGenres = [...DEFAULT_LEFT, ...DEFAULT_RIGHT];
-  const bookCount = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]").length; } catch { return 0; } })();
-
-  const toggleSound = () => {
-    if (soundOn) {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current.volume = 0.08; }
-      stopRain();
-      setSoundOn(false);
-    } else {
-      if (audioRef.current) { audioRef.current.volume = 0.08; audioRef.current.play().catch(() => {}); }
-      startRain();
-      setSoundOn(true);
-    }
-  };
+  const defaultGenreOrder = [...DEFAULT_LEFT, ...DEFAULT_RIGHT].map(g => g.genre);
+  const [genreOrder, setGenreOrder] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("sk_mobile_genre_order") || "null");
+      if (saved && Array.isArray(saved)) return saved;
+    } catch {}
+    return defaultGenreOrder;
+  });
+  const allGenreMap = Object.fromEntries([...DEFAULT_LEFT, ...DEFAULT_RIGHT].map(g => [g.genre, g.image]));
+  const allGenres = genreOrder.map(g => ({ genre: g, image: allGenreMap[g] || "", label: customGenreNames[g] || g }));
+  const _allBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+  const bookCount = _allBooks.length;
+  const ebookCount = _allBooks.filter(b => b.type === "ebooks" || b.mediaType === "ebook").length;
+  const audiobookCount = _allBooks.filter(b => b.type === "audiobooks" || b.mediaType === "audiobook").length;
+  const physicalCount = _allBooks.filter(b => b.type === "physical" || b.mediaType === "physical").length;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#1A110A", overflow: "hidden" }}>
@@ -8257,32 +9511,39 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 20% 15% at 12% 78%, rgba(0,0,0,0.45) 0%, transparent 100%)", pointerEvents: "none" }} />
       </div>
 
-      <audio ref={audioRef} loop src="/sounds/fire.mp3" />
-
       {/* Floating header */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2, padding: "48px 20px 12px", textAlign: "center" }}>
-        <div style={{ fontFamily: '"Italianno", cursive', fontSize: 52, color: "#F5ECD7", letterSpacing: 2, fontWeight: 400, textShadow: "0 2px 24px rgba(0,0,0,0.95), 0 0 50px rgba(210,150,50,0.35)", lineHeight: 1 }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2, padding: `${isPWA && isIOS ? "calc(env(safe-area-inset-top) + 8px)" : isTablet ? "16px" : "12px"} 20px 8px`, textAlign: "center" }}>
+        <div style={{ fontFamily: '"Italianno", cursive', fontSize: isTablet ? 72 : 52, color: "#F5ECD7", letterSpacing: 2, fontWeight: 400, textShadow: "0 2px 24px rgba(0,0,0,0.95), 0 0 50px rgba(210,150,50,0.35)", lineHeight: 1 }}>
           StoryKeeper
         </div>
-        <div style={{ fontFamily: '"Lora", Georgia, serif', fontSize: 13, color: "#E2CFA8", fontStyle: "italic", marginTop: 4, textShadow: "0 1px 8px rgba(0,0,0,0.95)", letterSpacing: "1px" }}>
+        <div style={{ fontFamily: '"Lora", Georgia, serif', fontSize: isTablet ? 16 : 13, color: "#E2CFA8", fontStyle: "italic", marginTop: 4, textShadow: "0 1px 8px rgba(0,0,0,0.95)", letterSpacing: "1px" }}>
           Read here. Listen here. Live here.
         </div>
-        <div style={{ marginTop: 6, fontFamily: '"Lora", Georgia, serif', fontSize: 11, color: "rgba(200,180,140,0.8)", textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
-          {bookCount.toLocaleString()} books in your library
-        </div>
+        {bookCount > 0 && (
+          <div style={{ marginTop: 6, fontFamily: '"Lora", Georgia, serif', fontSize: 11, color: "rgba(200,180,140,0.8)", textShadow: "0 1px 6px rgba(0,0,0,0.9)", lineHeight: 1.6 }}>
+            <div>{bookCount.toLocaleString()} books in your library</div>
+            <div style={{ fontSize: 10, color: "rgba(200,180,140,0.6)", marginTop: 1 }}>
+              {[
+                ebookCount > 0 && `📱 ${ebookCount.toLocaleString()} eBooks`,
+                audiobookCount > 0 && `🎧 ${audiobookCount.toLocaleString()} Audiobooks`,
+                physicalCount > 0 && `📚 ${physicalCount.toLocaleString()} Physical`,
+              ].filter(Boolean).join("  ·  ")}
+            </div>
+          </div>
+        )}
 
-        {/* eBooks / Audiobooks toggle */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
-          {["ebooks", "audiobooks"].map(t => (
-            <button key={t} onClick={() => { if (mediaType !== t) onToggleMediaType(); }}
+        {/* eBooks / Audiobooks / Physical toggle */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 10 }}>
+          {["ebooks", "audiobooks", ...(userTier !== "reluctant" ? ["physical"] : [])].map(t => (
+            <button key={t} onClick={() => { if (mediaType !== t) { const steps = userTier !== "reluctant" ? ["ebooks","audiobooks","physical"] : ["ebooks","audiobooks"]; let cur = mediaType; while(cur !== t) { onToggleMediaType(); cur = cur === "ebooks" ? "audiobooks" : cur === "audiobooks" ? (userTier !== "reluctant" ? "physical" : "ebooks") : "ebooks"; } } }}
               style={{
-                padding: "7px 20px", borderRadius: 20, border: "1px solid rgba(201,169,110,0.4)", cursor: "pointer",
-                fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700,
+                padding: "4px 10px", borderRadius: 16, border: "1px solid rgba(201,169,110,0.4)", cursor: "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 10, fontWeight: 700,
                 background: mediaType === t ? "rgba(139,94,60,0.85)" : "rgba(10,6,2,0.5)",
                 color: mediaType === t ? "#F8F1E4" : "rgba(248,241,228,0.6)",
                 backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
               }}>
-              {t === "ebooks" ? "📚 eBooks" : "🎧 Audiobooks"}
+              {t === "ebooks" ? "📱 eBooks" : t === "audiobooks" ? "🎧 Audio" : "📚 Physical"}
             </button>
           ))}
         </div>
@@ -8296,48 +9557,88 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
         <div style={{ paddingLeft: 16, marginBottom: 8, fontFamily: "Georgia, serif", fontSize: 11, color: "rgba(201,169,110,0.8)", letterSpacing: 1, textTransform: "uppercase", textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
           Browse by Genre
         </div>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", paddingLeft: 16, paddingRight: 16, paddingBottom: 8 }}>
+        {reorderMode && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingLeft: 16, paddingRight: 16, marginBottom: 6 }}>
+            <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#C9A96E", letterSpacing: 1 }}>
+              {canReorder ? "✦ DRAG TO REORDER" : "✦ MANAGE GENRES"}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowAddGenre(true)} style={{ background: "rgba(60,100,60,0.8)", border: "none", borderRadius: 8, padding: "4px 12px", color: "#F8F1E4", fontSize: 11, fontFamily: "Georgia, serif", cursor: "pointer" }}>+ Add</button>
+              <button onClick={() => setReorderMode(false)} style={{ background: "rgba(139,94,60,0.8)", border: "none", borderRadius: 8, padding: "4px 12px", color: "#F8F1E4", fontSize: 11, fontFamily: "Georgia, serif", cursor: "pointer" }}>Done</button>
+            </div>
+          </div>
+        )}
+        <div ref={genreScrollRef} style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", paddingLeft: 16, paddingRight: 16, paddingBottom: 8 }}
+          onTouchMove={reorderMode ? handleDragTouchMove : undefined}
+          onTouchEnd={reorderMode ? handleDragTouchEnd : undefined}
+          onMouseMove={reorderMode ? handleMouseMove : undefined}
+          onMouseUp={reorderMode ? handleMouseUp : undefined}
+          onMouseLeave={reorderMode ? handleMouseUp : undefined}>
           <div style={{ display: "flex", gap: 10 }}>
-            {allGenres.map(({ genre, image }) => {
+            {allGenres.map(({ genre, image, label }, index) => {
               const img = botanicalOverrides[genre] || image;
+              const isDragging = dragIndex === index;
               return (
-                <div key={genre} style={{ position: "relative", flexShrink: 0 }}>
+                <div key={genre} data-genre-index={index} style={{ position: "relative", flexShrink: 0, transition: reorderMode ? "transform 0.15s" : "none", transform: isDragging ? "scale(1.08)" : "scale(1)", opacity: isDragging ? 0.85 : 1 }}>
                   <button
-                    onClick={() => onGenreClick(genre)}
-                    onTouchStart={() => startLongPress(genre)}
-                    onTouchEnd={cancelLongPress}
-                    onTouchMove={cancelLongPress}
+                    onClick={() => { if (!reorderMode) onGenreClick(genre); }}
+                    onMouseDown={(e) => { if (canReorder) handleMouseDown(e, index); else { mouseDownTimerRef.current = setTimeout(() => setReorderMode(true), 500); } }}
+                    onTouchStart={(e) => { if (reorderMode && canReorder) { handleDragTouchStart(e, index); } else { startLongPress(genre); } }}
+                    onTouchEnd={() => { cancelLongPress(); }}
+                    onTouchMove={(e) => { if (!reorderMode) cancelLongPress(); }}
                     style={{
-                      width: 100, height: 100, border: "1px solid rgba(201,169,110,0.35)", cursor: "pointer", borderRadius: 14,
+                      width: isTablet ? 140 : 100, height: isTablet ? 140 : 100,
+                      border: reorderMode ? "1px solid rgba(201,169,110,0.7)" : "1px solid rgba(201,169,110,0.35)",
+                      cursor: reorderMode && canReorder ? "grab" : "pointer", borderRadius: 14,
                       overflow: "hidden", padding: 0, display: "block",
-                      boxShadow: "0 4px 20px rgba(0,0,0,0.6), 0 0 12px rgba(201,169,110,0.15)",
-                      background: img ? `#3D2510 url(${img}) center/${img.endsWith(".png") ? "contain" : "cover"} no-repeat` : "#3D2510",
+                      boxShadow: isDragging ? "0 8px 30px rgba(0,0,0,0.8), 0 0 20px rgba(201,169,110,0.4)" : "0 4px 20px rgba(0,0,0,0.6), 0 0 12px rgba(201,169,110,0.15)",
+                      background: img ? `#3D2510 url(${img}) center/${img.endsWith(".png") || img.startsWith("data:image/png") ? "contain" : "cover"} no-repeat` : "#3D2510",
                       position: "relative",
+                      touchAction: reorderMode && canReorder ? "none" : "auto",
                     }}>
-                    <div style={{
-                      position: "absolute", inset: 0,
-                      background: "linear-gradient(to top, rgba(10,5,2,0.88) 0%, rgba(10,5,2,0.15) 60%)",
-                    }} />
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(10,5,2,0.88) 0%, rgba(10,5,2,0.15) 60%)" }} />
+                    {reorderMode && canReorder && <div style={{ position: "absolute", top: 6, left: 0, right: 0, textAlign: "center", fontSize: 14, opacity: 0.8 }}>⠿</div>}
                     <div style={{
                       position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 4px 6px",
-                      fontFamily: '"Palatino Linotype", Palatino, Georgia, serif', fontSize: 10, fontWeight: 700,
+                      fontFamily: '"Palatino Linotype", Palatino, Georgia, serif', fontSize: isTablet ? 13 : 10, fontWeight: 700,
                       color: "#F8F1E4", textAlign: "center", textShadow: "0 1px 6px rgba(0,0,0,0.9)",
                     }}>
-                      {genre}
+                      {label}
                     </div>
                   </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); setPickerGenre(genre); }}
-                    title="Change image"
-                    style={{
-                      position: "absolute", top: 4, right: 4, zIndex: 2,
-                      background: "rgba(0,0,0,0.55)", border: "1px solid rgba(201,169,110,0.4)",
-                      borderRadius: "50%", width: 22, height: 22, cursor: "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 11, lineHeight: 1, padding: 0,
-                    }}>
-                    🎨
-                  </button>
+
+                  {/* Delete button — all tiers in reorder mode */}
+                  {reorderMode && (
+                    <button onClick={e => { e.stopPropagation(); deleteGenre(genre); }}
+                      style={{ position: "absolute", top: 4, left: 4, zIndex: 3, background: "rgba(120,20,20,0.85)", border: "none", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, lineHeight: 1, padding: 0, color: "#fff" }}>
+                      ✕
+                    </button>
+                  )}
+
+                  {/* Rename button — librarian+ in reorder mode */}
+                  {reorderMode && canCustomize && (
+                    <button onClick={e => { e.stopPropagation(); setEditingGenre({ genre, index }); setEditingName(label); }}
+                      style={{ position: "absolute", top: 4, right: 4, zIndex: 3, background: "rgba(0,0,0,0.7)", border: "1px solid rgba(201,169,110,0.5)", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, lineHeight: 1, padding: 0, color: "#C9A96E" }}>
+                      ✎
+                    </button>
+                  )}
+
+                  {/* Upload image button — librarian+ in reorder mode */}
+                  {reorderMode && canCustomize && (
+                    <button onClick={e => { e.stopPropagation(); uploadingForGenreRef.current = genre; fileInputRef.current?.click(); }}
+                      style={{ position: "absolute", bottom: 4, right: 4, zIndex: 3, background: "rgba(0,0,0,0.7)", border: "1px solid rgba(201,169,110,0.5)", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, lineHeight: 1, padding: 0 }}>
+                      📷
+                    </button>
+                  )}
+
+                  {/* Botanical picker — librarian+ outside reorder mode */}
+                  {!reorderMode && canCustomize && (
+                    <button onClick={e => { e.stopPropagation(); setPickerGenre(genre); }}
+                      title="Change image"
+                      style={{ position: "absolute", top: 4, right: 4, zIndex: 2, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(201,169,110,0.4)", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, lineHeight: 1, padding: 0 }}>
+                      🎨
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -8345,17 +9646,87 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
         </div>
       </div>
 
+      {/* Hidden file input for image upload */}
+      <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: "none" }} />
+
+      {/* Rename genre modal */}
+      {editingGenre && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+          onClick={() => setEditingGenre(null)}>
+          <div style={{ background: "#2A1A0E", borderRadius: 14, padding: 24, width: "min(320px, 100%)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 16px", fontFamily: "Georgia, serif", color: "#F8F1E4", fontSize: 16 }}>Rename Genre</h3>
+            <input autoFocus value={editingName} onChange={e => setEditingName(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { saveCustomName(editingGenre.genre, editingName); setEditingGenre(null); } if (e.key === "Escape") setEditingGenre(null); }}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(201,169,110,0.4)", background: "#1A0E07", color: "#F8F1E4", fontFamily: "Georgia, serif", fontSize: 15, boxSizing: "border-box", outline: "none" }} />
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={() => setEditingGenre(null)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "1px solid rgba(201,169,110,0.3)", background: "transparent", color: "#C9A96E", cursor: "pointer", fontFamily: "Georgia, serif" }}>Cancel</button>
+              <button onClick={() => { saveCustomName(editingGenre.genre, editingName); setEditingGenre(null); }}
+                style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: "rgba(139,94,60,0.9)", color: "#F8F1E4", cursor: "pointer", fontFamily: "Georgia, serif", fontWeight: 700 }}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add genre modal */}
+      {showAddGenre && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+          onClick={() => setShowAddGenre(false)}>
+          <div style={{ background: "#2A1A0E", borderRadius: 14, padding: 24, width: "min(340px, 100%)", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontFamily: "Georgia, serif", color: "#F8F1E4", fontSize: 16 }}>Add Genre</h3>
+              <button onClick={() => setShowAddGenre(false)} style={{ background: "none", border: "none", color: "#C9A96E", fontSize: 18, cursor: "pointer" }}>✕</button>
+            </div>
+
+            {/* Custom genre — librarian+ only */}
+            {canCustomize && (
+              <div style={{ marginBottom: 16 }}>
+                {!showCustomGenreForm ? (
+                  <button onClick={() => setShowCustomGenreForm(true)}
+                    style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1px dashed rgba(201,169,110,0.5)", background: "transparent", color: "#C9A96E", cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13 }}>
+                    ✦ Create custom genre…
+                  </button>
+                ) : (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input autoFocus value={customGenreName} onChange={e => setCustomGenreName(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") addCustomGenre(); if (e.key === "Escape") setShowCustomGenreForm(false); }}
+                      placeholder="Genre name…"
+                      style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(201,169,110,0.4)", background: "#1A0E07", color: "#F8F1E4", fontFamily: "Georgia, serif", fontSize: 14, outline: "none" }} />
+                    <button onClick={addCustomGenre}
+                      style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: "rgba(139,94,60,0.9)", color: "#F8F1E4", cursor: "pointer", fontFamily: "Georgia, serif", fontWeight: 700 }}>Add</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Unused preset genres */}
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "rgba(201,169,110,0.7)", marginBottom: 10, letterSpacing: 1 }}>PRESET GENRES</div>
+            {[...DEFAULT_LEFT, ...DEFAULT_RIGHT].filter(g => !genreOrder.includes(g.genre)).length === 0
+              ? <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "rgba(248,241,228,0.4)", fontStyle: "italic", textAlign: "center", padding: "12px 0" }}>All preset genres are active</div>
+              : [...DEFAULT_LEFT, ...DEFAULT_RIGHT].filter(g => !genreOrder.includes(g.genre)).map(g => (
+                <button key={g.genre} onClick={() => addPresetGenre(g.genre)}
+                  style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", marginBottom: 6, borderRadius: 8, border: "1px solid rgba(201,169,110,0.2)", background: "rgba(255,255,255,0.04)", color: "#F8F1E4", cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13, textAlign: "left" }}>
+                  {g.image && <img src={g.image} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} />}
+                  {g.genre}
+                </button>
+              ))
+            }
+          </div>
+        </div>
+      )}
+
       {/* Bottom tab bar */}
       <div style={{
         position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
         background: "rgba(15,8,3,0.96)", borderTop: "1px solid rgba(139,94,60,0.3)",
         display: "flex", justifyContent: "space-around", alignItems: "center",
-        padding: "10px 0 calc(10px + env(safe-area-inset-bottom))",
+        padding: `${isTablet ? "12px" : "10px"} 0 calc(${isTablet ? "12px" : "10px"} + env(safe-area-inset-bottom))`,
+        paddingLeft: "env(safe-area-inset-left, 0px)",
+        paddingRight: "env(safe-area-inset-right, 0px)",
         pointerEvents: "all",
       }}>
         {[
-          { icon: "🏠", label: "Home", action: null, active: true },
           { icon: soundOn ? "🔊" : "🔇", label: "Sound", action: toggleSound, active: soundOn },
+          { icon: "🔍", label: "Search", action: onOpenSearch, active: false },
           { icon: "📖", label: "My Story", action: onOpenStats, active: false },
           { icon: "⚙️", label: "Settings", action: onOpenSettings, active: false },
           { icon: "👤", label: "Profile", action: onOpenProfile, active: false },
@@ -8365,11 +9736,11 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
               background: "none", border: "none", cursor: action ? "pointer" : "default",
               display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
               color: active ? "#C9A96E" : "rgba(200,180,140,0.7)",
-              fontFamily: "Georgia, serif", fontSize: 10,
-              padding: "4px 8px", WebkitTapHighlightColor: "transparent",
+              fontFamily: "Georgia, serif", fontSize: isTablet ? 13 : 10,
+              padding: "4px 12px", WebkitTapHighlightColor: "transparent",
               touchAction: "manipulation",
             }}>
-            <span style={{ fontSize: 22 }}>{icon}</span>
+            <span style={{ fontSize: isTablet ? 28 : 22 }}>{icon}</span>
             <span>{label}</span>
           </button>
         ))}
@@ -8431,9 +9802,8 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   );
 }
 
-function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
+function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, onOpenSearch, soundOn, toggleSound }) {
   const [hovered, setHovered] = useState(null);
-  const [soundOn, setSoundOn] = useState(false);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customName, setCustomName] = useState("");
   const [savedCustom, setSavedCustom] = useState(() => localStorage.getItem("sk_custom_genre") || "");
@@ -8444,7 +9814,6 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
   const [addGenreName, setAddGenreName] = useState("");
   const [addGenreImg, setAddGenreImg] = useState("");
 
-  const audioRef = useRef(null);
   const canvasRef = useRef(null);
   const centerDivRef = useRef(null);
   const animRef = useRef(null);
@@ -8661,58 +10030,6 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
     return () => { document.getElementById("sk-home-keyframes")?.remove(); };
   }, []);
 
-  // Cleanup audio on unmount
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        try { audioRef.current.rainNode?.stop(); } catch (_) {}
-        try { audioRef.current.fireNode?.stop(); } catch (_) {}
-        audioRef.current.ctx?.close();
-        audioRef.current = null;
-      }
-    };
-  }, []);
-
-  const soundCancelRef = useRef(false);
-
-  const toggleSound = async () => {
-    if (soundOn) {
-      soundCancelRef.current = true;
-      if (audioRef.current) {
-        try { audioRef.current.rainNode?.stop(); } catch (_) {}
-        try { audioRef.current.fireNode?.stop(); } catch (_) {}
-        audioRef.current.ctx?.close();
-        audioRef.current = null;
-      }
-      setSoundOn(false);
-      return;
-    }
-
-    soundCancelRef.current = false;
-    setSoundOn(true);
-
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const loadBuffer = async (url) => {
-      const res = await fetch(url);
-      const arr = await res.arrayBuffer();
-      return ctx.decodeAudioData(arr);
-    };
-
-    const [rainBuf, fireBuf] = await Promise.all([
-      loadBuffer("/sounds/rain-thunder.ogg"),
-      loadBuffer("/sounds/fire.mp3"),
-    ]);
-
-    if (soundCancelRef.current) { ctx.close(); return; }
-
-    const rainGain = ctx.createGain(); rainGain.gain.value = 0.85; rainGain.connect(ctx.destination);
-    const fireGain = ctx.createGain(); fireGain.gain.value = 0.08; fireGain.connect(ctx.destination);
-
-    const rainNode = ctx.createBufferSource(); rainNode.buffer = rainBuf; rainNode.loop = true; rainNode.connect(rainGain); rainNode.start();
-    const fireNode = ctx.createBufferSource(); fireNode.buffer = fireBuf; fireNode.loop = true; fireNode.connect(fireGain); fireNode.start();
-
-    audioRef.current = { ctx, rainNode, fireNode };
-  };
 
   const renderFlowerPanel = (genres, side) => (
     <div style={{
@@ -8901,6 +10218,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
             const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
             const ebooks = userBooks.filter(b => b.mediaType === "ebook" || b.type === "ebooks").length;
             const audiobooks = userBooks.filter(b => b.mediaType === "audiobook" || b.type === "audiobooks").length;
+            const physical = userBooks.filter(b => b.type === "physical" || b.mediaType === "physical").length;
             const total = userBooks.length;
             if (total === 0) return null;
             return (
@@ -8914,7 +10232,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
                 textAlign: "center",
                 pointerEvents: "none",
               }}>
-                📚 {ebooks.toLocaleString()} eBooks &nbsp;·&nbsp; 🎧 {audiobooks.toLocaleString()} Audiobooks &nbsp;·&nbsp; {total.toLocaleString()} Total
+                📱 {ebooks.toLocaleString()} eBooks &nbsp;·&nbsp; 🎧 {audiobooks.toLocaleString()} Audiobooks{physical > 0 ? `  ·  📚 ${physical.toLocaleString()} Physical` : ""} &nbsp;·&nbsp; {total.toLocaleString()} Total
               </div>
             );
           })()}
@@ -8938,7 +10256,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
               onMouseEnter={e => { e.currentTarget.style.background = "rgba(40,20,8,0.9)"; e.currentTarget.style.color = "#F0D8A0"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "rgba(20,10,4,0.72)"; e.currentTarget.style.color = "#D8C090BB"; }}
             >
-              {mediaType === "ebooks" ? "📖 eBooks" : "🎧 Audiobooks"}
+              {mediaType === "ebooks" ? "📱 eBooks" : mediaType === "audiobooks" ? "🎧 Audiobooks" : "📚 Physical"}
             </button>
             <button
               onClick={toggleSound}
@@ -8954,6 +10272,23 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
             >
               {soundOn ? "🔊 Sounds On" : "🔇 Sounds Off"}
             </button>
+            {onOpenSearch && (
+              <button
+                onClick={onOpenSearch}
+                style={{
+                  background: "rgba(20,10,4,0.72)", border: "1px solid #6B4E3270",
+                  borderRadius: 6, padding: "5px 14px",
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  fontSize: "clamp(8px, 0.75vw, 11px)",
+                  color: "#D8C090BB", cursor: "pointer", transition: "all 0.15s",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "rgba(40,20,8,0.9)"; e.currentTarget.style.color = "#F0D8A0"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "rgba(20,10,4,0.72)"; e.currentTarget.style.color = "#D8C090BB"; }}
+              >
+                🔍 Search Library
+              </button>
+            )}
           </div>
 
           </div>{/* end aspect-ratio inner wrapper */}
@@ -9136,6 +10471,48 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType }) {
         </div>
       )}
 
+      {/* Desktop bottom nav */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200,
+        background: "rgba(20,10,4,0.97)", borderTop: "1px solid rgba(139,94,60,0.35)",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+        padding: "10px 24px",
+      }}>
+        {[
+          { id: "ebooks",    icon: "📱", label: "eBooks" },
+          { id: "audiobooks", icon: "🎧", label: "Audiobooks" },
+          { id: "physical",  icon: "📚", label: "Physical Books" },
+        ].map(({ id, icon, label }) => {
+          const active = mediaType === id;
+          return (
+            <button key={id} onClick={() => { if (onSetMediaType) onSetMediaType(id); else onToggleMediaType(); }}
+              style={{
+                background: active ? "#8B5E3C" : "rgba(255,255,255,0.06)",
+                border: active ? "1.5px solid #C9A96E" : "1.5px solid rgba(201,169,110,0.2)",
+                borderRadius: 10, padding: "8px 28px", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 8,
+                color: active ? "#F8F1E4" : "rgba(200,180,140,0.65)",
+                fontFamily: '"Palatino Linotype", Palatino, serif',
+                fontSize: 14, fontWeight: active ? 700 : 400,
+                transition: "all 0.15s",
+              }}>
+              <span style={{ fontSize: 18 }}>{icon}</span>
+              <span>{label}</span>
+            </button>
+          );
+        })}
+        <div style={{ width: 1, height: 28, background: "rgba(201,169,110,0.2)", margin: "0 8px" }} />
+        <button onClick={onOpenSearch} style={{
+          background: "rgba(255,255,255,0.06)", border: "1.5px solid rgba(201,169,110,0.2)",
+          borderRadius: 10, padding: "8px 20px", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 8,
+          color: "rgba(200,180,140,0.65)", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14,
+        }}>
+          <span style={{ fontSize: 18 }}>🔍</span>
+          <span>Search</span>
+        </button>
+      </div>
+
     </>
   );
 }
@@ -9146,6 +10523,866 @@ const SOCIAL_PLATFORMS = [
   { id: "facebook",  label: "Facebook",  emoji: "📘", color: "#1877F2", prefix: "https://facebook.com/", placeholder: "your.name or page" },
   { id: "x_twitter", label: "X",         emoji: "🐦", color: "#14171A", prefix: "https://x.com/", placeholder: "@yourhandle" },
 ];
+
+function ConfirmEmailScreen({ email, supabaseRef, onChangeEmail }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [editingEmail, setEditingEmail] = React.useState(false);
+  const [emailInput, setEmailInput] = React.useState(email);
+  const [resending, setResending] = React.useState(false);
+  const [resent, setResent] = React.useState(false);
+  const [resentMsg, setResentMsg] = React.useState("");
+
+  async function resend(targetEmail) {
+    setResending(true); setResent(false); setResentMsg("");
+    const sb = supabaseRef?.current;
+    const { error } = await sb.auth.resend({ type: "signup", email: targetEmail });
+    setResending(false);
+    if (error) { setResentMsg("Could not resend. Try again."); return; }
+    setResent(true);
+    setResentMsg(`Confirmation resent to ${targetEmail}`);
+  }
+
+  return (
+    <div style={{ textAlign: "center", padding: "8px 0" }}>
+      <div style={{ fontSize: 40, marginBottom: 14 }}>📬</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 10 }}>Check your inbox!</div>
+      <div style={{ fontSize: 13, color: th.textMid, lineHeight: 1.7, marginBottom: 4 }}>
+        We sent a confirmation link to:
+      </div>
+
+      {editingEmail ? (
+        <div style={{ marginBottom: 16 }}>
+          <input
+            value={emailInput}
+            onChange={e => setEmailInput(e.target.value)}
+            style={{
+              width: "100%", boxSizing: "border-box", padding: "9px 12px",
+              border: `1.5px solid ${th.accent}`, borderRadius: 7, fontSize: 14,
+              background: th.bgMuted, color: th.text, marginBottom: 8,
+              fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "center",
+            }}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { setEditingEmail(false); setEmailInput(email); }} style={{
+              flex: 1, padding: "8px", borderRadius: 7, fontSize: 13, cursor: "pointer",
+              background: "none", border: `1px solid ${th.textSoft}44`, color: th.textSoft,
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+            }}>Cancel</button>
+            <button onClick={async () => {
+              if (!emailInput.trim() || !emailInput.includes("@")) return;
+              await resend(emailInput.trim());
+              onChangeEmail(emailInput.trim());
+              setEditingEmail(false);
+            }} style={{
+              flex: 2, padding: "8px", borderRadius: 7, fontSize: 13, cursor: "pointer",
+              background: th.accent, border: "none", color: th.bg,
+              fontFamily: '"Palatino Linotype", Palatino, serif',
+            }}>Update & Resend</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: th.accent, marginBottom: 6 }}>{email}</div>
+          <button onClick={() => { setEditingEmail(true); setEmailInput(email); setResent(false); setResentMsg(""); }} style={{
+            background: "none", border: "none", fontSize: 12, color: th.textSoft,
+            cursor: "pointer", textDecoration: "underline",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>Wrong email? Change it</button>
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, color: th.textSoft, lineHeight: 1.6, marginBottom: 16 }}>
+        Don't see it? Check your spam or junk folder.
+      </div>
+
+      {resentMsg && (
+        <div style={{ fontSize: 12, color: resent ? "#2d6a2d" : "#c04040", marginBottom: 12 }}>{resentMsg}</div>
+      )}
+
+      <button disabled={resending || resent} onClick={() => resend(email)} style={{
+        background: "none", border: `1px solid ${th.textSoft}44`,
+        borderRadius: 8, padding: "9px 20px", fontSize: 13,
+        color: resent ? "#2d6a2d" : th.textMid,
+        cursor: resending || resent ? "default" : "pointer",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+      }}>{resending ? "Sending…" : resent ? "✓ Resent!" : "Resend confirmation email"}</button>
+    </div>
+  );
+}
+
+function OnboardingWelcome({ onGetStarted, onSignIn, onSkip }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const steps = [
+    { emoji: "📚", title: "One library, every platform", body: "Import from Kindle, Goodreads, Audible, and more — all in one beautiful shelf." },
+    { emoji: "🎯", title: "Your shelves, your way", body: "Browse by genre, track what you're reading, and build your TBR list." },
+    { emoji: "👥", title: "Read with a community", body: "Join discussion boards and book clubs with readers who love the same genres." },
+    { emoji: "📖", title: "Your story, beautifully kept", body: "Stats, ratings, notes, and a profile you can share with the world." },
+  ];
+  const [step, setStep] = React.useState(0);
+  const [animating, setAnimating] = React.useState(false);
+  const touchStart = React.useRef(null);
+
+  function goTo(i) {
+    const clamped = Math.max(0, Math.min(steps.length - 1, i));
+    if (animating || clamped === step) return;
+    setAnimating(true);
+    setTimeout(() => { setStep(clamped); setAnimating(false); }, 200);
+  }
+
+  function handleTouchStart(e) {
+    touchStart.current = e.touches[0].clientX;
+  }
+
+  function handleTouchEnd(e) {
+    if (touchStart.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStart.current;
+    touchStart.current = null;
+    if (Math.abs(dx) < 40) return;
+    goTo(step + (dx < 0 ? 1 : -1));
+  }
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9500,
+      background: th.bg,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      fontFamily: '"Palatino Linotype", Palatino, serif',
+      padding: 24,
+    }}>
+      {/* Logo / brand */}
+      <div style={{ textAlign: "center", marginBottom: 40 }}>
+        <img src="/logo.png" alt="StoryKeeper" style={{ width: 100, height: 100, borderRadius: "50%", marginBottom: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.2)" }} />
+        <h1 style={{ margin: 0, fontSize: 32, color: th.text, fontStyle: "italic" }}>StoryKeeper</h1>
+        <p style={{ margin: "6px 0 0", fontSize: 14, color: th.textSoft, fontStyle: "italic" }}>Your cozy reading home</p>
+      </div>
+
+      {/* Feature card */}
+      {/* Card row with side arrows */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", maxWidth: 420, marginBottom: 20 }}>
+        <button onClick={() => goTo(step - 1)} disabled={step === 0} style={{
+          background: "none", border: "none", fontSize: 28, cursor: step === 0 ? "default" : "pointer",
+          color: step === 0 ? th.textSoft + "33" : th.accent, padding: "0 4px", lineHeight: 1, flexShrink: 0,
+          transition: "color 0.2s",
+        }}>‹</button>
+
+        <div
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          style={{
+            flex: 1,
+            background: th.bgMuted, borderRadius: 16, padding: "28px 24px",
+            boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
+            opacity: animating ? 0 : 1, transition: "opacity 0.2s",
+            minHeight: 150, textAlign: "center",
+          }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>{steps[step].emoji}</div>
+          <h3 style={{ margin: "0 0 10px", fontSize: 18, color: th.text }}>{steps[step].title}</h3>
+          <p style={{ margin: 0, fontSize: 13, color: th.textMid, lineHeight: 1.7 }}>{steps[step].body}</p>
+        </div>
+
+        <button onClick={() => goTo(step + 1)} disabled={step === steps.length - 1} style={{
+          background: "none", border: "none", fontSize: 28, cursor: step === steps.length - 1 ? "default" : "pointer",
+          color: step === steps.length - 1 ? th.textSoft + "33" : th.accent, padding: "0 4px", lineHeight: 1, flexShrink: 0,
+          transition: "color 0.2s",
+        }}>›</button>
+      </div>
+
+      {/* Dots */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 32 }}>
+        {steps.map((_, i) => (
+          <div key={i} onClick={() => goTo(i)} style={{
+            width: i === step ? 20 : 8, height: 8, borderRadius: 4,
+            background: i === step ? th.accent : th.textSoft + "55",
+            cursor: "pointer", transition: "all 0.3s",
+          }} />
+        ))}
+      </div>
+
+      {/* Actions */}
+      <div style={{ width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: 12 }}>
+        {step < steps.length - 1 ? (
+          <button onClick={() => goTo(step + 1)} style={{
+            width: "100%", padding: "14px", borderRadius: 10, fontSize: 16,
+            border: "none", background: th.accent, color: th.bg, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+          }}>Next →</button>
+        ) : (
+          <button onClick={onGetStarted} style={{
+            width: "100%", padding: "14px", borderRadius: 10, fontSize: 16,
+            border: "none", background: th.accent, color: th.bg, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+          }}>Create Free Account</button>
+        )}
+        <button onClick={onSignIn} style={{
+          width: "100%", padding: "12px", borderRadius: 10, fontSize: 14,
+          border: `1.5px solid ${th.textSoft}44`, background: "transparent",
+          color: th.textMid, cursor: "pointer",
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+        }}>I already have an account</button>
+        <button onClick={onSkip} style={{
+          background: "none", border: "none", color: th.textSoft, fontSize: 12,
+          cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif',
+          textDecoration: "underline", padding: 0,
+        }}>Skip for now</button>
+      </div>
+    </div>
+  );
+}
+
+function NewUserOnboarding({ userName, onImportGoodreads, onAddManually, onDismiss }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [step, setStep] = React.useState(0);
+
+  const steps = [
+    {
+      emoji: "🎉",
+      title: `Welcome to StoryKeeper${userName ? `, ${userName}` : ""}!`,
+      body: "Your cozy reading home is ready. Let's get your first books on the shelf — it only takes a minute.",
+      actions: (
+        <button onClick={() => setStep(1)} style={{
+          width: "100%", padding: "14px", borderRadius: 10, fontSize: 15,
+          border: "none", background: th.accent, color: th.bg, cursor: "pointer",
+          fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700,
+        }}>Let's go →</button>
+      ),
+    },
+    {
+      emoji: "📥",
+      title: "How would you like to add your books?",
+      body: "Choose the option that works best for you. You can always add more ways later.",
+      actions: (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={onImportGoodreads} style={{
+            width: "100%", padding: "14px 18px", borderRadius: 10, fontSize: 14,
+            border: "none", background: th.accent, color: th.bg, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700,
+            display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+          }}>
+            <span style={{ fontSize: 28 }}>📗</span>
+            <div>
+              <div style={{ fontWeight: 700 }}>Import from Goodreads</div>
+              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85 }}>Fastest — brings in your whole library at once</div>
+            </div>
+          </button>
+
+          <button onClick={() => setStep(2)} style={{
+            width: "100%", padding: "14px 18px", borderRadius: 10, fontSize: 14,
+            border: `1.5px solid ${th.accent}55`, background: th.bgMuted, color: th.text, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+          }}>
+            <span style={{ fontSize: 28 }}>📱</span>
+            <div>
+              <div style={{ fontWeight: 700 }}>Import from Kindle or Audible</div>
+              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>Best done on a desktop browser</div>
+            </div>
+          </button>
+
+          <button onClick={onAddManually} style={{
+            width: "100%", padding: "14px 18px", borderRadius: 10, fontSize: 14,
+            border: `1.5px solid ${th.accent}55`, background: th.bgMuted, color: th.text, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+          }}>
+            <span style={{ fontSize: 28 }}>✏️</span>
+            <div>
+              <div style={{ fontWeight: 700 }}>Add books manually</div>
+              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>Search by title or scan a barcode</div>
+            </div>
+          </button>
+        </div>
+      ),
+    },
+    {
+      emoji: "💻",
+      title: "Kindle & Audible import needs a desktop",
+      body: "For the best experience importing from Kindle or Audible, open StoryKeeper on a desktop or laptop browser. Want us to send you a reminder?",
+      actions: (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <a href="mailto:?subject=Finish%20setting%20up%20StoryKeeper&body=Open%20thestorykeeper.co%2Fapp%20on%20your%20desktop%20to%20import%20your%20Kindle%20or%20Audible%20library!" style={{
+            display: "block", width: "100%", padding: "14px", borderRadius: 10, fontSize: 14, boxSizing: "border-box",
+            border: "none", background: th.accent, color: th.bg, cursor: "pointer", textAlign: "center", textDecoration: "none",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700,
+          }}>📧 Email me a reminder</a>
+          <button onClick={onAddManually} style={{
+            width: "100%", padding: "12px", borderRadius: 10, fontSize: 13,
+            border: `1.5px solid ${th.accent}55`, background: "transparent", color: th.textMid, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>Add a few books manually for now</button>
+        </div>
+      ),
+    },
+  ];
+
+  const current = steps[step];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9800,
+      background: "rgba(20,10,4,0.75)", backdropFilter: "blur(4px)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    }}>
+      <div style={{
+        background: th.bg, borderRadius: 20, padding: 32, width: "100%", maxWidth: 420,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        position: "relative",
+      }}>
+        {/* Skip */}
+        <button onClick={onDismiss} style={{
+          position: "absolute", top: 14, right: 16,
+          background: "none", border: "none", color: th.textSoft, fontSize: 12,
+          cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif',
+        }}>Skip</button>
+
+        {/* Step indicator */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
+          {steps.map((_, i) => (
+            <div key={i} style={{
+              height: 3, borderRadius: 2, flex: 1,
+              background: i <= step ? th.accent : th.textSoft + "33",
+              transition: "background 0.3s",
+            }} />
+          ))}
+        </div>
+
+        {/* Content */}
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 48, marginBottom: 14 }}>{current.emoji}</div>
+          <h2 style={{ margin: "0 0 12px", fontSize: 20, color: th.text, lineHeight: 1.3 }}>{current.title}</h2>
+          <p style={{ margin: 0, fontSize: 13, color: th.textMid, lineHeight: 1.7 }}>{current.body}</p>
+        </div>
+
+        {/* Actions */}
+        {current.actions}
+
+        {/* Back */}
+        {step > 0 && (
+          <button onClick={() => setStep(s => s - 1)} style={{
+            display: "block", margin: "12px auto 0", background: "none", border: "none",
+            color: th.textSoft, fontSize: 12, cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>← Back</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PWAInstallModal({ isIOS, isAndroid, installPrompt, onInstall, onDismiss }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const canAutoInstall = !!installPrompt && !isIOS;
+
+  let instructions = null;
+  if (isIOS) {
+    instructions = (
+      <ol style={{ margin: "12px 0 0", paddingLeft: 20, color: th.textSoft, fontSize: 14, lineHeight: 1.7 }}>
+        <li>Tap the <strong style={{ color: th.text }}>Share</strong> button <span style={{ fontSize: 16 }}>⎋</span> at the bottom of Safari</li>
+        <li>Scroll down and tap <strong style={{ color: th.text }}>"Add to Home Screen"</strong></li>
+        <li>Tap <strong style={{ color: th.text }}>"Add"</strong> in the top-right corner</li>
+      </ol>
+    );
+  } else if (isAndroid || canAutoInstall) {
+    instructions = (
+      <p style={{ margin: "12px 0 0", color: th.textSoft, fontSize: 14, lineHeight: 1.7 }}>
+        Tap <strong style={{ color: th.text }}>"Install Now"</strong> below, or open Chrome's menu <strong style={{ color: th.text }}>(⋮)</strong> and choose <strong style={{ color: th.text }}>"Add to Home Screen"</strong>.
+      </p>
+    );
+  } else {
+    instructions = (
+      <p style={{ margin: "12px 0 0", color: th.textSoft, fontSize: 14, lineHeight: 1.7 }}>
+        Look for the <strong style={{ color: th.text }}>install icon (⊕)</strong> in your browser's address bar, or open the browser menu and choose <strong style={{ color: th.text }}>"Install StoryKeeper"</strong>.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 99999,
+      background: "rgba(0,0,0,0.65)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 20,
+    }} onClick={onDismiss}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: th.bg, borderRadius: 18, padding: "32px 28px",
+        maxWidth: 380, width: "100%",
+        boxShadow: "0 12px 48px rgba(0,0,0,0.5)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        textAlign: "center",
+      }}>
+        <div style={{ fontSize: 48, marginBottom: 8 }}>📱</div>
+        <h2 style={{ margin: "0 0 6px", fontSize: 22, color: th.text }}>Add StoryKeeper to Your Home Screen</h2>
+        <p style={{ margin: 0, color: th.textSoft, fontSize: 13, fontStyle: "italic" }}>
+          Open your library like an app — no browser needed
+        </p>
+        <div style={{
+          background: "rgba(201,169,110,0.12)",
+          border: "1px solid #C9A96E40",
+          borderRadius: 12, padding: "14px 16px", margin: "20px 0",
+          textAlign: "left",
+        }}>
+          {instructions}
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          {canAutoInstall && (
+            <button onClick={onInstall} style={{
+              background: "#8B5E3C", border: "none", borderRadius: 10,
+              color: "#F8F1E4", padding: "11px 24px", fontSize: 14,
+              fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, cursor: "pointer",
+            }}>Install Now</button>
+          )}
+          <button onClick={onDismiss} style={{
+            background: "none", border: "1px solid #C9A96E60",
+            borderRadius: 10, color: th.textSoft, padding: "11px 20px", fontSize: 13,
+            fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+          }}>Maybe Later</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UsernameNudgeModal({ onClose, supabaseRef, authUser }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [input, setInput] = React.useState("");
+  const [msg, setMsg] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  async function save() {
+    const trimmed = input.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (trimmed.length < 3) { setMsg("Username must be at least 3 characters."); return; }
+    if (trimmed.length > 20) { setMsg("Username must be 20 characters or less."); return; }
+    setSaving(true); setMsg("");
+    const sb = supabaseRef?.current;
+    if (!sb) { setMsg("Not connected. Try again."); setSaving(false); return; }
+    const { data: existing } = await sb.from("usernames").select("user_id").eq("username", trimmed).maybeSingle();
+    if (existing && existing.user_id !== authUser.id) { setMsg("That username is taken. Try another."); setSaving(false); return; }
+    await sb.from("usernames").delete().eq("user_id", authUser.id);
+    await sb.from("usernames").insert({ username: trimmed, user_id: authUser.id });
+    const { error } = await sb.auth.updateUser({ data: { full_name: trimmed } });
+    if (error) { setMsg("Could not save. Try again."); setSaving(false); return; }
+    localStorage.setItem("sk_username_set", "1");
+    onClose();
+  }
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9200,
+      background: "rgba(0,0,0,0.65)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+    }}>
+      <div style={{
+        background: th.bg, borderRadius: 16, padding: "32px 28px",
+        width: 360, maxWidth: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+        fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "center",
+      }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>👤</div>
+        <h3 style={{ margin: "0 0 8px", fontSize: 20, color: th.text }}>Choose your username</h3>
+        <p style={{ margin: "0 0 20px", fontSize: 13, color: th.textMid, lineHeight: 1.6 }}>
+          Your username is how other readers will find you. It's the only thing that's public — your email stays private.
+        </p>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20))}
+          placeholder="your_username"
+          onKeyDown={e => e.key === "Enter" && save()}
+          style={{
+            width: "100%", boxSizing: "border-box", padding: "11px 14px",
+            borderRadius: 8, border: `1.5px solid ${th.border}`,
+            background: th.bgMuted, color: th.text, fontSize: 15,
+            fontFamily: '"Palatino Linotype", Palatino, serif', outline: "none",
+            textAlign: "center", marginBottom: 8,
+          }}
+        />
+        <div style={{ fontSize: 11, color: th.textSoft, marginBottom: 16 }}>
+          Letters, numbers, underscores only · 3–20 characters
+        </div>
+        {msg && <div style={{ fontSize: 12, color: "#c04040", marginBottom: 12 }}>{msg}</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => { localStorage.setItem("sk_username_set", "1"); onClose(); }} style={{
+            flex: 1, padding: "10px", borderRadius: 8, fontSize: 13,
+            border: `1.5px solid ${th.textSoft}44`, background: "transparent",
+            color: th.textSoft, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>Later</button>
+          <button onClick={save} disabled={saving || input.length < 3} style={{
+            flex: 2, padding: "10px", borderRadius: 8, fontSize: 14,
+            border: "none", background: input.length >= 3 ? th.accent : th.textSoft + "44",
+            color: input.length >= 3 ? th.bg : th.textSoft,
+            cursor: input.length >= 3 ? "pointer" : "default",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>{saving ? "Saving…" : "Set Username"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PublicProfilePage({ username, supabaseRef, onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [profile, setProfile] = React.useState(null);
+  const [socials, setSocials] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [notFound, setNotFound] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!username || !supabaseRef?.current) return;
+    (async () => {
+      const sb = supabaseRef.current;
+      const { data: uRow } = await sb.from("usernames").select("user_id, username").eq("username", username.toLowerCase()).maybeSingle();
+      if (!uRow) { setNotFound(true); setLoading(false); return; }
+      const { data: userData } = await sb.auth.admin?.getUserById?.(uRow.user_id).catch(() => ({ data: null })) || { data: null };
+      // Fetch social links
+      const { data: socialRow } = await sb.from("user_social_links").select("*").eq("user_id", uRow.user_id).maybeSingle();
+      setSocials(socialRow);
+      // We only have public metadata from user_metadata via a public view — use usernames table + social links
+      // For privacy settings and bio/top_books, we need a public profiles table or edge function.
+      // We'll use a public_profiles table that mirrors what user opts to share.
+      const { data: pub } = await sb.from("public_profiles").select("*").eq("user_id", uRow.user_id).maybeSingle();
+      if (!pub || !pub.is_public) { setNotFound(true); setLoading(false); return; }
+      setProfile({ ...pub, username: uRow.username });
+      setLoading(false);
+    })();
+  }, [username]);
+
+  const SOCIAL_PLATFORMS = [
+    { id: "instagram", label: "Instagram", emoji: "📸", color: "#E1306C", prefix: "https://instagram.com/" },
+    { id: "tiktok",    label: "TikTok",    emoji: "🎵", color: "#010101", prefix: "https://tiktok.com/@" },
+    { id: "facebook",  label: "Facebook",  emoji: "📘", color: "#1877F2", prefix: "https://facebook.com/" },
+    { id: "x_twitter", label: "X",         emoji: "🐦", color: "#14171A", prefix: "https://x.com/" },
+  ];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9000,
+      background: "rgba(0,0,0,0.7)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 16,
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: th.bg, borderRadius: 16, padding: "36px 28px",
+        width: Math.min(window.innerWidth - 32, 400),
+        maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 12px 48px rgba(0,0,0,0.6)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+      }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0", lineHeight: 1 }}>‹</button>
+          <h2 style={{ margin: 0, fontSize: 20, color: th.text, flex: 1, textAlign: "center" }}>Reader Profile</h2>
+          <div style={{ width: 32 }} />
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: "center", color: th.textSoft, padding: 40 }}>Loading…</div>
+        ) : notFound ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>📚</div>
+            <div style={{ fontSize: 16, color: th.text, marginBottom: 8 }}>Profile not found</div>
+            <div style={{ fontSize: 13, color: th.textSoft }}>This reader's profile is private or doesn't exist.</div>
+          </div>
+        ) : (
+          <>
+            {/* Avatar placeholder + name */}
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <div style={{ width: 80, height: 80, borderRadius: "50%", background: th.accent + "33", border: `3px solid ${th.accent}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", fontSize: 32, color: th.accent, fontWeight: 700 }}>
+                {profile.username?.[0]?.toUpperCase() || "?"}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: th.text }}>@{profile.username}</div>
+              <div style={{ fontSize: 13, color: th.textSoft, marginTop: 4, fontStyle: "italic" }}>StoryKeeper reader</div>
+            </div>
+
+            {/* Bio */}
+            {profile.show_bio && profile.bio && (
+              <div style={{ marginBottom: 20, padding: "14px 16px", background: th.bgMuted, borderRadius: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Bio</div>
+                <p style={{ margin: 0, fontSize: 13, color: th.textMid, lineHeight: 1.7 }}>{profile.bio}</p>
+              </div>
+            )}
+
+            {/* Stats */}
+            {profile.show_stats && (profile.total_books > 0) && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Reading Stats</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[
+                    { label: "Total Books", value: profile.total_books },
+                    { label: "eBooks", value: profile.ebooks },
+                    { label: "Audiobooks", value: profile.audiobooks },
+                    { label: "Finished", value: profile.finished },
+                  ].filter(s => s.value > 0).map(s => (
+                    <div key={s.label} style={{ flex: "1 1 80px", background: th.bgMuted, borderRadius: 10, padding: "12px 10px", textAlign: "center" }}>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: th.accent }}>{s.value}</div>
+                      <div style={{ fontSize: 10, color: th.textSoft, marginTop: 2 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top Books */}
+            {profile.show_top_books && profile.top_books?.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Top Books</div>
+                {profile.top_books.map((book, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderBottom: i < profile.top_books.length - 1 ? `1px solid ${th.border}` : "none" }}>
+                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: th.accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: th.bg, fontWeight: 700, flexShrink: 0 }}>{i + 1}</div>
+                    <div>
+                      <div style={{ fontSize: 13, color: th.text, fontWeight: 600 }}>{book.title}</div>
+                      {book.author && <div style={{ fontSize: 11, color: th.textSoft }}>by {book.author}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Socials */}
+            {profile.show_socials && socials && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Find Me On</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {SOCIAL_PLATFORMS.filter(p => socials[p.id]).map(p => (
+                    <a key={p.id} href={`${p.prefix}${socials[p.id]}`} target="_blank" rel="noopener noreferrer" style={{
+                      display: "flex", alignItems: "center", gap: 6, padding: "7px 12px",
+                      background: th.bgMuted, borderRadius: 8, textDecoration: "none",
+                      fontSize: 13, color: th.text,
+                    }}>
+                      <span>{p.emoji}</span> <span style={{ color: p.color, fontWeight: 600 }}>@{socials[p.id]}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ textAlign: "center", marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: th.textSoft, fontStyle: "italic" }}>
+                Powered by StoryKeeper 📚
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FeedbackModal({ onClose, supabaseRef, authUser }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const [msg, setMsg] = React.useState("");
+  const [category, setCategory] = React.useState("general");
+  const [sending, setSending] = React.useState(false);
+  const [done, setDone] = React.useState(false);
+  const [err, setErr] = React.useState("");
+
+  async function submit() {
+    if (!msg.trim()) return;
+    setSending(true); setErr("");
+    try {
+      const sb = supabaseRef?.current;
+      if (sb) {
+        await sb.from("feedback").insert({
+          user_id: authUser?.id || null,
+          email: authUser?.email || null,
+          category,
+          message: msg.trim(),
+        });
+      }
+      setDone(true);
+    } catch {
+      setErr("Something went wrong. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const categories = [
+    { value: "general", label: "💬 General" },
+    { value: "bug", label: "🐛 Bug Report" },
+    { value: "feature", label: "✨ Feature Request" },
+    { value: "content", label: "📚 Book/Content Issue" },
+  ];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9100,
+      background: "rgba(0,0,0,0.65)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 16,
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: th.bg, borderRadius: 14, padding: "36px 32px",
+        width: 420, maxWidth: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+      }}>
+        {done ? (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>💗</div>
+            <h3 style={{ margin: "0 0 10px", fontSize: 20, color: th.text }}>Thank you!</h3>
+            <p style={{ fontSize: 14, color: th.textMid, lineHeight: 1.7, margin: "0 0 24px" }}>
+              Your feedback helps make StoryKeeper better for everyone. We read every message.
+            </p>
+            <button onClick={onClose} style={{
+              background: th.accent, border: "none", borderRadius: 8,
+              padding: "9px 28px", color: th.bg, fontSize: 14,
+              fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+            }}>Close</button>
+          </div>
+        ) : (
+          <>
+            <h2 style={{ margin: "0 0 6px", fontSize: 22, color: th.text, textAlign: "center" }}>Send Feedback</h2>
+            <p style={{ textAlign: "center", fontSize: 13, color: th.textSoft, margin: "0 0 22px", fontStyle: "italic" }}>
+              We'd love to hear from you
+            </p>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+              {categories.map(c => (
+                <button key={c.value} onClick={() => setCategory(c.value)} style={{
+                  flex: "1 1 auto", padding: "7px 10px", borderRadius: 8, fontSize: 12,
+                  border: `1.5px solid ${category === c.value ? th.accent : th.textSoft + "44"}`,
+                  background: category === c.value ? th.accent + "22" : "transparent",
+                  color: category === c.value ? th.accent : th.textMid,
+                  fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+                  transition: "all 0.15s",
+                }}>{c.label}</button>
+              ))}
+            </div>
+
+            <textarea
+              value={msg}
+              onChange={e => setMsg(e.target.value)}
+              placeholder="Tell us what's on your mind..."
+              maxLength={1000}
+              rows={5}
+              style={{
+                width: "100%", boxSizing: "border-box", resize: "vertical",
+                background: th.bg, border: `1.5px solid ${th.textSoft}44`,
+                borderRadius: 8, padding: "10px 12px", fontSize: 13,
+                color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif',
+                lineHeight: 1.7, outline: "none",
+              }}
+            />
+            <div style={{ fontSize: 11, color: th.textSoft, textAlign: "right", marginTop: 4, marginBottom: 16 }}>
+              {msg.length}/1000
+            </div>
+
+            {err && <p style={{ fontSize: 12, color: "#e05", margin: "0 0 12px", textAlign: "center" }}>{err}</p>}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={onClose} style={{
+                flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 14,
+                border: `1.5px solid ${th.textSoft}44`, background: "transparent",
+                color: th.textMid, fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+              }}>Cancel</button>
+              <button onClick={submit} disabled={sending || !msg.trim()} style={{
+                flex: 2, padding: "9px 0", borderRadius: 8, fontSize: 14,
+                border: "none", background: msg.trim() ? th.accent : th.textSoft + "44",
+                color: msg.trim() ? th.bg : th.textSoft,
+                fontFamily: '"Palatino Linotype", Palatino, serif', cursor: msg.trim() ? "pointer" : "default",
+                transition: "all 0.15s",
+              }}>{sending ? "Sending…" : "Send Feedback"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PrivacyPolicyPage({ onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9000,
+      background: "rgba(0,0,0,0.65)",
+      display: "flex", alignItems: "flex-start", justifyContent: "center",
+      overflowY: "auto", padding: "40px 16px",
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: th.bg, borderRadius: 14, padding: "40px 36px",
+        maxWidth: 680, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        color: th.text,
+      }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 26, textAlign: "center", fontStyle: "italic" }}>Privacy Policy</h2>
+        <p style={{ textAlign: "center", fontSize: 13, color: th.textSoft, margin: "0 0 28px" }}>Effective June 15, 2026 · StoryKeeper LLC</p>
+
+        {[
+          ["1. Who We Are", `StoryKeeper is a personal library and reading community app operated by StoryKeeper LLC, a Florida limited liability company. You can reach us at hello@thestorykeeper.co.`],
+          ["2. Information We Collect", `When you create an account, we collect your email address and any optional profile information you provide (username, bio, profile photo, top books list, and social media handles). We also collect reading data you add to the app — books, ratings, progress, and notes. We use Supabase to store your account and library data securely.`],
+          ["3. How We Use Your Information", `We use your information to:\n• Operate and personalize your StoryKeeper experience\n• Sync your library across devices (Librarian tier and above)\n• Display your public profile to other users (username only — your email and real name are never shown)\n• Send you account-related emails (e.g., password reset)\n• Improve and maintain the app`],
+          ["4. What Is Public vs. Private", `Your username and any social media handles you choose to link are visible to other StoryKeeper users. Your email address, real name, and payment information are never displayed publicly. You control everything in your profile settings.`],
+          ["5. Third-Party Services", `We use the following third-party services:\n• Supabase (database and authentication)\n• Stripe (payment processing — we never store your card details)\n• Google Books API and Open Library API (book metadata)\n• TikTok API (optional, only if you connect your TikTok account)\n\nEach of these services has its own privacy policy.`],
+          ["6. Data Retention", `Your data is kept as long as your account is active. You may delete your account at any time by contacting us at support@thestorykeeper.co. We will delete your personal data within 30 days of your request.`],
+          ["7. Cookies and Local Storage", `StoryKeeper uses browser local storage to save your preferences (theme, reading settings) and cached book data for faster performance. We do not use advertising cookies or third-party tracking cookies.`],
+          ["8. Children's Privacy", `StoryKeeper is not directed at children under 13. We do not knowingly collect personal information from children under 13. If you believe a child has provided us personal information, please contact us at hello@thestorykeeper.co.`],
+          ["9. Changes to This Policy", `We may update this Privacy Policy from time to time. If we make material changes, we will notify you via email or an in-app notice. Your continued use of StoryKeeper after changes take effect constitutes your acceptance of the updated policy.`],
+          ["10. Contact Us", `If you have questions about this Privacy Policy, please contact us at:\nStoryKeeper LLC\nhello@thestorykeeper.co`],
+        ].map(([title, body]) => (
+          <div key={title} style={{ marginBottom: 22 }}>
+            <h3 style={{ fontSize: 15, margin: "0 0 6px", color: th.accent }}>{title}</h3>
+            <p style={{ fontSize: 13, lineHeight: 1.85, margin: 0, color: th.textMid, whiteSpace: "pre-line" }}>{body}</p>
+          </div>
+        ))}
+
+        <div style={{ textAlign: "center", marginTop: 32 }}>
+          <button onClick={onClose} style={{
+            background: th.accent, border: "none", borderRadius: 8,
+            padding: "9px 28px", color: th.bg, fontSize: 14,
+            fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+          }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TermsOfServicePage({ onClose }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9000,
+      background: "rgba(0,0,0,0.65)",
+      display: "flex", alignItems: "flex-start", justifyContent: "center",
+      overflowY: "auto", padding: "40px 16px",
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: th.bg, borderRadius: 14, padding: "40px 36px",
+        maxWidth: 680, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+        fontFamily: '"Palatino Linotype", Palatino, serif',
+        color: th.text,
+      }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 26, textAlign: "center", fontStyle: "italic" }}>Terms of Service</h2>
+        <p style={{ textAlign: "center", fontSize: 13, color: th.textSoft, margin: "0 0 28px" }}>Effective June 15, 2026 · StoryKeeper LLC</p>
+
+        {[
+          ["1. Acceptance of Terms", `By creating an account or using StoryKeeper, you agree to these Terms of Service and our Privacy Policy. If you do not agree, please do not use the app. These terms constitute a legal agreement between you and StoryKeeper LLC, a Florida limited liability company.`],
+          ["2. Your Account", `You are responsible for maintaining the confidentiality of your account credentials. You must provide accurate information when creating your account. You may not share your account with others or use another person's account without permission. You must be at least 13 years old to use StoryKeeper.`],
+          ["3. Subscription Plans", `StoryKeeper offers free and paid subscription tiers. Paid plans are billed through Stripe. You may cancel at any time; cancellation takes effect at the end of your billing period. We reserve the right to change pricing with 30 days' notice. Lifetime access arrangements are provided at our sole discretion and are non-transferable.`],
+          ["4. Acceptable Use", `You agree not to:\n• Post content that is hateful, harassing, threatening, or discriminatory\n• Share spoilers without clearly labeling them\n• Spam or post commercial promotions without permission\n• Attempt to reverse-engineer, scrape, or exploit the app\n• Use the app for any unlawful purpose\n\nStoryKeeper reserves the right to suspend or terminate accounts that violate these rules.`],
+          ["5. Community Standards", `StoryKeeper's community spaces (discussion boards and book clubs) are moderated environments. We use automated tools and human review to enforce our community rules. Posts may be removed and accounts may be suspended for violations. We are not liable for user-generated content but will act in good faith to keep the community safe.`],
+          ["6. Intellectual Property", `StoryKeeper and its logo, design, and original content are owned by StoryKeeper LLC. Book covers, titles, and metadata are the property of their respective publishers and copyright holders and are displayed under fair use for personal library management purposes. You retain ownership of any content you create on StoryKeeper (reviews, notes, lists).`],
+          ["7. Book Metadata and Third-Party Content", `Book information (covers, descriptions, metadata) is sourced from Google Books, Open Library, and other third-party providers. We make reasonable efforts to keep this information accurate but cannot guarantee completeness or correctness.`],
+          ["8. Disclaimer of Warranties", `StoryKeeper is provided "as is" without warranties of any kind. We do not guarantee that the app will be uninterrupted, error-free, or free of harmful components. Use of the app is at your own risk.`],
+          ["9. Limitation of Liability", `To the fullest extent permitted by law, StoryKeeper LLC shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising out of your use of or inability to use the app. Our total liability to you shall not exceed the amount you paid us in the 12 months preceding the claim.`],
+          ["10. Governing Law", `These Terms are governed by the laws of the State of Florida. Any disputes shall be resolved in the courts of Marion County, Florida.`],
+          ["11. Changes to These Terms", `We may update these Terms from time to time. We will notify you of material changes via email or in-app notice. Your continued use of StoryKeeper after changes take effect constitutes acceptance.`],
+          ["12. Contact Us", `Questions about these Terms? Reach us at:\nStoryKeeper LLC\nhello@thestorykeeper.co`],
+        ].map(([title, body]) => (
+          <div key={title} style={{ marginBottom: 22 }}>
+            <h3 style={{ fontSize: 15, margin: "0 0 6px", color: th.accent }}>{title}</h3>
+            <p style={{ fontSize: 13, lineHeight: 1.85, margin: 0, color: th.textMid, whiteSpace: "pre-line" }}>{body}</p>
+          </div>
+        ))}
+
+        <div style={{ textAlign: "center", marginTop: 32 }}>
+          <button onClick={onClose} style={{
+            background: th.accent, border: "none", borderRadius: 8,
+            padding: "9px 28px", color: th.bg, fontSize: 14,
+            fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
+          }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function BookOfTheMonthPage({ onClose }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
@@ -9254,9 +11491,92 @@ function BookOfTheMonthPage({ onClose }) {
   );
 }
 
-function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookClub, onOpenSubscription }) {
+function MyClubsPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookClub }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
-  const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
+  const [groups, setGroups] = React.useState([]);
+  const [bookClubs, setBookClubs] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!authUser || !supabaseRef?.current) { setLoading(false); return; }
+    const sb = supabaseRef.current;
+    Promise.all([
+      sb.from("group_members").select("genre, joined_at").eq("user_id", authUser.id).order("joined_at", { ascending: false }),
+      sb.from("book_club_posts").select("genre, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+      sb.from("book_club_nominations").select("genre, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+    ]).then(([{ data: gData }, { data: postsData }, { data: nomsData }]) => {
+      setGroups(gData || []);
+      // Deduplicate book clubs by genre, picking earliest participation date
+      const clubMap = new Map();
+      [...(postsData || []), ...(nomsData || [])].forEach(({ genre, created_at }) => {
+        if (!clubMap.has(genre) || created_at < clubMap.get(genre)) clubMap.set(genre, created_at);
+      });
+      setBookClubs([...clubMap.entries()].map(([genre, created_at]) => ({ genre, created_at })).sort((a, b) => b.created_at.localeCompare(a.created_at)));
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [authUser?.id]);
+
+  const thm = th;
+  const pageStyle = { position: "fixed", inset: 0, zIndex: 2000, background: thm.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' };
+  const headerStyle = { display: "flex", alignItems: "center", gap: 12, padding: "20px 20px 16px", borderBottom: `1px solid ${thm.border}`, position: "sticky", top: 0, background: thm.bg, zIndex: 10 };
+
+  return (
+    <div style={pageStyle}>
+      <div style={headerStyle}>
+        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: thm.textSoft, padding: 0 }}>←</button>
+        <h2 style={{ margin: 0, fontSize: 20, color: thm.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>My Clubs & Groups</h2>
+      </div>
+
+      <div style={{ padding: "20px 20px 40px" }}>
+        {!authUser ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: thm.textSoft, fontStyle: "italic" }}>Sign in to see your clubs and groups.</div>
+        ) : loading ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: thm.textSoft, fontStyle: "italic" }}>Loading…</div>
+        ) : (
+          <>
+            {/* Genre Groups */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 11, color: thm.accent, letterSpacing: 2, textTransform: "uppercase", marginBottom: 12, fontFamily: "Georgia, serif" }}>Genre Groups</div>
+              {groups.length === 0 ? (
+                <div style={{ color: thm.textSoft, fontStyle: "italic", fontSize: 13 }}>You haven't joined any genre groups yet.</div>
+              ) : groups.map(({ genre, joined_at }) => (
+                <button key={genre} onClick={() => { onClose(); onOpenGroup(genre); }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "14px 16px", marginBottom: 8, borderRadius: 10, border: `1px solid ${thm.border}`, background: thm.bgMuted, cursor: "pointer", textAlign: "left", boxSizing: "border-box" }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: thm.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>{genre}</div>
+                    <div style={{ fontSize: 11, color: thm.textSoft, marginTop: 2 }}>Joined {new Date(joined_at).toLocaleDateString()}</div>
+                  </div>
+                  <span style={{ fontSize: 18, color: thm.textSoft }}>›</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Book Clubs */}
+            <div>
+              <div style={{ fontSize: 11, color: thm.accent, letterSpacing: 2, textTransform: "uppercase", marginBottom: 12, fontFamily: "Georgia, serif" }}>Book Clubs</div>
+              {bookClubs.length === 0 ? (
+                <div style={{ color: thm.textSoft, fontStyle: "italic", fontSize: 13 }}>You haven't joined any book clubs yet.</div>
+              ) : bookClubs.map(({ genre, created_at }) => (
+                <button key={genre} onClick={() => { onClose(); onOpenBookClub(genre); }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "14px 16px", marginBottom: 8, borderRadius: 10, border: `1px solid ${thm.border}`, background: thm.bgMuted, cursor: "pointer", textAlign: "left", boxSizing: "border-box" }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: thm.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>{genre} Book Club</div>
+                    <div style={{ fontSize: 11, color: thm.textSoft, marginTop: 2 }}>Last active {new Date(created_at).toLocaleDateString()}</div>
+                  </div>
+                  <span style={{ fontSize: 18, color: thm.textSoft }}>›</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose, onOpenGroup, onOpenBookClub, onOpenSubscription }) {
+  const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
   const canRead = ["storyteller", "librarian", "storykeeper"].includes(userTier);
   const canPost = ["librarian", "storykeeper"].includes(userTier);
   const hasBookClub = ["librarian", "storykeeper"].includes(userTier);
@@ -9269,6 +11589,25 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
   const [socialInputs, setSocialInputs]   = React.useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
   const [socialMsg, setSocialMsg]         = React.useState("");
 
+  const fetchSocialLinks = React.useCallback(() => {
+    if (!supabaseRef.current || !authUser) return;
+    supabaseRef.current.from("user_social_links").select("*").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          const links = { instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" };
+          setSocialLinks(links);
+          setSocialInputs(links);
+        }
+      });
+  }, [authUser?.id]);
+
+  // Re-fetch social links when the PWA regains focus (handles iOS PWA OAuth redirect back)
+  React.useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") fetchSocialLinks(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchSocialLinks]);
+
   React.useEffect(() => {
     if (!supabaseRef.current || !authUser) return;
     // Load member counts
@@ -9278,14 +11617,7 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
       setMemberCounts(prev => ({ ...prev, [genre]: count || 0 }));
     });
     // Load social links
-    supabaseRef.current.from("user_social_links").select("*").eq("user_id", authUser.id).maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          const links = { instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" };
-          setSocialLinks(links);
-          setSocialInputs(links);
-        }
-      });
+    fetchSocialLinks();
     // Check for OAuth success/error in hash
     const hash = window.location.hash;
     if (hash.includes("x_connected=")) {
@@ -9299,9 +11631,24 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
         window.location.hash = "#community";
       }
     }
+    if (hash.includes("tiktok_connected=")) {
+      const match = hash.match(/tiktok_connected=([^&]+)/);
+      if (match) {
+        const handle = decodeURIComponent(match[1]);
+        setSocialLinks(prev => ({ ...prev, tiktok: handle }));
+        setSocialInputs(prev => ({ ...prev, tiktok: handle }));
+        setSocialMsg("TikTok account connected! ✓");
+        setTimeout(() => setSocialMsg(""), 3000);
+        window.location.hash = "";
+      }
+    }
     if (hash.includes("x_error=")) {
       setSocialMsg("Could not connect X account. Please try again.");
       window.location.hash = "#community";
+    }
+    if (hash.includes("tiktok_error=")) {
+      setSocialMsg("Could not connect TikTok account. Please try again.");
+      window.location.hash = "";
     }
   }, [authUser]);
 
@@ -9365,102 +11712,6 @@ function CommunityPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBook
           </div>
         )}
 
-        {/* Social Media Links */}
-        {authUser && (
-          <div style={{ ...cardStyle, marginBottom: 20 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, color: th.text, fontSize: 16 }}>🔗 My Social Media</h3>
-              {!socialEditing && (
-                <button onClick={() => { setSocialEditing(true); setSocialInputs(socialLinks); }} style={btnStyle(th.bgMuted, th.text)}>
-                  Edit
-                </button>
-              )}
-            </div>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: th.textSoft }}>
-              Add your handles so other readers can find and follow you.
-            </p>
-
-            {socialEditing ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {SOCIAL_PLATFORMS.map(p => (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{p.emoji}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 3 }}>{p.label}</div>
-                      {p.id === "x_twitter" ? (
-                        socialLinks.x_twitter ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ color: "#14171A", fontSize: 14, fontWeight: 600 }}>@{socialLinks.x_twitter}</span>
-                            <button onClick={async () => {
-                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, x_twitter: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-                              setSocialLinks(prev => ({ ...prev, x_twitter: "" }));
-                              setSocialInputs(prev => ({ ...prev, x_twitter: "" }));
-                            }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => window.location.href = `/api/oauth/x/start?user_id=${authUser.id}`}
-                            style={{ background: "#14171A", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
-                            🐦 Connect with X
-                          </button>
-                        )
-                      ) : p.id === "tiktok" ? (
-                        socialLinks.tiktok ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ color: "#010101", fontSize: 14, fontWeight: 600 }}>@{socialLinks.tiktok}</span>
-                            <button onClick={async () => {
-                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, tiktok: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-                              setSocialLinks(prev => ({ ...prev, tiktok: "" }));
-                              setSocialInputs(prev => ({ ...prev, tiktok: "" }));
-                            }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => window.location.href = `/api/oauth/tiktok/start?user_id=${authUser.id}`}
-                            style={{ background: "#010101", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
-                            🎵 Connect with TikTok
-                          </button>
-                        )
-                      ) : (
-                        <input
-                          style={inputStyle}
-                          placeholder={p.placeholder}
-                          value={socialInputs[p.id]}
-                          onChange={e => setSocialInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
-                        />
-                      )}
-                    </div>
-                  </div>
-                ))}
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-                  <button onClick={() => setSocialEditing(false)} style={btnStyle(th.bgMuted, th.text)}>Cancel</button>
-                  <button onClick={handleSaveSocial} style={btnStyle(th.accent)}>Save</button>
-                </div>
-                {socialMsg && <div style={{ fontSize: 13, color: socialMsg.includes("Error") || socialMsg.includes("Could not") ? "#c0392b" : "#6B8C5E" }}>{socialMsg}</div>}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {SOCIAL_PLATFORMS.map(p => {
-                  const handle = socialLinks[p.id];
-                  return (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{p.emoji}</span>
-                      <span style={{ fontSize: 13, color: th.textSoft, width: 72 }}>{p.label}</span>
-                      {handle ? (
-                        <a href={p.prefix + handle} target="_blank" rel="noopener noreferrer"
-                          style={{ color: p.color, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
-                          @{handle}
-                        </a>
-                      ) : (
-                        <span style={{ color: th.textSoft, fontSize: 13, fontStyle: "italic" }}>Not connected</span>
-                      )}
-                    </div>
-                  );
-                })}
-                {socialMsg && <div style={{ fontSize: 13, color: "#6B8C5E" }}>{socialMsg}</div>}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Book of the Month */}
         <div onClick={() => setShowBotm(true)} style={{
           ...cardStyle, marginBottom: 20, cursor: "pointer",
@@ -9518,9 +11769,9 @@ const POST_TYPES = [
   { id: "suggestion",  label: "💡 Book Suggestion",      short: "Suggestion" },
 ];
 
-function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscription }) {
+function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
-  const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
+  const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
   const canRead  = ["storyteller", "librarian", "storykeeper"].includes(userTier);
   const canPost  = ["librarian", "storykeeper"].includes(userTier);
 
@@ -9537,6 +11788,8 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   const [postBook, setPostBook]         = React.useState("");
   const [postAuthor, setPostAuthor]     = React.useState("");
   const [postMsg, setPostMsg]           = React.useState("");
+  const [postImage, setPostImage]       = React.useState(null);
+  const [postImageUploading, setPostImageUploading] = React.useState(false);
   const [expandedPost, setExpandedPost] = React.useState(null);
   const [comments, setComments]         = React.useState({});
   const [commentText, setCommentText]   = React.useState("");
@@ -9547,6 +11800,17 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   const [rulesOpen, setRulesOpen]       = React.useState(false);
   const [showRulesModal, setShowRulesModal] = React.useState(false);
   const [rulesAgreed, setRulesAgreed]   = React.useState(() => !!localStorage.getItem("sk_rules_agreed"));
+  const [rulesContext, setRulesContext] = React.useState("post");
+
+  const [mainTab, setMainTab]           = React.useState("feed");
+  const [discussions, setDiscussions]   = React.useState([]);
+  const [activeThread, setActiveThread] = React.useState(null);
+  const [threadReplies, setThreadReplies] = React.useState([]);
+  const [showNewThread, setShowNewThread] = React.useState(false);
+  const [newThreadTitle, setNewThreadTitle] = React.useState("");
+  const [newThreadContent, setNewThreadContent] = React.useState("");
+  const [newThreadReply, setNewThreadReply] = React.useState("");
+  const [threadMsg, setThreadMsg]       = React.useState("");
 
   const handleReport = async (contentId, contentType, contentText, contentUsername) => {
     if (!authUser) return;
@@ -9566,8 +11830,10 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
 
   React.useEffect(() => {
     if (!authUser || !supabaseRef.current) return;
-    supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).single()
-      .then(({ data }) => { if (data) setUsername(data.username); });
+    const fallback = authUser?.user_metadata?.full_name || "";
+    if (fallback) setUsername(fallback);
+    supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => { if (data?.username) setUsername(data.username); });
   }, [authUser]);
 
   const loadData = React.useCallback(async () => {
@@ -9585,6 +11851,10 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
     setPosts(postsData || []);
     setLikedPosts(new Set((likesData || []).map(l => l.post_id)));
 
+    const { data: discsData } = await sb.from("group_discussions").select("*").eq("genre", genre)
+      .order("last_reply_at", { ascending: false }).limit(50);
+    setDiscussions(discsData || []);
+
     if (authUser) {
       const { data: mem } = await sb.from("group_members").select("user_id").eq("genre", genre).eq("user_id", authUser.id).maybeSingle();
       setIsMember(!!mem);
@@ -9595,37 +11865,67 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   React.useEffect(() => { loadData(); }, [loadData]);
 
   const handleJoinLeave = async () => {
-    if (!authUser || !username || !canPost) return;
+    if (!authUser || !canPost) return;
+    let resolvedUsername = username
+      || authUser?.user_metadata?.full_name
+      || "";
+    if (!resolvedUsername) {
+      const { data } = await supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).maybeSingle();
+      if (data?.username) { resolvedUsername = data.username; }
+    }
+    if (resolvedUsername) setUsername(resolvedUsername);
+    if (!resolvedUsername) {
+      setPostMsg("Please set a username in your profile before joining a group.");
+      return;
+    }
     setJoining(true);
+    setPostMsg("");
     const sb = supabaseRef.current;
-    if (isMember) {
-      await sb.from("group_members").delete().eq("genre", genre).eq("user_id", authUser.id);
-      setIsMember(false);
-      setMemberCount(c => c - 1);
-    } else {
-      await sb.from("group_members").insert({ genre, user_id: authUser.id, username });
-      setIsMember(true);
-      setMemberCount(c => c + 1);
+    try {
+      if (isMember) {
+        await sb.from("group_members").delete().eq("genre", genre).eq("user_id", authUser.id);
+        setIsMember(false);
+        setMemberCount(c => c - 1);
+      } else {
+        const { error } = await sb.from("group_members").insert({ genre, user_id: authUser.id, username: resolvedUsername, joined_at: new Date().toISOString() });
+        if (error) { setPostMsg("Error joining group. Please try again."); console.error("Join error:", error); }
+        else { setIsMember(true); setMemberCount(c => c + 1); }
+      }
+    } catch (e) {
+      setPostMsg("Error joining group. Please try again.");
+      console.error("Join error:", e);
     }
     setJoining(false);
   };
 
+  const handleGroupImageUpload = async (file) => {
+    if (!file || !authUser) return;
+    setPostImageUploading(true);
+    const ext = file.name.split(".").pop();
+    const path = `${authUser.id}/${Date.now()}.${ext}`;
+    const { error } = await supabaseRef.current.storage.from("post-images").upload(path, file, { upsert: true });
+    if (error) { setPostImageUploading(false); setPostMsg("Image upload failed."); return; }
+    const { data } = supabaseRef.current.storage.from("post-images").getPublicUrl(path);
+    setPostImage(data.publicUrl);
+    setPostImageUploading(false);
+  };
+
   const handlePost = async () => {
-    if (!postContent.trim()) { setPostMsg("Please write something."); return; }
+    if (!postContent.trim() && !postImage) { setPostMsg("Please write something."); return; }
     if (!isMember) { setPostMsg("Join the group to post."); return; }
     const text = postContent.trim();
-    if (containsBannedWords(text)) { setPostMsg("Your post contains language that isn't allowed. Please revise and try again."); return; }
-    const toxic = await checkToxicity(text);
-    if (toxic) { setPostMsg("Your post was flagged as potentially harmful. Please revise and try again."); return; }
+    if (text && containsBannedWords(text)) { setPostMsg("Your post contains language that isn't allowed. Please revise and try again."); return; }
+    if (text) { const toxic = await checkToxicity(text); if (toxic) { setPostMsg("Your post was flagged as potentially harmful. Please revise and try again."); return; } }
     const sb = supabaseRef.current;
     const { error } = await sb.from("group_posts").insert({
       genre, user_id: authUser.id, username, post_type: postType,
-      content: text,
+      content: text || null,
       book_title: postBook.trim() || null,
       book_author: postAuthor.trim() || null,
+      image_url: postImage || null,
     });
     if (error) { setPostMsg("Error posting."); return; }
-    setPostContent(""); setPostBook(""); setPostAuthor(""); setPostMsg("");
+    setPostContent(""); setPostBook(""); setPostAuthor(""); setPostMsg(""); setPostImage(null);
     setShowNewPost(false);
     loadData();
   };
@@ -9675,16 +11975,91 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   };
 
   const loadMembers = async () => {
-    const { data: mems } = await supabaseRef.current.from("group_members").select("username, joined_at").eq("genre", genre).order("joined_at");
+    const { data: mems } = await supabaseRef.current.from("group_members").select("username, joined_at, user_id").eq("genre", genre).order("joined_at");
     if (mems && mems.length > 0) {
       const usernames = mems.map(m => m.username);
-      const { data: socials } = await supabaseRef.current.from("user_social_links").select("username, instagram, tiktok, facebook, x_twitter").in("username", usernames);
+      const userIds = mems.map(m => m.user_id).filter(Boolean);
+      const [{ data: socials }, { data: profiles }] = await Promise.all([
+        supabaseRef.current.from("user_social_links").select("username, instagram, tiktok, facebook, x_twitter").in("username", usernames),
+        userIds.length ? supabaseRef.current.from("public_profiles").select("user_id, avatar_url").in("user_id", userIds) : { data: [] },
+      ]);
       const socialMap = Object.fromEntries((socials || []).map(s => [s.username, s]));
-      setMembers(mems.map(m => ({ ...m, socials: socialMap[m.username] || {} })));
+      const avatarMap = Object.fromEntries((profiles || []).map(p => [p.user_id, p.avatar_url]));
+      setMembers(mems.map(m => ({ ...m, socials: socialMap[m.username] || {}, avatar: avatarMap[m.user_id] || null })));
     } else {
       setMembers([]);
     }
     setShowMembers(true);
+  };
+
+  const loadThread = async (thread) => {
+    setActiveThread(thread);
+    setThreadReplies([]);
+    const { data } = await supabaseRef.current.from("group_discussion_replies")
+      .select("*").eq("discussion_id", thread.id).order("created_at");
+    setThreadReplies(data || []);
+  };
+
+  const handleCreateThread = async () => {
+    if (!newThreadTitle.trim()) { setThreadMsg("Please add a title."); return; }
+    if (!newThreadContent.trim()) { setThreadMsg("Please add some content."); return; }
+    if (!isMember) { setThreadMsg("Join the group to start a discussion."); return; }
+    const title = newThreadTitle.trim();
+    const content = newThreadContent.trim();
+    if (containsBannedWords(title + " " + content)) { setThreadMsg("Your post contains language that isn't allowed."); return; }
+    const toxic = await checkToxicity(content);
+    if (toxic) { setThreadMsg("Your post was flagged as potentially harmful. Please revise."); return; }
+    const { data, error } = await supabaseRef.current.from("group_discussions").insert({
+      genre, user_id: authUser.id, username, title, content, reply_count: 0,
+    }).select().single();
+    if (error) { setThreadMsg("Error creating discussion."); return; }
+    setNewThreadTitle(""); setNewThreadContent(""); setThreadMsg("");
+    setShowNewThread(false);
+    setDiscussions(prev => [data, ...prev]);
+    setActiveThread(data);
+    setThreadReplies([]);
+  };
+
+  const handleThreadReply = async () => {
+    if (!newThreadReply.trim() || !authUser || !isMember) return;
+    const text = newThreadReply.trim();
+    if (containsBannedWords(text)) { setThreadMsg("Your reply contains language that isn't allowed."); return; }
+    const toxic = await checkToxicity(text);
+    if (toxic) { setThreadMsg("Your reply was flagged as potentially harmful. Please revise."); return; }
+    const sb = supabaseRef.current;
+    await sb.from("group_discussion_replies").insert({
+      discussion_id: activeThread.id, user_id: authUser.id, username, content: text,
+    });
+    const newCount = (activeThread.reply_count || 0) + 1;
+    await sb.from("group_discussions").update({ reply_count: newCount, last_reply_at: new Date().toISOString() }).eq("id", activeThread.id);
+    setNewThreadReply("");
+    setActiveThread(t => ({ ...t, reply_count: newCount }));
+    const { data } = await sb.from("group_discussion_replies").select("*").eq("discussion_id", activeThread.id).order("created_at");
+    setThreadReplies(data || []);
+  };
+
+  const handleDeleteGroupPost = async (postId) => {
+    if (!window.confirm("Delete this post?")) return;
+    await supabaseRef.current.from("group_posts").delete().eq("id", postId);
+    loadData();
+  };
+
+  const handleDeleteGroupDiscussion = async (discId) => {
+    if (!window.confirm("Delete this discussion and all its replies?")) return;
+    await supabaseRef.current.from("group_discussion_replies").delete().eq("discussion_id", discId);
+    await supabaseRef.current.from("group_discussions").delete().eq("id", discId);
+    setActiveThread(null);
+    loadData();
+  };
+
+  const handleDeleteGroupReply = async (replyId) => {
+    if (!window.confirm("Delete this reply?")) return;
+    await supabaseRef.current.from("group_discussion_replies").delete().eq("id", replyId);
+    const newCount = Math.max(0, (activeThread.reply_count || 1) - 1);
+    await supabaseRef.current.from("group_discussions").update({ reply_count: newCount }).eq("id", activeThread.id);
+    setActiveThread(t => ({ ...t, reply_count: newCount }));
+    const { data } = await supabaseRef.current.from("group_discussion_replies").select("*").eq("discussion_id", activeThread.id).order("created_at");
+    setThreadReplies(data || []);
   };
 
   const filteredPosts = filterType === "all" ? posts : posts.filter(p => p.post_type === filterType);
@@ -9733,14 +12108,32 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
               </div>
               {canPost && (
                 <button onClick={handleJoinLeave} disabled={joining} style={btnStyle(isMember ? th.bgMuted : th.accent, isMember ? th.text : "#fff")}>
-                  {joining ? "…" : isMember ? "✓ Joined" : "Join"}
+                  {joining ? "…" : isMember ? "Leave Group" : "Join Group"}
                 </button>
               )}
               {!canPost && canRead && (
                 <div style={{ fontSize: 12, color: th.textSoft, fontStyle: "italic" }}>Read only</div>
               )}
             </div>
+            {postMsg && !showNewPost && (
+              <div style={{ fontSize: 13, color: "#c0392b", marginBottom: 10, padding: "8px 12px", background: "#fdf0f0", borderRadius: 8, border: "1px solid #f5c6cb" }}>{postMsg}</div>
+            )}
 
+            {/* Main tab bar */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 16, background: th.bgMuted, borderRadius: 10, padding: 4 }}>
+              {[["feed","📢 Feed"],["discussions","🗨️ Discussions"]].map(([id, label]) => (
+                <button key={id} onClick={() => { setMainTab(id); setActiveThread(null); setShowNewThread(false); setThreadMsg(""); }} style={{
+                  flex: 1, padding: "8px", borderRadius: 8, border: "none",
+                  background: mainTab === id ? th.bg : "none",
+                  color: mainTab === id ? th.text : th.textSoft,
+                  fontWeight: mainTab === id ? 700 : 400, cursor: "pointer",
+                  fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif',
+                  boxShadow: mainTab === id ? "0 1px 4px rgba(0,0,0,0.12)" : "none",
+                }}>{label}</button>
+              ))}
+            </div>
+
+            {mainTab === "feed" && <>
             {/* Community Rules Banner */}
             <div style={{ ...cardStyle, marginBottom: 16, background: `${th.accent}10`, borderColor: `${th.accent}40` }}>
               <button onClick={() => setRulesOpen(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
@@ -9786,7 +12179,7 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                       </div>
                     ))}
                   </div>
-                  <button onClick={() => { localStorage.setItem("sk_rules_agreed", "1"); setRulesAgreed(true); setShowRulesModal(false); setShowNewPost(true); }} style={{ width: "100%", padding: "12px", borderRadius: 10, background: th.accent, border: "none", color: th.bg, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8 }}>
+                  <button onClick={() => { localStorage.setItem("sk_rules_agreed", "1"); setRulesAgreed(true); setShowRulesModal(false); if (rulesContext === "thread") { setShowNewThread(true); } else { setShowNewPost(true); } }} style={{ width: "100%", padding: "12px", borderRadius: 10, background: th.accent, border: "none", color: th.bg, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8 }}>
                     I Agree — Let Me Post
                   </button>
                   <button onClick={() => setShowRulesModal(false)} style={{ width: "100%", padding: "10px", borderRadius: 10, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
@@ -9798,7 +12191,7 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
 
             {/* New Post button */}
             {canPost && isMember && !showNewPost && (
-              <button onClick={() => { if (!rulesAgreed) { setShowRulesModal(true); } else { setShowNewPost(true); } }} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
+              <button onClick={() => { if (!rulesAgreed) { setRulesContext("post"); setShowRulesModal(true); } else { setShowNewPost(true); } }} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
                 + New Post
               </button>
             )}
@@ -9829,9 +12222,21 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                   value={postContent} onChange={e => setPostContent(e.target.value)}
                   rows={3} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
                 />
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button onClick={() => setShowNewPost(false)} style={btnStyle(th.bgMuted, th.text)}>Cancel</button>
-                  <button onClick={handlePost} style={btnStyle(th.accent)}>Post</button>
+                {postImage && (
+                  <div style={{ position: "relative", display: "inline-block", marginBottom: 8 }}>
+                    <img src={postImage} alt="upload preview" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, display: "block" }} />
+                    <button onClick={() => setPostImage(null)} style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 14, lineHeight: "24px", textAlign: "center", padding: 0 }}>✕</button>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+                  <label style={{ cursor: "pointer", color: th.textSoft, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { if (e.target.files[0]) handleGroupImageUpload(e.target.files[0]); e.target.value = ""; }} />
+                    {postImageUploading ? "Uploading…" : "📷 Add Photo"}
+                  </label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => { setShowNewPost(false); setPostImage(null); }} style={btnStyle(th.bgMuted, th.text)}>Cancel</button>
+                    <button onClick={handlePost} disabled={postImageUploading} style={btnStyle(th.accent)}>Post</button>
+                  </div>
                 </div>
                 {postMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 6 }}>{postMsg}</div>}
               </div>
@@ -9869,6 +12274,9 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                     <span style={{ background: typeColors[post.post_type] || th.accent, color: "#fff", borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 600 }}>{pt.label}</span>
                     <span style={{ flex: 1 }} />
                     <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
+                    {(canPost || authUser?.id === post.user_id) && (
+                      <button onClick={() => handleDeleteGroupPost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: "0 0 0 8px" }} title="Delete post">🗑</button>
+                    )}
                   </div>
                   {(post.book_title) && (
                     <div style={{ background: th.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
@@ -9876,7 +12284,8 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                       {post.book_author && <div style={{ fontSize: 12, color: th.textSoft }}>by {post.book_author}</div>}
                     </div>
                   )}
-                  <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 10 }}>{post.content}</div>
+                  {post.content && <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 10 }}>{post.content}</div>}
+                  {post.image_url && <img src={post.image_url} alt="post" style={{ maxWidth: "100%", borderRadius: 8, marginBottom: 10, display: "block" }} />}
                   <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
                     <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{post.username}</span>
                   </div>
@@ -9940,6 +12349,123 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
                 </div>
               );
             })}
+            </>}
+
+            {mainTab === "discussions" && <>
+              {/* Thread detail view */}
+              {activeThread ? (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                    <button onClick={() => { setActiveThread(null); setNewThreadReply(""); setThreadMsg(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 18, padding: 0 }}>‹</button>
+                    <span style={{ fontSize: 13, color: th.textSoft }}>Back to Discussions</span>
+                  </div>
+                  <div style={cardStyle}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                      <div style={{ fontWeight: 700, color: th.text, fontSize: 17, flex: 1 }}>{activeThread.title}</div>
+                      {(canPost || authUser?.id === activeThread.user_id) && (
+                        <button onClick={() => handleDeleteGroupDiscussion(activeThread.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 15, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 10 }}>
+                      @{activeThread.username} · {new Date(activeThread.created_at).toLocaleDateString()}
+                    </div>
+                    <div style={{ color: th.text, fontSize: 14, lineHeight: 1.7 }}>{activeThread.content}</div>
+                  </div>
+                  <div style={{ fontWeight: 700, color: th.text, fontSize: 14, margin: "16px 0 10px" }}>
+                    Replies ({activeThread.reply_count || 0})
+                  </div>
+                  {threadReplies.length === 0 && (
+                    <div style={{ textAlign: "center", color: th.textSoft, fontSize: 13, fontStyle: "italic", marginBottom: 16 }}>
+                      No replies yet — be the first to respond!
+                    </div>
+                  )}
+                  {threadReplies.map(r => (
+                    <div key={r.id} style={{ ...cardStyle, marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{r.username}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 11, color: th.textSoft }}>{new Date(r.created_at).toLocaleDateString()}</span>
+                          {(canPost || authUser?.id === r.user_id) && (
+                            <button onClick={() => handleDeleteGroupReply(r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Delete reply">🗑</button>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ color: th.text, fontSize: 13, lineHeight: 1.6 }}>{r.content}</div>
+                    </div>
+                  ))}
+                  {canPost && isMember && (
+                    <div style={{ ...cardStyle, marginTop: 8 }}>
+                      <textarea
+                        placeholder="Write a reply…"
+                        value={newThreadReply}
+                        onChange={e => setNewThreadReply(e.target.value)}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+                      />
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button onClick={handleThreadReply} style={btnStyle(th.accent)}>Reply</button>
+                      </div>
+                      {threadMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 4 }}>{threadMsg}</div>}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {canPost && isMember && !showNewThread && (
+                    <button onClick={() => { if (!rulesAgreed) { setRulesContext("thread"); setShowRulesModal(true); } else { setShowNewThread(true); } }} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
+                      + New Discussion
+                    </button>
+                  )}
+                  {showNewThread && (
+                    <div style={{ ...cardStyle, marginBottom: 16 }}>
+                      <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>New Discussion</h3>
+                      <input
+                        placeholder="Discussion title…"
+                        value={newThreadTitle}
+                        onChange={e => setNewThreadTitle(e.target.value)}
+                        style={{ ...inputStyle, marginBottom: 8 }}
+                      />
+                      <textarea
+                        placeholder="What would you like to discuss?"
+                        value={newThreadContent}
+                        onChange={e => setNewThreadContent(e.target.value)}
+                        rows={4}
+                        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+                      />
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <button onClick={() => { setShowNewThread(false); setThreadMsg(""); }} style={btnStyle(th.bgMuted, th.text)}>Cancel</button>
+                        <button onClick={handleCreateThread} style={btnStyle(th.accent)}>Post</button>
+                      </div>
+                      {threadMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 6 }}>{threadMsg}</div>}
+                    </div>
+                  )}
+                  {discussions.length === 0 ? (
+                    <div style={{ textAlign: "center", color: th.textSoft, fontStyle: "italic", padding: 32 }}>
+                      No discussions yet. Start one!
+                    </div>
+                  ) : discussions.map(disc => (
+                    <div key={disc.id} style={{ marginBottom: 10 }}>
+                      <div style={{ ...cardStyle, cursor: "pointer" }} onClick={() => loadThread(disc)}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                          <div style={{ fontWeight: 700, color: th.text, fontSize: 15, flex: 1 }}>{disc.title}</div>
+                          {(canPost || authUser?.id === disc.user_id) && (
+                            <button onClick={e => { e.stopPropagation(); handleDeleteGroupDiscussion(disc.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 14, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
+                          )}
+                        </div>
+                        <div style={{ color: th.textSoft, fontSize: 13, lineHeight: 1.5, marginBottom: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                          {disc.content}
+                        </div>
+                        <div style={{ display: "flex", gap: 12, fontSize: 12, color: th.textSoft }}>
+                          <span>@{disc.username}</span>
+                          <span>💬 {disc.reply_count || 0} {disc.reply_count === 1 ? "reply" : "replies"}</span>
+                          <span style={{ marginLeft: "auto" }}>{new Date(disc.last_reply_at || disc.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>}
           </>
         )}
       </div>
@@ -9953,13 +12479,20 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
               <button onClick={() => setShowMembers(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
             </div>
             {members.map(m => (
-              <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}` }}>
-                <div style={{ color: th.text, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>@{m.username}</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {m.socials?.instagram && <a href={`https://instagram.com/${m.socials.instagram}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#E1306C", textDecoration: "none" }}>📸 @{m.socials.instagram}</a>}
-                  {m.socials?.tiktok    && <a href={`https://tiktok.com/@${m.socials.tiktok}`}    target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#010101", textDecoration: "none" }}>🎵 @{m.socials.tiktok}</a>}
-                  {m.socials?.facebook  && <a href={`https://facebook.com/${m.socials.facebook}`}  target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#1877F2", textDecoration: "none" }}>📘 {m.socials.facebook}</a>}
-                  {m.socials?.x_twitter && <a href={`https://x.com/${m.socials.x_twitter}`}        target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#14171A", textDecoration: "none" }}>🐦 @{m.socials.x_twitter}</a>}
+              <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", flexShrink: 0, background: th.bgMuted, border: `2px solid ${th.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {m.avatar
+                    ? <img src={m.avatar} alt={m.username} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <span style={{ fontSize: 16, fontWeight: 700, color: th.accent }}>{(m.username || "?")[0].toUpperCase()}</span>}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: th.text, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>@{m.username}</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {m.socials?.instagram && <a href={`https://instagram.com/${m.socials.instagram}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#E1306C", textDecoration: "none" }}>📸 @{m.socials.instagram}</a>}
+                    {m.socials?.tiktok    && <a href={`https://tiktok.com/@${m.socials.tiktok}`}    target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#010101", textDecoration: "none" }}>🎵 @{m.socials.tiktok}</a>}
+                    {m.socials?.facebook  && <a href={`https://facebook.com/${m.socials.facebook}`}  target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#1877F2", textDecoration: "none" }}>📘 {m.socials.facebook}</a>}
+                    {m.socials?.x_twitter && <a href={`https://x.com/${m.socials.x_twitter}`}        target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#14171A", textDecoration: "none" }}>🐦 @{m.socials.x_twitter}</a>}
+                  </div>
                 </div>
               </div>
             ))}
@@ -9970,10 +12503,11 @@ function GenreGroupPage({ genre, authUser, supabaseRef, onClose, onOpenSubscript
   );
 }
 
-function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscription }) {
+function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
-  const userTier = localStorage.getItem("sk_user_tier") || "reluctant";
+  const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
   const hasAccess = authUser && ["librarian", "storykeeper"].includes(userTier);
+  const canPost = hasAccess;
 
   const now = new Date();
   const year = now.getFullYear();
@@ -9982,27 +12516,58 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const monthName = monthNames[month - 1];
 
-  const lastSaturday = (() => {
-    const d = new Date(year, month, 0);
+  // Next month (for nominating/voting)
+  const nextMonthRaw = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonthName = monthNames[nextMonthRaw - 1];
+
+  const lastSaturdayOf = (y, m) => {
+    const d = new Date(y, m, 0);
     while (d.getDay() !== 6) d.setDate(d.getDate() - 1);
     return d.getDate();
-  })();
+  };
+  const lastSaturday = lastSaturdayOf(year, month);
+
+  // Days 1-10: nominating for next month; 11-20: voting for next month; 21+: reading this month's pick
   const basePhase = day <= 10 ? "nominating" : day <= 20 ? "voting" : "reading";
   const currentPhase = day === lastSaturday && day > 20 ? "meeting" : basePhase;
 
+  // The session we nominate/vote for is always NEXT month
+  const nomVoteYear = nextYear;
+  const nomVoteMonth = nextMonthRaw;
+  // The session we're currently reading is THIS month
+  const readingYear = year;
+  const readingMonth = month;
+
   const meetingUrl = `https://meet.jit.si/StoryKeeper-${genre.replace(/[\s&]/g, "-")}-${year}-${String(month).padStart(2,"0")}`;
 
-  const [session, setSession] = React.useState(null);
+  const [readingSession, setReadingSession] = React.useState(null);
+  const [nomVoteSession, setNomVoteSession] = React.useState(null);
+
   const [nominations, setNominations] = React.useState([]);
+  const [readingNominations, setReadingNominations] = React.useState([]);
   const [myVote, setMyVote] = React.useState(null);
   const [username, setUsername] = React.useState("");
   const [loading, setLoading] = React.useState(true);
+  const [isMemberBC, setIsMemberBC] = React.useState(false);
+  const [memberCountBC, setMemberCountBC] = React.useState(0);
+  const [joiningBC, setJoiningBC] = React.useState(false);
+  const [joinMsgBC, setJoinMsgBC] = React.useState("");
+  const [membersBC, setMembersBC] = React.useState([]);
+  const [showMembersBC, setShowMembersBC] = React.useState(false);
   const [nomTitle, setNomTitle] = React.useState("");
   const [nomAuthor, setNomAuthor] = React.useState("");
+  const [nomCover, setNomCover] = React.useState("");
+  const [nomSearch, setNomSearch] = React.useState("");
+  const [nomResults, setNomResults] = React.useState([]);
+  const [nomSearching, setNomSearching] = React.useState(false);
+  const [nomSelected, setNomSelected] = React.useState(null);
   const [nomMsg, setNomMsg] = React.useState("");
   const [posts, setPosts] = React.useState([]);
   const [newPost, setNewPost] = React.useState("");
   const [postMsg, setPostMsg] = React.useState("");
+  const [bcPostImage, setBcPostImage] = React.useState(null);
+  const [bcPostImageUploading, setBcPostImageUploading] = React.useState(false);
   const [expandedPost, setExpandedPost] = React.useState(null);
   const [postReplies, setPostReplies] = React.useState({});
   const [replyText, setReplyText] = React.useState("");
@@ -10010,6 +12575,19 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
   const [rulesOpenBC, setRulesOpenBC] = React.useState(false);
   const [showRulesModalBC, setShowRulesModalBC] = React.useState(false);
   const [rulesAgreedBC, setRulesAgreedBC] = React.useState(() => !!localStorage.getItem("sk_rules_agreed"));
+
+  const [mainTabBC, setMainTabBC]           = React.useState("feed");
+  const [pastPicks, setPastPicks]           = React.useState([]);
+  const [pastPicksLoaded, setPastPicksLoaded] = React.useState(false);
+  const [discussionsBC, setDiscussionsBC]   = React.useState([]);
+  const [activeThreadBC, setActiveThreadBC] = React.useState(null);
+  const [threadRepliesBC, setThreadRepliesBC] = React.useState([]);
+  const [showNewThreadBC, setShowNewThreadBC] = React.useState(false);
+  const [newThreadTitleBC, setNewThreadTitleBC] = React.useState("");
+  const [newThreadContentBC, setNewThreadContentBC] = React.useState("");
+  const [newThreadReplyBC, setNewThreadReplyBC] = React.useState("");
+  const [threadMsgBC, setThreadMsgBC]       = React.useState("");
+  const [showPhaseInfo, setShowPhaseInfo]   = React.useState(false);
 
   const handleReportBC = async (contentId, contentType, contentText, contentUsername) => {
     if (!authUser || reportedBC.has(contentId)) return;
@@ -10023,8 +12601,10 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
 
   React.useEffect(() => {
     if (!authUser || !supabaseRef.current) return;
-    supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).single()
-      .then(({ data }) => { if (data) setUsername(data.username); });
+    const fallback = authUser?.user_metadata?.full_name || "";
+    if (fallback) setUsername(fallback);
+    supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => { if (data?.username) setUsername(data.username); });
   }, [authUser]);
 
   const loadData = React.useCallback(async () => {
@@ -10032,19 +12612,37 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
     setLoading(true);
     const sb = supabaseRef.current;
 
-    const meetDate = new Date(year, month - 1, lastSaturday).toISOString().split("T")[0];
-    let { data: sess } = await sb.from("book_club_sessions")
-      .select("*").eq("genre", genre).eq("year", year).eq("month", month).maybeSingle();
-    if (!sess) {
+    // Load or create the reading session (this month — the book chosen last month)
+    const meetDate = new Date(readingYear, readingMonth - 1, lastSaturday).toISOString().split("T")[0];
+    let { data: rSess } = await sb.from("book_club_sessions")
+      .select("*").eq("genre", genre).eq("year", readingYear).eq("month", readingMonth).maybeSingle();
+    if (!rSess) {
       const { data: newSess } = await sb.from("book_club_sessions")
-        .insert({ genre, year, month, status: currentPhase, meeting_date: meetDate })
+        .insert({ genre, year: readingYear, month: readingMonth, status: "reading", meeting_date: meetDate })
         .select().single();
-      sess = newSess;
+      rSess = newSess;
     }
-    if (sess) {
-      setSession(sess);
+    if (rSess) {
+      setReadingSession(rSess);
+      const { data: rNoms } = await sb.from("book_club_nominations")
+        .select("*, book_club_votes(user_id)").eq("session_id", rSess.id).order("created_at");
+      setReadingNominations(rNoms || []);
+    }
+
+    // Load or create the nominating/voting session (next month)
+    const nextMeetDate = new Date(nextYear, nextMonthRaw - 1, lastSaturdayOf(nextYear, nextMonthRaw)).toISOString().split("T")[0];
+    let { data: nvSess } = await sb.from("book_club_sessions")
+      .select("*").eq("genre", genre).eq("year", nomVoteYear).eq("month", nomVoteMonth).maybeSingle();
+    if (!nvSess) {
+      const { data: newSess } = await sb.from("book_club_sessions")
+        .insert({ genre, year: nomVoteYear, month: nomVoteMonth, status: "nominating", meeting_date: nextMeetDate })
+        .select().single();
+      nvSess = newSess;
+    }
+    if (nvSess) {
+      setNomVoteSession(nvSess);
       const { data: noms } = await sb.from("book_club_nominations")
-        .select("*, book_club_votes(user_id)").eq("session_id", sess.id).order("created_at");
+        .select("*, book_club_votes(user_id)").eq("session_id", nvSess.id).order("created_at");
       setNominations(noms || []);
       if (authUser) {
         const voted = (noms || []).find(n => (n.book_club_votes || []).some(v => v.user_id === authUser.id));
@@ -10054,6 +12652,17 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
     const { data: postsData } = await sb.from("book_club_posts")
       .select("*").eq("genre", genre).order("created_at", { ascending: false }).limit(50);
     setPosts(postsData || []);
+
+    const { data: discsData } = await sb.from("book_club_discussions").select("*").eq("genre", genre)
+      .order("last_reply_at", { ascending: false }).limit(50);
+    setDiscussionsBC(discsData || []);
+
+    const { count: memCount } = await sb.from("book_club_members").select("*", { count: "exact", head: true }).eq("genre", genre);
+    setMemberCountBC(memCount || 0);
+    if (authUser) {
+      const { data: mem } = await sb.from("book_club_members").select("user_id").eq("genre", genre).eq("user_id", authUser.id).maybeSingle();
+      setIsMemberBC(!!mem);
+    }
     setLoading(false);
   }, [genre, hasAccess, authUser]);
 
@@ -10065,12 +12674,14 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
     if (!username) { setNomMsg("Please set a username in your profile first."); return; }
     const myNoms = nominations.filter(n => n.user_id === authUser.id);
     if (myNoms.length >= 3) { setNomMsg("You can nominate up to 3 books per month."); return; }
+    if (!nomVoteSession) { setNomMsg("Session not loaded yet. Please try again."); return; }
     const { error } = await supabaseRef.current.from("book_club_nominations").insert({
-      session_id: session.id, user_id: authUser.id, username,
+      session_id: nomVoteSession.id, user_id: authUser.id, username,
       book_title: nomTitle.trim(), book_author: nomAuthor.trim() || null,
+      cover_url: nomCover || null,
     });
     if (error) { setNomMsg("Error: " + error.message); return; }
-    setNomTitle(""); setNomAuthor(""); setNomMsg("Nominated! ✓");
+    setNomTitle(""); setNomAuthor(""); setNomCover(""); setNomSearch(""); setNomResults([]); setNomSelected(null); setNomMsg("Nominated! ✓");
     loadData();
   };
 
@@ -10088,18 +12699,74 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
     loadData();
   };
 
+  const handleDeleteBCPost = async (postId) => {
+    if (!window.confirm("Delete this post?")) return;
+    await supabaseRef.current.from("book_club_posts").delete().eq("id", postId);
+    loadData();
+  };
+
+  const handleDeleteBCDiscussion = async (discId) => {
+    if (!window.confirm("Delete this discussion and all its replies?")) return;
+    await supabaseRef.current.from("book_club_discussion_replies").delete().eq("discussion_id", discId);
+    await supabaseRef.current.from("book_club_discussions").delete().eq("id", discId);
+    setActiveThreadBC(null);
+    loadData();
+  };
+
+  const handleDeleteBCReply = async (replyId) => {
+    if (!window.confirm("Delete this reply?")) return;
+    await supabaseRef.current.from("book_club_discussion_replies").delete().eq("id", replyId);
+    const newCount = Math.max(0, (activeThreadBC.reply_count || 1) - 1);
+    await supabaseRef.current.from("book_club_discussions").update({ reply_count: newCount }).eq("id", activeThreadBC.id);
+    setActiveThreadBC(t => ({ ...t, reply_count: newCount }));
+    const { data } = await supabaseRef.current.from("book_club_discussion_replies").select("*").eq("discussion_id", activeThreadBC.id).order("created_at");
+    setThreadRepliesBC(data || []);
+  };
+
+  const loadPastPicks = async () => {
+    if (pastPicksLoaded) return;
+    const sb = supabaseRef.current;
+    const { data: sessions } = await sb.from("book_club_sessions")
+      .select("*").eq("genre", genre)
+      .lt("year", year).or(`year.eq.${year},month.lt.${month}`)
+      .order("year", { ascending: false }).order("month", { ascending: false })
+      .limit(24);
+    if (!sessions || sessions.length === 0) { setPastPicksLoaded(true); return; }
+    const picks = await Promise.all(sessions.map(async sess => {
+      const { data: noms } = await sb.from("book_club_nominations")
+        .select("*, book_club_votes(user_id)").eq("session_id", sess.id);
+      if (!noms || noms.length === 0) return null;
+      const winner = noms.reduce((a, b) => (b.book_club_votes?.length || 0) > (a.book_club_votes?.length || 0) ? b : a, noms[0]);
+      return { session: sess, winner, totalVotes: noms.reduce((sum, n) => sum + (n.book_club_votes?.length || 0), 0) };
+    }));
+    setPastPicks(picks.filter(Boolean));
+    setPastPicksLoaded(true);
+  };
+
+  const handleBCImageUpload = async (file) => {
+    if (!file || !authUser) return;
+    setBcPostImageUploading(true);
+    const ext = file.name.split(".").pop();
+    const path = `${authUser.id}/${Date.now()}.${ext}`;
+    const { error } = await supabaseRef.current.storage.from("post-images").upload(path, file, { upsert: true });
+    if (error) { setBcPostImageUploading(false); setPostMsg("Image upload failed."); return; }
+    const { data } = supabaseRef.current.storage.from("post-images").getPublicUrl(path);
+    setBcPostImage(data.publicUrl);
+    setBcPostImageUploading(false);
+  };
+
   const handlePost = async () => {
-    if (!newPost.trim()) return;
+    if (!newPost.trim() && !bcPostImage) return;
     if (!authUser || !username) { setPostMsg("Sign in and set a username to post."); return; }
     const text = newPost.trim();
-    if (containsBannedWords(text)) { setPostMsg("Your post contains language that isn't allowed. Please revise and try again."); return; }
-    const toxic = await checkToxicity(text);
-    if (toxic) { setPostMsg("Your post was flagged as potentially harmful. Please revise and try again."); return; }
+    if (text && containsBannedWords(text)) { setPostMsg("Your post contains language that isn't allowed. Please revise and try again."); return; }
+    if (text) { const toxic = await checkToxicity(text); if (toxic) { setPostMsg("Your post was flagged as potentially harmful. Please revise and try again."); return; } }
     const { error } = await supabaseRef.current.from("book_club_posts").insert({
-      user_id: authUser.id, username, genre, post_type: "discussion", content: text,
+      user_id: authUser.id, username, genre, post_type: "discussion",
+      content: text || null, image_url: bcPostImage || null,
     });
     if (error) { setPostMsg("Error posting."); return; }
-    setNewPost(""); setPostMsg("");
+    setNewPost(""); setPostMsg(""); setBcPostImage(null);
     loadData();
   };
 
@@ -10128,14 +12795,114 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
     loadReplies(postId);
   };
 
-  const winningNom = nominations.length > 0
-    ? nominations.reduce((a, b) => (b.book_club_votes?.length || 0) > (a.book_club_votes?.length || 0) ? b : a, nominations[0])
+  const loadThreadBC = async (thread) => {
+    setActiveThreadBC(thread);
+    setThreadRepliesBC([]);
+    const { data } = await supabaseRef.current.from("book_club_discussion_replies")
+      .select("*").eq("discussion_id", thread.id).order("created_at");
+    setThreadRepliesBC(data || []);
+  };
+
+  const loadMembersBC = async () => {
+    const { data: memList } = await supabaseRef.current.from("book_club_members").select("username, joined_at, user_id").eq("genre", genre).order("joined_at");
+    if (memList && memList.length > 0) {
+      const usernames = memList.map(m => m.username);
+      const userIds = memList.map(m => m.user_id).filter(Boolean);
+      const [{ data: socials }, { data: profiles }] = await Promise.all([
+        supabaseRef.current.from("user_social_links").select("username, instagram, tiktok, facebook, x_twitter").in("username", usernames),
+        userIds.length ? supabaseRef.current.from("public_profiles").select("user_id, avatar_url").in("user_id", userIds) : { data: [] },
+      ]);
+      const socialMap = Object.fromEntries((socials || []).map(s => [s.username, s]));
+      const avatarMap = Object.fromEntries((profiles || []).map(p => [p.user_id, p.avatar_url]));
+      setMembersBC(memList.map(m => ({ ...m, socials: socialMap[m.username] || {}, avatar: avatarMap[m.user_id] || null })));
+    } else {
+      setMembersBC([]);
+    }
+    setShowMembersBC(true);
+  };
+
+  const handleJoinLeaveBC = async () => {
+    if (!authUser || !canPost) return;
+    let resolvedUsername = username || authUser?.user_metadata?.full_name || "";
+    if (!resolvedUsername) {
+      const { data } = await supabaseRef.current.from("usernames").select("username").eq("user_id", authUser.id).maybeSingle();
+      if (data?.username) resolvedUsername = data.username;
+    }
+    if (resolvedUsername) setUsername(resolvedUsername);
+    if (!resolvedUsername) {
+      setJoinMsgBC("Please set a username in your profile before joining a book club.");
+      return;
+    }
+    const sb = supabaseRef.current;
+    if (isMemberBC) {
+      await sb.from("book_club_members").delete().eq("genre", genre).eq("user_id", authUser.id);
+      setIsMemberBC(false);
+      setMemberCountBC(c => Math.max(0, c - 1));
+      setJoinMsgBC("You've left this book club.");
+    } else {
+      const confirmed = window.confirm(
+        "By joining this book club, you agree to our community rules:\n\n• Be respectful and kind\n• No spam or self-promotion\n• Stay on topic\n• No harassment or hate speech\n\nDo you agree?"
+      );
+      if (!confirmed) return;
+      const { error } = await sb.from("book_club_members").insert({ genre, user_id: authUser.id, username: resolvedUsername, joined_at: new Date().toISOString() });
+      if (!error) {
+        setIsMemberBC(true);
+        setMemberCountBC(c => c + 1);
+        setJoinMsgBC("Welcome to the book club!");
+      } else {
+        setJoinMsgBC("Something went wrong. Please try again.");
+      }
+    }
+    setTimeout(() => setJoinMsgBC(""), 3000);
+  };
+
+  const handleCreateThreadBC = async () => {
+    if (!newThreadTitleBC.trim()) { setThreadMsgBC("Please add a title."); return; }
+    if (!newThreadContentBC.trim()) { setThreadMsgBC("Please add some content."); return; }
+    if (!authUser || !username) { setThreadMsgBC("Sign in and set a username to post."); return; }
+    const title = newThreadTitleBC.trim();
+    const content = newThreadContentBC.trim();
+    if (containsBannedWords(title + " " + content)) { setThreadMsgBC("Your post contains language that isn't allowed."); return; }
+    const toxic = await checkToxicity(content);
+    if (toxic) { setThreadMsgBC("Your post was flagged as potentially harmful. Please revise."); return; }
+    const { data, error } = await supabaseRef.current.from("book_club_discussions").insert({
+      genre, user_id: authUser.id, username, title, content, reply_count: 0,
+    }).select().single();
+    if (error) { setThreadMsgBC("Error creating discussion."); return; }
+    setNewThreadTitleBC(""); setNewThreadContentBC(""); setThreadMsgBC("");
+    setShowNewThreadBC(false);
+    setDiscussionsBC(prev => [data, ...prev]);
+    setActiveThreadBC(data);
+    setThreadRepliesBC([]);
+  };
+
+  const handleThreadReplyBC = async () => {
+    if (!newThreadReplyBC.trim() || !authUser || !username) return;
+    const text = newThreadReplyBC.trim();
+    if (containsBannedWords(text)) { setThreadMsgBC("Your reply contains language that isn't allowed."); return; }
+    const toxic = await checkToxicity(text);
+    if (toxic) { setThreadMsgBC("Your reply was flagged as potentially harmful. Please revise."); return; }
+    const sb = supabaseRef.current;
+    await sb.from("book_club_discussion_replies").insert({
+      discussion_id: activeThreadBC.id, user_id: authUser.id, username, content: text,
+    });
+    const newCount = (activeThreadBC.reply_count || 0) + 1;
+    await sb.from("book_club_discussions").update({ reply_count: newCount, last_reply_at: new Date().toISOString() }).eq("id", activeThreadBC.id);
+    setNewThreadReplyBC("");
+    setActiveThreadBC(t => ({ ...t, reply_count: newCount }));
+    const { data } = await sb.from("book_club_discussion_replies").select("*").eq("discussion_id", activeThreadBC.id).order("created_at");
+    setThreadRepliesBC(data || []);
+  };
+
+  const winningNom = readingNominations.length > 0
+    ? readingNominations.reduce((a, b) => (b.book_club_votes?.length || 0) > (a.book_club_votes?.length || 0) ? b : a, readingNominations[0])
     : null;
 
+  const ord = n => n + (n===1?"st":n===2?"nd":n===3?"rd":"th");
   const phaseInfo = {
-    nominating: { label: "Nominations Open", emoji: "📝", color: "#6B8C5E", desc: `Nominate a book for ${monthName}'s reading pick. Voting opens on the 11th.` },
-    voting:     { label: "Voting Open", emoji: "🗳️", color: "#5E6B8C", desc: `Vote for ${monthName}'s book pick. Voting closes on the 20th.` },
-    reading:    { label: "Reading in Progress", emoji: "📖", color: "#8C5E3C", desc: `The group is reading this month's pick. Meeting on the ${lastSaturday}${lastSaturday===1?"st":lastSaturday===2?"nd":lastSaturday===3?"rd":"th"}.` },
+    nominating: { label: `Nominate for ${nextMonthName}`, emoji: "📝", color: "#6B8C5E", desc: `Nominate a book for ${nextMonthName}'s reading pick. Voting opens on the 11th.` },
+    voting:     { label: `Vote for ${nextMonthName}`, emoji: "🗳️", color: "#5E6B8C", desc: `Vote for ${nextMonthName}'s book pick. Voting closes on the 20th. Winner announced on the 21st!` },
+    reading:    { label: "Reading in Progress", emoji: "📖", color: "#8C5E3C", desc: `The group is reading ${monthName}'s pick. Meeting on the ${ord(lastSaturday)} at 8:00 PM ET.` },
     meeting:    { label: "Meeting Day!", emoji: "🎉", color: "#8C5E6B", desc: `Today is ${monthName}'s book club meeting! Join the video call below.` },
   };
   const pi = phaseInfo[currentPhase];
@@ -10154,7 +12921,47 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
             <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
             <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>📚 Book Club</h2>
           </div>
+          <button onClick={() => setShowPhaseInfo(true)} title="How Book Club works" style={{
+            width: 30, height: 30, borderRadius: "50%", border: `2px solid ${th.accent}`,
+            background: "none", color: th.accent, fontSize: 15, fontWeight: 700,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: "serif", flexShrink: 0,
+          }}>?</button>
         </div>
+
+        {/* Phase info modal */}
+        {showPhaseInfo && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowPhaseInfo(false)}>
+            <div style={{ background: th.bg, border: `1px solid ${th.border}`, borderRadius: 16, padding: 24, maxWidth: 420, width: "100%", boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+                <h3 style={{ margin: 0, color: th.text, fontSize: 18 }}>📚 How Book Club Works</h3>
+                <button onClick={() => setShowPhaseInfo(false)} style={{ background: "none", border: "none", cursor: "pointer", color: th.textSoft, fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
+              </div>
+              {[
+                { emoji: "📝", label: "Nominating", dates: "Days 1 – 10", color: "#6B8C5E",
+                  desc: `Each member may nominate up to 3 books for next month's reading pick. Any book is fair game!` },
+                { emoji: "🗳️", label: "Voting", dates: "Days 11 – 20", color: "#5E6B8C",
+                  desc: `The 3 books with the most nominations advance to the ballot. Each member casts 1 vote. The book with the most votes wins.` },
+                { emoji: "📖", label: "Reading", dates: "Days 21 – last Saturday", color: "#8C5E3C",
+                  desc: `The winning book is announced and the group spends the rest of the month reading it. Discuss in the thread below!` },
+                { emoji: "🎉", label: "Meeting", dates: "Last Saturday of the month", color: "#8C5E6B",
+                  desc: `The group meets via video call at 8:00 PM ET to discuss the book, share thoughts, and nominate a host for next month.` },
+              ].map(phase => (
+                <div key={phase.label} style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: phase.color + "22", border: `2px solid ${phase.color}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{phase.emoji}</div>
+                  <div>
+                    <div style={{ fontWeight: 700, color: th.text, fontSize: 14 }}>{phase.label} <span style={{ fontWeight: 400, color: th.textSoft, fontSize: 12 }}>· {phase.dates}</span></div>
+                    <div style={{ fontSize: 13, color: th.textSoft, marginTop: 3, lineHeight: 1.5 }}>{phase.desc}</div>
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontSize: 12, color: th.textSoft, borderTop: `1px solid ${th.border}`, paddingTop: 12, marginTop: 4, lineHeight: 1.6 }}>
+                The cycle repeats every month — nominate for <strong style={{ color: th.text }}>{nextMonthName}</strong> now while reading <strong style={{ color: th.text }}>{monthName}</strong>'s pick!
+              </div>
+              <button onClick={() => setShowPhaseInfo(false)} style={{ marginTop: 16, width: "100%", background: th.accent, border: "none", borderRadius: 8, padding: "10px 0", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>Got it</button>
+            </div>
+          </div>
+        )}
 
         {/* Tier gate */}
         {!hasAccess ? (
@@ -10175,7 +12982,7 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
         ) : (
           <>
             {/* Phase banner */}
-            <div style={{ ...cardStyle, background: pi.color + "22", borderColor: pi.color + "55", marginBottom: 20 }}>
+            <div style={{ ...cardStyle, background: pi.color + "22", borderColor: pi.color + "55", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 28 }}>{pi.emoji}</span>
                 <div>
@@ -10185,13 +12992,117 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
               </div>
             </div>
 
+            {/* Member bar */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, padding: "10px 14px", background: th.bgMuted, borderRadius: 10 }}>
+              <div style={{ fontSize: 13, color: th.textSoft }}>
+                <button onClick={loadMembersBC} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: th.textSoft, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                  <span style={{ fontWeight: 700, color: th.text }}>{memberCountBC}</span> member{memberCountBC !== 1 ? "s" : ""} · View all
+                </button>
+              </div>
+              {canPost && (
+                <button onClick={handleJoinLeaveBC} disabled={joiningBC} style={{ background: isMemberBC ? th.bgMuted : th.accent, border: isMemberBC ? `1px solid ${th.border}` : "none", borderRadius: 8, padding: "7px 16px", color: isMemberBC ? th.text : "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                  {isMemberBC ? "Leave Club" : "Join Book Club"}
+                </button>
+              )}
+            </div>
+            {joinMsgBC && <div style={{ fontSize: 13, color: joinMsgBC.startsWith("Welcome") ? "#6B8C5E" : "#c0392b", marginBottom: 10, textAlign: "center" }}>{joinMsgBC}</div>}
+
+            {/* Jitsi video link — always visible */}
+            <div style={{ ...cardStyle, marginBottom: 16, display: "flex", alignItems: "center", gap: 12, background: "#6B8C5E22", borderColor: "#6B8C5E55" }}>
+              <span style={{ fontSize: 24 }}>📹</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: th.text, fontSize: 14 }}>{monthName} Meeting Room</div>
+                <div style={{ fontSize: 12, color: th.textSoft, marginTop: 1 }}>Video call on {monthName} {lastSaturday} at 8:00 PM ET</div>
+              </div>
+              <button onClick={() => window.open(meetingUrl, "_blank")} style={{ background: "#6B8C5E", border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', whiteSpace: "nowrap" }}>
+                Join
+              </button>
+            </div>
+
+            {/* Main tab bar */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 16, background: th.bgMuted, borderRadius: 10, padding: 4 }}>
+              {[["feed","📚 Club"],["discussions","🗨️ Discussions"],["pastpicks","🏆 Past Picks"]].map(([id, label]) => (
+                <button key={id} onClick={() => { setMainTabBC(id); setActiveThreadBC(null); setShowNewThreadBC(false); setThreadMsgBC(""); if (id === "pastpicks") loadPastPicks(); }} style={{
+                  flex: 1, padding: "8px", borderRadius: 8, border: "none",
+                  background: mainTabBC === id ? th.bg : "none",
+                  color: mainTabBC === id ? th.text : th.textSoft,
+                  fontWeight: mainTabBC === id ? 700 : 400, cursor: "pointer",
+                  fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif',
+                  boxShadow: mainTabBC === id ? "0 1px 4px rgba(0,0,0,0.12)" : "none",
+                }}>{label}</button>
+              ))}
+            </div>
+
+            {mainTabBC === "feed" && <>
+
+
             {/* NOMINATING PHASE */}
             {currentPhase === "nominating" && (
               <div style={cardStyle}>
-                <h3 style={{ margin: "0 0 14px", color: th.text, fontSize: 16 }}>📝 Nominate a Book</h3>
+                <h3 style={{ margin: "0 0 14px", color: th.text, fontSize: 16 }}>📝 Nominate a Book for {nextMonthName}</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <input style={inputStyle} placeholder="Book title *" value={nomTitle} onChange={e => setNomTitle(e.target.value)} />
-                  <input style={inputStyle} placeholder="Author (optional)" value={nomAuthor} onChange={e => setNomAuthor(e.target.value)} />
+                  {!nomSelected ? (
+                    <>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input style={{ ...inputStyle, flex: 1 }} placeholder="Search by title or author…" value={nomSearch}
+                          onChange={e => setNomSearch(e.target.value)}
+                          onKeyDown={async e => {
+                            if (e.key === "Enter" && nomSearch.trim().length > 1) {
+                              setNomSearching(true); setNomResults([]);
+                              try {
+                                const res = await fetch(`/api/books-search?q=${encodeURIComponent(nomSearch.trim())}`);
+                                const data = await res.json();
+                                setNomResults((data.items || []).slice(0, 8));
+                              } catch {}
+                              setNomSearching(false);
+                            }
+                          }} />
+                        <button onClick={async () => {
+                          if (nomSearch.trim().length < 2) return;
+                          setNomSearching(true); setNomResults([]);
+                          try {
+                            const res = await fetch(`/api/books-search?q=${encodeURIComponent(nomSearch.trim())}`);
+                            const data = await res.json();
+                            setNomResults((data.items || []).slice(0, 8));
+                          } catch {}
+                          setNomSearching(false);
+                        }} style={btnStyle(th.accent)}>Search</button>
+                      </div>
+                      {nomSearching && <div style={{ fontSize: 13, color: th.textSoft }}>Searching…</div>}
+                      {nomResults.map((item, i) => {
+                        const v = item.volumeInfo || {};
+                        const cover = v.imageLinks?.thumbnail || "";
+                        const title = v.title || "Unknown";
+                        const author = (v.authors || []).join(", ");
+                        return (
+                          <div key={i} onClick={() => { setNomSelected(item); setNomTitle(title); setNomAuthor(author); setNomCover(cover); setNomResults([]); }}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, border: `1px solid ${th.border}`, cursor: "pointer", background: th.bgMuted }}>
+                            {cover
+                              ? <img src={cover} alt={title} style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                              : <div style={{ width: 36, height: 52, background: th.bg, borderRadius: 4, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📚</div>}
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: th.text }}>{title}</div>
+                              {author && <div style={{ fontSize: 12, color: th.textSoft }}>{author}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div style={{ fontSize: 12, color: th.textSoft, textAlign: "center" }}>Or type manually:</div>
+                      <input style={inputStyle} placeholder="Book title *" value={nomTitle} onChange={e => setNomTitle(e.target.value)} />
+                      <input style={inputStyle} placeholder="Author (optional)" value={nomAuthor} onChange={e => setNomAuthor(e.target.value)} />
+                    </>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 10px", borderRadius: 8, background: th.bgMuted, border: `1px solid ${th.border}` }}>
+                      {nomCover
+                        ? <img src={nomCover} alt={nomTitle} style={{ width: 44, height: 64, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                        : <div style={{ width: 44, height: 64, background: th.bg, borderRadius: 4, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>📚</div>}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: th.text }}>{nomTitle}</div>
+                        {nomAuthor && <div style={{ fontSize: 12, color: th.textSoft }}>{nomAuthor}</div>}
+                      </div>
+                      <button onClick={() => { setNomSelected(null); setNomTitle(""); setNomAuthor(""); setNomCover(""); }} style={{ background: "none", border: "none", color: th.textSoft, cursor: "pointer", fontSize: 18 }}>✕</button>
+                    </div>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 12, color: th.textSoft }}>{nominations.filter(n => n.user_id === authUser?.id).length}/3 nominations used</span>
                     <button onClick={handleNominate} style={btnStyle(th.accent)}>Nominate</button>
@@ -10202,54 +13113,122 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
             )}
 
             {/* Nominations list (nominating + voting phases) */}
-            {(currentPhase === "nominating" || currentPhase === "voting") && nominations.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <h3 style={{ margin: "0 0 10px", color: th.text, fontSize: 16 }}>
-                  {currentPhase === "voting" ? "🗳️ Vote for Your Pick" : "Current Nominations"}
-                </h3>
-                {nominations.map(nom => {
-                  const voteCount = nom.book_club_votes?.length || 0;
-                  const isMine = myVote === nom.id;
-                  return (
-                    <div key={nom.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, color: th.text, fontSize: 15 }}>{nom.book_title}</div>
-                        {nom.book_author && <div style={{ fontSize: 13, color: th.textSoft }}>by {nom.book_author}</div>}
-                        <div style={{ fontSize: 12, color: th.textSoft, marginTop: 2 }}>Nominated by @{nom.username}</div>
-                      </div>
-                      {currentPhase === "voting" && (
-                        <button onClick={() => handleVote(nom.id)} style={{
-                          background: isMine ? th.accent : th.bgMuted,
-                          border: `2px solid ${th.accent}`, borderRadius: 20, padding: "6px 14px",
-                          color: isMine ? "#fff" : th.accent, fontSize: 13, cursor: "pointer",
-                          fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
-                        }}>
-                          {isMine ? "✓ Voted" : "Vote"} · {voteCount}
-                        </button>
-                      )}
-                      {currentPhase === "nominating" && (
-                        <div style={{ fontSize: 13, color: th.textSoft }}>{voteCount} {voteCount === 1 ? "vote" : "votes"}</div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {(currentPhase === "nominating" || currentPhase === "voting") && (() => {
+              // Group nominations by title (case-insensitive) to count how many members nominated each book
+              const groups = {};
+              nominations.forEach(nom => {
+                const key = nom.book_title.toLowerCase().trim();
+                if (!groups[key]) {
+                  groups[key] = {
+                    id: nom.id,
+                    book_title: nom.book_title,
+                    book_author: nom.book_author,
+                    cover_url: nom.cover_url,
+                    username: nom.username,
+                    user_id: nom.user_id,
+                    nominatorCount: 1,
+                    allIds: [nom.id],
+                    voteCount: (nom.book_club_votes || []).length,
+                    myNomId: nom.user_id === authUser?.id ? nom.id : null,
+                  };
+                } else {
+                  groups[key].nominatorCount++;
+                  groups[key].allIds.push(nom.id);
+                  groups[key].voteCount += (nom.book_club_votes || []).length;
+                  if (!groups[key].cover_url && nom.cover_url) groups[key].cover_url = nom.cover_url;
+                  if (nom.user_id === authUser?.id) groups[key].myNomId = nom.id;
+                }
+              });
+              const allGroups = Object.values(groups).sort((a, b) => b.nominatorCount - a.nominatorCount);
+              // During voting, only show top 3
+              const displayList = currentPhase === "voting" ? allGroups.slice(0, 3) : allGroups;
 
-            {nominations.length === 0 && currentPhase === "nominating" && (
-              <div style={{ textAlign: "center", color: th.textSoft, fontSize: 14, fontStyle: "italic", marginBottom: 16 }}>
-                No nominations yet — be the first!
-              </div>
-            )}
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <h3 style={{ margin: 0, color: th.text, fontSize: 16 }}>
+                      {currentPhase === "voting" ? `🗳️ Vote for ${nextMonthName}'s Pick` : `📝 ${nextMonthName} Nominations`}
+                    </h3>
+                    <span style={{ fontSize: 12, color: th.textSoft }}>
+                      {currentPhase === "voting"
+                        ? `Top ${displayList.length} of ${allGroups.length}`
+                        : `${allGroups.length} book${allGroups.length !== 1 ? "s" : ""}`}
+                    </span>
+                  </div>
+                  {currentPhase === "voting" && allGroups.length > 0 && (
+                    <div style={{ fontSize: 12, color: th.textSoft, fontStyle: "italic", marginBottom: 12, textAlign: "center" }}>
+                      The top {Math.min(3, allGroups.length)} most-nominated book{Math.min(3, allGroups.length) !== 1 ? "s" : ""} advance to voting.
+                    </div>
+                  )}
+                  {displayList.length === 0 ? (
+                    <div style={{ ...cardStyle, textAlign: "center", color: th.textSoft, fontSize: 14, fontStyle: "italic", padding: "24px 16px" }}>
+                      {currentPhase === "nominating"
+                        ? `No nominations yet for ${nextMonthName} — be the first!`
+                        : `No books were nominated for ${nextMonthName} this month.`}
+                    </div>
+                  ) : displayList.map((book, i) => {
+                    const isMine = book.allIds.includes(myVote);
+                    return (
+                      <div key={book.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                        {currentPhase === "voting" && (
+                          <div style={{ fontSize: 18, flexShrink: 0, width: 24, textAlign: "center" }}>
+                            {i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉"}
+                          </div>
+                        )}
+                        {book.cover_url
+                          ? <img src={book.cover_url} alt={book.book_title} style={{ width: 44, height: 64, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                          : <div style={{ width: 44, height: 64, background: th.bgMuted, borderRadius: 4, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>📚</div>}
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, color: th.text, fontSize: 15 }}>{book.book_title}</div>
+                          {book.book_author && <div style={{ fontSize: 13, color: th.textSoft }}>by {book.book_author}</div>}
+                          <div style={{ fontSize: 12, color: th.textSoft, marginTop: 2 }}>
+                            {book.nominatorCount} member{book.nominatorCount !== 1 ? "s" : ""} nominated this
+                          </div>
+                        </div>
+                        {currentPhase === "voting" && (
+                          <button onClick={() => handleVote(book.id)} style={{
+                            background: isMine ? th.accent : th.bgMuted,
+                            border: `2px solid ${th.accent}`, borderRadius: 20, padding: "6px 14px",
+                            color: isMine ? "#fff" : th.accent, fontSize: 13, cursor: "pointer",
+                            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600, flexShrink: 0,
+                          }}>
+                            {isMine ? "✓ Voted" : "Vote"} · {book.voteCount}
+                          </button>
+                        )}
+                        {currentPhase === "nominating" && (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                            <div style={{ fontSize: 12, color: th.accent, fontWeight: 700 }}>#{i + 1}</div>
+                            {(canPost || book.myNomId) && (
+                              <button onClick={async () => {
+                                if (!window.confirm("Remove your nomination?")) return;
+                                await supabaseRef.current.from("book_club_nominations").delete().eq("id", book.myNomId || book.id);
+                                loadData();
+                              }} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Remove nomination">🗑</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* READING / MEETING PHASE — show this month's pick */}
             {(currentPhase === "reading" || currentPhase === "meeting") && winningNom && (
               <div style={{ ...cardStyle, marginBottom: 20 }}>
-                <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>{monthName}'s Pick</div>
-                <div style={{ fontWeight: 700, color: th.text, fontSize: 20, marginBottom: 4 }}>{winningNom.book_title}</div>
-                {winningNom.book_author && <div style={{ fontSize: 14, color: th.textSoft }}>by {winningNom.book_author}</div>}
-                <div style={{ fontSize: 13, color: th.textSoft, marginTop: 4 }}>
-                  {winningNom.book_club_votes?.length || 0} votes · Nominated by @{winningNom.username}
+                <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>🏆 {monthName}'s Pick</div>
+                <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                  {winningNom.cover_url
+                    ? <img src={winningNom.cover_url} alt={winningNom.book_title} style={{ width: 64, height: 92, objectFit: "cover", borderRadius: 6, flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }} />
+                    : <div style={{ width: 64, height: 92, background: th.bg, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>📚</div>}
+                  <div>
+                    <div style={{ fontWeight: 700, color: th.text, fontSize: 20, marginBottom: 4 }}>{winningNom.book_title}</div>
+                    {winningNom.book_author && <div style={{ fontSize: 14, color: th.textSoft, marginBottom: 6 }}>by {winningNom.book_author}</div>}
+                    <div style={{ fontSize: 12, color: th.textSoft }}>
+                      {winningNom.book_club_votes?.length || 0} votes · Nominated by @{winningNom.username}
+                    </div>
+                  </div>
                 </div>
                 {currentPhase === "meeting" && (
                   <button
@@ -10261,11 +13240,40 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
                 )}
                 {currentPhase === "reading" && (
                   <div style={{ marginTop: 12, fontSize: 13, color: th.textSoft, fontStyle: "italic" }}>
-                    Meeting on {monthName} {lastSaturday} — mark your calendar!
+                    Meeting on {monthName} {ord(lastSaturday)} at 8:00 PM ET — mark your calendar!
                   </div>
                 )}
               </div>
             )}
+
+            {(currentPhase === "reading" || currentPhase === "meeting") && readingNominations.length > 1 && (() => {
+              const totalVotes = readingNominations.reduce((sum, n) => sum + (n.book_club_votes?.length || 0), 0);
+              const sorted = [...readingNominations].sort((a, b) => (b.book_club_votes?.length || 0) - (a.book_club_votes?.length || 0));
+              return (
+                <div style={{ ...cardStyle, marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: th.text, marginBottom: 12 }}>🗳️ Final Vote Results</div>
+                  {sorted.map((nom, i) => {
+                    const votes = nom.book_club_votes?.length || 0;
+                    const pct = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
+                    const isWinner = i === 0;
+                    return (
+                      <div key={nom.id} style={{ marginBottom: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontSize: 13, color: th.text, fontWeight: isWinner ? 700 : 400 }}>
+                            {isWinner ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : ""}{nom.book_title}
+                          </span>
+                          <span style={{ fontSize: 13, color: th.textSoft, flexShrink: 0, marginLeft: 8 }}>{votes} vote{votes !== 1 ? "s" : ""} · {pct}%</span>
+                        </div>
+                        <div style={{ height: 8, background: th.bgMuted, borderRadius: 4, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${pct}%`, background: isWinner ? th.accent : th.textSoft, borderRadius: 4, transition: "width 0.6s ease" }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {totalVotes > 0 && <div style={{ fontSize: 12, color: th.textSoft, marginTop: 8, textAlign: "right" }}>{totalVotes} total vote{totalVotes !== 1 ? "s" : ""}</div>}
+                </div>
+              );
+            })()}
 
             {(currentPhase === "reading" || currentPhase === "meeting") && !winningNom && (
               <div style={{ ...cardStyle, textAlign: "center", color: th.textSoft, fontStyle: "italic" }}>
@@ -10340,8 +13348,18 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
                         rows={3}
                         style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }}
                       />
-                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                        <button onClick={handlePost} style={btnStyle(th.accent)}>Post</button>
+                      {bcPostImage && (
+                        <div style={{ position: "relative", display: "inline-block", marginTop: 8 }}>
+                          <img src={bcPostImage} alt="upload preview" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, display: "block" }} />
+                          <button onClick={() => setBcPostImage(null)} style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 14, lineHeight: "24px", textAlign: "center", padding: 0 }}>✕</button>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                        <label style={{ cursor: "pointer", color: th.textSoft, fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+                          <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { if (e.target.files[0]) handleBCImageUpload(e.target.files[0]); e.target.value = ""; }} />
+                          {bcPostImageUploading ? "Uploading…" : "📷 Add Photo"}
+                        </label>
+                        <button onClick={handlePost} disabled={bcPostImageUploading} style={btnStyle(th.accent)}>Post</button>
                       </div>
                       {postMsg && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 4 }}>{postMsg}</div>}
                     </>
@@ -10363,9 +13381,15 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
                 <div key={post.id} style={cardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
                     <span style={{ fontWeight: 700, color: th.accent, fontSize: 14 }}>@{post.username}</span>
-                    <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
+                      {(canPost || authUser?.id === post.user_id) && (
+                        <button onClick={() => handleDeleteBCPost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Delete post">🗑</button>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>{post.content}</div>
+                  {post.content && <div style={{ color: th.text, fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>{post.content}</div>}
+                  {post.image_url && <img src={post.image_url} alt="post" style={{ maxWidth: "100%", borderRadius: 8, marginBottom: 8, display: "block" }} />}
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button onClick={() => togglePost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: th.textSoft, fontSize: 12, padding: 0 }}>
                       {expandedPost === post.id ? "Hide replies" : `Replies (${postReplies[post.id]?.length ?? "…"})`}
@@ -10416,14 +13440,195 @@ function BookClubPage({ genre, authUser, supabaseRef, onClose, onOpenSubscriptio
                 </div>
               ))}
             </div>
+            </>}
+
+            {mainTabBC === "discussions" && <>
+              {activeThreadBC ? (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                    <button onClick={() => { setActiveThreadBC(null); setNewThreadReplyBC(""); setThreadMsgBC(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 18, padding: 0 }}>‹</button>
+                    <span style={{ fontSize: 13, color: th.textSoft }}>Back to Discussions</span>
+                  </div>
+                  <div style={cardStyle}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                      <div style={{ fontWeight: 700, color: th.text, fontSize: 17, flex: 1 }}>{activeThreadBC.title}</div>
+                      {(canPost || authUser?.id === activeThreadBC.user_id) && (
+                        <button onClick={() => handleDeleteBCDiscussion(activeThreadBC.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 15, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 10 }}>
+                      @{activeThreadBC.username} · {new Date(activeThreadBC.created_at).toLocaleDateString()}
+                    </div>
+                    <div style={{ color: th.text, fontSize: 14, lineHeight: 1.7 }}>{activeThreadBC.content}</div>
+                  </div>
+                  <div style={{ fontWeight: 700, color: th.text, fontSize: 14, margin: "16px 0 10px" }}>
+                    Replies ({activeThreadBC.reply_count || 0})
+                  </div>
+                  {threadRepliesBC.length === 0 && (
+                    <div style={{ textAlign: "center", color: th.textSoft, fontSize: 13, fontStyle: "italic", marginBottom: 16 }}>
+                      No replies yet — be the first to respond!
+                    </div>
+                  )}
+                  {threadRepliesBC.map(r => (
+                    <div key={r.id} style={{ ...cardStyle, marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{r.username}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 11, color: th.textSoft }}>{new Date(r.created_at).toLocaleDateString()}</span>
+                          {(canPost || authUser?.id === r.user_id) && (
+                            <button onClick={() => handleDeleteBCReply(r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Delete reply">🗑</button>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ color: th.text, fontSize: 13, lineHeight: 1.6 }}>{r.content}</div>
+                    </div>
+                  ))}
+                  {authUser && username && (
+                    <div style={{ ...cardStyle, marginTop: 8 }}>
+                      <textarea
+                        placeholder="Write a reply…"
+                        value={newThreadReplyBC}
+                        onChange={e => setNewThreadReplyBC(e.target.value)}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+                      />
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button onClick={handleThreadReplyBC} style={btnStyle(th.accent)}>Reply</button>
+                      </div>
+                      {threadMsgBC && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 4 }}>{threadMsgBC}</div>}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {authUser && username && !showNewThreadBC && (
+                    <button onClick={() => { if (!rulesAgreedBC) { setShowRulesModalBC(true); } else { setShowNewThreadBC(true); } }} style={{ ...btnStyle(th.accent), width: "100%", marginBottom: 16, padding: "12px 20px", fontSize: 15 }}>
+                      + New Discussion
+                    </button>
+                  )}
+                  {showNewThreadBC && (
+                    <div style={{ ...cardStyle, marginBottom: 16 }}>
+                      <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>New Discussion</h3>
+                      <input
+                        placeholder="Discussion title…"
+                        value={newThreadTitleBC}
+                        onChange={e => setNewThreadTitleBC(e.target.value)}
+                        style={{ ...inputStyle, marginBottom: 8 }}
+                      />
+                      <textarea
+                        placeholder="What would you like to discuss?"
+                        value={newThreadContentBC}
+                        onChange={e => setNewThreadContentBC(e.target.value)}
+                        rows={4}
+                        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5, marginBottom: 8 }}
+                      />
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <button onClick={() => { setShowNewThreadBC(false); setThreadMsgBC(""); }} style={{ background: th.bgMuted, border: "none", borderRadius: 8, padding: "9px 20px", color: th.text, fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer" }}>Cancel</button>
+                        <button onClick={handleCreateThreadBC} style={btnStyle(th.accent)}>Post</button>
+                      </div>
+                      {threadMsgBC && <div style={{ fontSize: 13, color: "#c0392b", marginTop: 6 }}>{threadMsgBC}</div>}
+                    </div>
+                  )}
+                  {discussionsBC.length === 0 ? (
+                    <div style={{ textAlign: "center", color: th.textSoft, fontStyle: "italic", padding: 32 }}>
+                      No discussions yet. Start one!
+                    </div>
+                  ) : discussionsBC.map(disc => (
+                    <div key={disc.id} style={{ marginBottom: 10 }}>
+                      <div style={{ ...cardStyle, cursor: "pointer" }} onClick={() => loadThreadBC(disc)}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                          <div style={{ fontWeight: 700, color: th.text, fontSize: 15, flex: 1 }}>{disc.title}</div>
+                          {(canPost || authUser?.id === disc.user_id) && (
+                            <button onClick={e => { e.stopPropagation(); handleDeleteBCDiscussion(disc.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 14, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
+                          )}
+                        </div>
+                        <div style={{ color: th.textSoft, fontSize: 13, lineHeight: 1.5, marginBottom: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                          {disc.content}
+                        </div>
+                        <div style={{ display: "flex", gap: 12, fontSize: 12, color: th.textSoft }}>
+                          <span>@{disc.username}</span>
+                          <span>💬 {disc.reply_count || 0} {disc.reply_count === 1 ? "reply" : "replies"}</span>
+                          <span style={{ marginLeft: "auto" }}>{new Date(disc.last_reply_at || disc.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>}
           </>
         )}
       </div>
+
+            {mainTabBC === "pastpicks" && (
+              <div>
+                <h3 style={{ margin: "0 0 16px", color: th.text, fontSize: 16 }}>🏆 Past Book Picks</h3>
+                {!pastPicksLoaded ? (
+                  <div style={{ textAlign: "center", color: th.textSoft, padding: 32 }}>Loading…</div>
+                ) : pastPicks.length === 0 ? (
+                  <div style={{ textAlign: "center", color: th.textSoft, fontStyle: "italic", padding: 32 }}>
+                    No past picks yet — check back after the first month's reading cycle!
+                  </div>
+                ) : pastPicks.map(({ session: sess, winner, totalVotes }) => {
+                  const winVotes = winner.book_club_votes?.length || 0;
+                  const pct = totalVotes > 0 ? Math.round((winVotes / totalVotes) * 100) : 0;
+                  return (
+                    <div key={sess.id} style={{ ...cardStyle, display: "flex", gap: 14, alignItems: "flex-start" }}>
+                      {winner.cover_url
+                        ? <img src={winner.cover_url} alt={winner.book_title} style={{ width: 52, height: 76, objectFit: "cover", borderRadius: 6, flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.18)" }} />
+                        : <div style={{ width: 52, height: 76, background: th.bg, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>📚</div>}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+                          {monthNames[sess.month - 1]} {sess.year}
+                        </div>
+                        <div style={{ fontWeight: 700, color: th.text, fontSize: 16, marginBottom: 2 }}>{winner.book_title}</div>
+                        {winner.book_author && <div style={{ fontSize: 13, color: th.textSoft, marginBottom: 6 }}>by {winner.book_author}</div>}
+                        <div style={{ fontSize: 12, color: th.textSoft }}>
+                          {winVotes} vote{winVotes !== 1 ? "s" : ""}{totalVotes > 0 ? ` · ${pct}% of vote` : ""} · Nominated by @{winner.username}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+      {/* Members modal */}
+      {showMembersBC && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end" }} onClick={() => setShowMembersBC(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: th.bg, borderRadius: "16px 16px 0 0", padding: 24, width: "100%", maxHeight: "60vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Members ({memberCountBC})</h3>
+              <button onClick={() => setShowMembersBC(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
+            </div>
+            {membersBC.length === 0 ? (
+              <div style={{ color: th.textSoft, fontSize: 13, fontStyle: "italic", textAlign: "center", padding: 24 }}>No members yet.</div>
+            ) : membersBC.map(m => (
+              <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", flexShrink: 0, background: th.bgMuted, border: `2px solid ${th.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {m.avatar
+                    ? <img src={m.avatar} alt={m.username} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <span style={{ fontSize: 16, fontWeight: 700, color: th.accent }}>{(m.username || "?")[0].toUpperCase()}</span>}
+                </div>
+                <div style={{ flex: 1 }}>
+                <div style={{ color: th.text, fontSize: 14, fontWeight: 600, marginBottom: 4, fontFamily: '"Palatino Linotype", Palatino, serif' }}>@{m.username}</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {m.socials?.instagram && <a href={`https://instagram.com/${m.socials.instagram}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#E1306C", textDecoration: "none" }}>📸 @{m.socials.instagram}</a>}
+                  {m.socials?.tiktok    && <a href={`https://tiktok.com/@${m.socials.tiktok}`}    target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#010101", textDecoration: "none" }}>🎵 @{m.socials.tiktok}</a>}
+                  {m.socials?.facebook  && <a href={`https://facebook.com/${m.socials.facebook}`}  target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#1877F2", textDecoration: "none" }}>📘 {m.socials.facebook}</a>}
+                  {m.socials?.x_twitter && <a href={`https://x.com/${m.socials.x_twitter}`}        target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#14171A", textDecoration: "none" }}>🐦 @{m.socials.x_twitter}</a>}
+                </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSubscription }) {
+function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSubscription, currentTier = "reluctant", initialSocialLinks, onSocialLinksChange }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const [avatar, setAvatar] = React.useState(() => localStorage.getItem("sk_avatar") || null);
   const [avatarPos, setAvatarPos] = React.useState(() => {
@@ -10437,8 +13642,15 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
   const [deleting, setDeleting] = React.useState(false);
   const dragRef = React.useRef(null);
   const dragStart = React.useRef(null);
+  const [currentUsername, setCurrentUsername] = React.useState("");
   const [editingUsername, setEditingUsername] = React.useState(false);
   const [usernameInput, setUsernameInput] = React.useState("");
+  const [privacySettings, setPrivacySettings] = React.useState(() => {
+    try { return JSON.parse(authUser?.user_metadata?.privacy || "null") || { public: false, showBio: true, showTopBooks: true, showStats: true, showSocials: true }; } catch { return { public: false, showBio: true, showTopBooks: true, showStats: true, showSocials: true }; }
+  });
+  const [privacyMsg, setPrivacyMsg] = React.useState("");
+  const [linkCopied, setLinkCopied] = React.useState(false);
+  const [inviteCopied, setInviteCopied] = React.useState(false);
   const [editingPassword, setEditingPassword] = React.useState(false);
   const [newPassword, setNewPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
@@ -10454,6 +13666,84 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
   const [topBooksInput, setTopBooksInput] = React.useState([]);
   const [topBooksMsg, setTopBooksMsg] = React.useState("");
   const fileRef = React.useRef(null);
+  const [socialLinks, setSocialLinks] = React.useState(initialSocialLinks || { instagram: "", tiktok: "", facebook: "", x_twitter: "" });
+  const [socialInputs, setSocialInputs] = React.useState(initialSocialLinks || { instagram: "", tiktok: "", facebook: "", x_twitter: "" });
+  const [socialEditing, setSocialEditing] = React.useState(false);
+  const [socialMsg, setSocialMsg] = React.useState("");
+
+  React.useEffect(() => {
+    if (!authUser || !supabaseRef?.current) return;
+    const username = authUser?.user_metadata?.full_name || "";
+    if (username) setCurrentUsername(username);
+    const local = localStorage.getItem("sk_avatar");
+    supabaseRef.current.from("public_profiles").select("avatar_url").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data?.avatar_url) {
+          setAvatar(data.avatar_url);
+          try { localStorage.setItem("sk_avatar", data.avatar_url); } catch {}
+        } else if (local) {
+          supabaseRef.current.from("public_profiles")
+            .upsert({ user_id: authUser.id, avatar_url: local }, { onConflict: "user_id" })
+            .then(({ error }) => { if (error) console.error("Avatar sync error:", error); else console.log("Avatar synced to Supabase OK"); });
+        }
+      });
+  }, [authUser?.id]);
+
+  React.useEffect(() => {
+    if (initialSocialLinks) {
+      setSocialLinks(initialSocialLinks);
+      setSocialInputs(initialSocialLinks);
+    }
+  }, [initialSocialLinks]);
+
+  async function handleSaveSocial() {
+    const sb = supabaseRef?.current;
+    if (!sb || !authUser) return;
+    setSocialMsg("Saving...");
+    const payload = {
+      user_id: authUser.id,
+      instagram: socialInputs.instagram.replace(/^@/, "").trim(),
+      facebook: socialInputs.facebook.trim(),
+      x_twitter: socialInputs.x_twitter.replace(/^@/, "").trim(),
+      tiktok: socialLinks.tiktok,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await sb.from("user_social_links").upsert(payload, { onConflict: "user_id" });
+    if (error) { setSocialMsg("Could not save. Try again."); return; }
+    const saved = { instagram: payload.instagram, tiktok: payload.tiktok, facebook: payload.facebook, x_twitter: payload.x_twitter };
+    setSocialLinks(saved);
+    if (onSocialLinksChange) onSocialLinksChange(saved);
+    setSocialEditing(false);
+    setSocialMsg("Saved!");
+    setTimeout(() => setSocialMsg(""), 3000);
+  }
+
+  async function savePrivacy(updated) {
+    setPrivacySettings(updated);
+    setPrivacyMsg("");
+    const sb = supabaseRef?.current;
+    if (!sb || !authUser) return;
+    await sb.auth.updateUser({ data: { privacy: JSON.stringify(updated) } });
+    // Sync to public_profiles so the shareable page reflects latest settings
+    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    await sb.from("public_profiles").upsert({
+      user_id: authUser.id,
+      is_public: updated.public,
+      bio: authUser?.user_metadata?.bio || null,
+      top_books: (() => { try { return JSON.parse(authUser?.user_metadata?.top_books || "null") || null; } catch { return null; } })(),
+      show_bio: updated.showBio,
+      show_top_books: updated.showTopBooks,
+      show_stats: updated.showStats,
+      show_socials: updated.showSocials,
+      total_books: userBooks.length,
+      ebooks: userBooks.filter(b => !b.type || b.type === "ebooks" || b.mediaType === "ebook").length,
+      audiobooks: userBooks.filter(b => b.type === "audiobooks" || b.mediaType === "audiobook").length,
+      finished: userBooks.filter(b => b.status === "finished" || b.status === "read").length,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    setPrivacyMsg("Saved!");
+    setTimeout(() => setPrivacyMsg(""), 2000);
+  }
 
   // Book stats
   const stats = React.useMemo(() => {
@@ -10569,11 +13859,14 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                 <button onClick={() => { setRepositioning(false); setAvatar(localStorage.getItem("sk_avatar") || null); }} style={{ padding: "8px 20px", borderRadius: 8, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
-                <button onClick={() => {
+                <button onClick={async () => {
                   const pos = repoPos;
                   try { localStorage.setItem("sk_avatar", avatar); localStorage.setItem("sk_avatar_pos", JSON.stringify(pos)); } catch {}
                   setAvatarPos(pos);
                   setRepositioning(false);
+                  if (authUser && supabaseRef?.current) {
+                    await supabaseRef.current.from("public_profiles").upsert({ user_id: authUser.id, avatar_url: avatar }, { onConflict: "user_id" });
+                  }
                 }} style={{ padding: "8px 20px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save Position</button>
               </div>
             </div>
@@ -10597,9 +13890,70 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
           )}
           <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleAvatarChange} />
           <div style={{ fontSize: 20, fontWeight: 700, color: th.text, marginBottom: 2 }}>{displayName}</div>
+          {currentUsername && <div style={{ fontSize: 14, fontWeight: 600, color: th.accent, marginBottom: 2 }}>@{currentUsername}</div>}
           <div style={{ fontSize: 13, color: th.textSoft }}>{authUser?.email}</div>
           {!repositioning && <div style={{ fontSize: 11, color: th.textSoft, marginTop: 4, fontStyle: "italic" }}>Tap photo to edit</div>}
         </div>
+
+        {/* Share Link */}
+        {currentUsername && (
+          <div style={{ marginBottom: 24, background: th.bgMuted, borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>My StoryKeeper Link</div>
+            <div style={{ fontSize: 12, color: th.textMid, marginBottom: 10, lineHeight: 1.5 }}>
+              Share this link on social media so others can visit your profile.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ flex: 1, fontSize: 12, color: th.accent, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 6, padding: "7px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                storykeeper-library.vercel.app/#u/{currentUsername}
+              </div>
+              <button onClick={() => {
+                navigator.clipboard.writeText(`https://storykeeper-library.vercel.app/#u/${currentUsername}`);
+                setLinkCopied(true);
+                setTimeout(() => setLinkCopied(false), 2000);
+              }} style={{
+                padding: "7px 14px", borderRadius: 6, fontSize: 12, border: "none",
+                background: th.accent, color: th.bg, cursor: "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif', whiteSpace: "nowrap",
+              }}>{linkCopied ? "Copied!" : "Copy Link"}</button>
+            </div>
+            {!privacySettings.public && (
+              <div style={{ fontSize: 11, color: "#c07000", marginTop: 8, fontStyle: "italic" }}>
+                Your profile is currently private. Enable public profile below so others can see it.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Invite / Referral Link */}
+        {currentUsername && (
+          <div style={{ marginBottom: 24, background: `${th.accent}12`, border: `1px solid ${th.accent}30`, borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: th.accent, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>📣 Invite Friends to StoryKeeper</div>
+            <div style={{ fontSize: 13, color: th.text, lineHeight: 1.6, marginBottom: 12 }}>
+              Share your personal invite link! When friends click it they'll land on the StoryKeeper home page and can sign up.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ flex: 1, fontSize: 12, color: th.accent, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 6, padding: "7px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                thestorykeeper.co?ref={currentUsername}
+              </div>
+              <button onClick={() => {
+                navigator.clipboard.writeText(`https://www.thestorykeeper.co?ref=${currentUsername}`);
+                setInviteCopied(true);
+                setTimeout(() => setInviteCopied(false), 2000);
+              }} style={{ padding: "7px 14px", borderRadius: 6, fontSize: 12, border: "none", background: th.accent, color: th.bg, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', whiteSpace: "nowrap" }}>
+                {inviteCopied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            {typeof navigator.share === "function" && (
+              <button onClick={() => navigator.share({
+                title: "Join me on StoryKeeper 📚",
+                text: "I've been tracking my reading on StoryKeeper — come check it out!",
+                url: `https://www.thestorykeeper.co?ref=${currentUsername}`,
+              })} style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${th.accent}`, background: "none", color: th.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                📤 Share via…
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Bio */}
         <div style={{ marginBottom: 24 }}>
@@ -10627,6 +13981,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
                   setBio(bioInput);
                   setEditingBio(false);
                   setBioMsg("");
+                  supabaseRef.current.from("public_profiles").update({ bio: bioInput, updated_at: new Date().toISOString() }).eq("user_id", authUser.id);
                 }} style={{ flex: 1, padding: "9px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
               </div>
             </div>
@@ -10691,6 +14046,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
                   setTopBooks(filtered);
                   setEditingTopBooks(false);
                   setTopBooksMsg("");
+                  supabaseRef.current.from("public_profiles").update({ top_books: filtered, updated_at: new Date().toISOString() }).eq("user_id", authUser.id);
                 }} style={{ flex: 1, padding: "9px", borderRadius: 8, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
               </div>
             </div>
@@ -10733,34 +14089,45 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
         </div>
 
         {/* Subscription */}
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Subscription</div>
-          <div style={{
-            background: th.bgMuted, borderRadius: 10, padding: "12px 16px",
-            display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8,
-          }}>
-            <div>
-              <div style={{ fontSize: 14, color: th.text, fontWeight: 700 }}>The Reluctant Reader</div>
-              <div style={{ fontSize: 12, color: th.textSoft }}>Free plan</div>
+        {(() => {
+          const tierInfo = TIERS.find(t => t.id === currentTier) || TIERS[0];
+          const isPaid = currentTier !== "reluctant";
+          const isLifetime = authUser?.email === ADMIN_EMAIL || authUser?.email === "ebratt13@yahoo.com";
+          return (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Subscription</div>
+              <div style={{
+                background: th.bgMuted, borderRadius: 10, padding: "12px 16px",
+                display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8,
+              }}>
+                <div>
+                  <div style={{ fontSize: 14, color: th.text, fontWeight: 700 }}>{tierInfo.name}</div>
+                  <div style={{ fontSize: 12, color: th.textSoft }}>{isLifetime ? "Lifetime access" : isPaid ? "Paid plan" : "Free plan"}</div>
+                </div>
+                <span style={{ fontSize: 18 }}>{tierInfo.icon}</span>
+              </div>
+              {!isPaid && !isLifetime && (
+                <button onClick={() => { onClose(); onOpenSubscription(); }} style={{
+                  width: "100%", padding: "10px", borderRadius: 8,
+                  background: th.accent, border: "none", color: th.bg,
+                  cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+                  marginBottom: 8,
+                }}>Upgrade Plan</button>
+              )}
+              {isPaid && !isLifetime && (
+                <button onClick={() => { onClose(); onOpenSubscription(); }} style={{
+                  width: "100%", padding: "10px", borderRadius: 8,
+                  background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
+                  cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+                }}>Manage Subscription</button>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <span style={{ fontSize: 13 }}>🔒</span>
+                <span style={{ fontSize: 11, color: th.textSoft }}>Payments are secure and encrypted via Stripe.</span>
+              </div>
             </div>
-            <span style={{ fontSize: 18 }}>📖</span>
-          </div>
-          <button onClick={() => { onClose(); onOpenSubscription(); }} style={{
-            width: "100%", padding: "10px", borderRadius: 8,
-            background: th.accent, border: "none", color: th.bg,
-            cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
-            marginBottom: 8,
-          }}>Upgrade Plan</button>
-          <button onClick={() => window.open("https://billing.stripe.com/p/login/test_00000000", "_blank")} style={{
-            width: "100%", padding: "10px", borderRadius: 8,
-            background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
-            cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
-          }}>Manage Subscription</button>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-            <span style={{ fontSize: 13 }}>🔒</span>
-            <span style={{ fontSize: 11, color: th.textSoft }}>Payments are secure and encrypted via Stripe.</span>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Account Actions */}
         <div style={{ marginBottom: 24 }}>
@@ -10771,14 +14138,21 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
             <span style={{ fontWeight: 700, color: th.text }}>Email: </span>{authUser?.email}
           </div>
 
-          {/* Update Username */}
-          {!editingUsername ? (
-            <button onClick={() => { setUsernameInput(authUser?.user_metadata?.full_name || ""); setEditingUsername(true); setAccountMsg(""); }} style={{
-              width: "100%", padding: "10px", borderRadius: 8, marginBottom: 8,
-              background: th.bgMuted, border: `1px solid ${th.border}`, color: th.text,
-              cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "left",
-            }}>✏️ Update Username</button>
-          ) : (
+          {/* Username display + update */}
+          <div style={{ background: th.bgMuted, borderRadius: 8, padding: "10px 14px", marginBottom: 8 }}>
+            <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 2 }}>Username</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: th.accent }}>@{currentUsername || "—"}</span>
+              {!editingUsername && (
+                <button onClick={() => { setUsernameInput(currentUsername || ""); setEditingUsername(true); setAccountMsg(""); }} style={{
+                  background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "4px 10px",
+                  color: th.textSoft, fontSize: 12, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif',
+                }}>✏️ Update</button>
+              )}
+            </div>
+          </div>
+
+          {editingUsername && (
             <div style={{ marginBottom: 8, background: th.bgMuted, borderRadius: 8, padding: 12 }}>
               <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6 }}>New username</div>
               <input value={usernameInput} onChange={e => setUsernameInput(e.target.value)}
@@ -10791,7 +14165,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
                   const trimmed = usernameInput.trim();
                   if (!trimmed) { setAccountMsg("Username cannot be empty."); return; }
                   // Check uniqueness in usernames table
-                  const { data: existing } = await sb.from("usernames").select("user_id").eq("username", trimmed.toLowerCase()).single();
+                  const { data: existing } = await sb.from("usernames").select("user_id").eq("username", trimmed.toLowerCase()).maybeSingle();
                   if (existing && existing.user_id !== authUser.id) {
                     setAccountMsg("That username is already taken."); return;
                   }
@@ -10800,7 +14174,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
                   await sb.from("usernames").insert({ username: trimmed.toLowerCase(), user_id: authUser.id });
                   const { error } = await sb.auth.updateUser({ data: { full_name: trimmed } });
                   if (error) setAccountMsg("Error: " + error.message);
-                  else { setAccountMsg("Username updated!"); setEditingUsername(false); }
+                  else { setCurrentUsername(trimmed.toLowerCase()); setAccountMsg("Username updated!"); setEditingUsername(false); localStorage.setItem("sk_username_set", "1"); }
                 }} style={{ flex: 1, padding: "8px", borderRadius: 6, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Save</button>
               </div>
             </div>
@@ -10836,6 +14210,145 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
           )}
 
           {accountMsg && <div style={{ fontSize: 12, color: accountMsg.startsWith("Error") ? "#8B2A2A" : "#2d6a2d", marginBottom: 8, padding: "6px 10px", background: accountMsg.startsWith("Error") ? "#FFF0F0" : "#F0FFF0", borderRadius: 6 }}>{accountMsg}</div>}
+
+          {/* Social Media Links */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>🔗 Social Media</div>
+              {!socialEditing && <button onClick={() => { setSocialEditing(true); setSocialInputs(socialLinks); }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, color: th.textSoft, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>Edit</button>}
+            </div>
+            {socialEditing ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {SOCIAL_PLATFORMS.map(p => (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 18, width: 24, textAlign: "center" }}>{p.emoji}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: th.textSoft, marginBottom: 2 }}>{p.label}</div>
+                      {p.id === "x_twitter" ? (
+                        socialLinks.x_twitter ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ color: "#14171A", fontSize: 13, fontWeight: 600 }}>@{socialLinks.x_twitter}</span>
+                            <button onClick={async () => {
+                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, x_twitter: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+                              setSocialLinks(prev => ({ ...prev, x_twitter: "" }));
+                              setSocialInputs(prev => ({ ...prev, x_twitter: "" }));
+                            }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "2px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => window.open(`/api/oauth/x/start?user_id=${authUser.id}`, "_blank")}
+                            style={{ background: "#14171A", border: "none", borderRadius: 8, padding: "7px 14px", color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600, alignSelf: "flex-start" }}>
+                            𝕏 Connect with X
+                          </button>
+                        )
+                      ) : p.id === "tiktok" ? (
+                        socialLinks.tiktok ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ color: "#010101", fontSize: 13, fontWeight: 600 }}>@{socialLinks.tiktok}</span>
+                            <button onClick={async () => {
+                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, tiktok: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+                              setSocialLinks(prev => ({ ...prev, tiktok: "" }));
+                              setSocialInputs(prev => ({ ...prev, tiktok: "" }));
+                            }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "2px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => window.location.href = `/api/oauth/tiktok/start?user_id=${authUser.id}`}
+                            style={{ background: "#010101", border: "none", borderRadius: 8, padding: "7px 14px", color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
+                            🎵 Connect with TikTok
+                          </button>
+                        )
+                      ) : (
+                        <input
+                          style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box" }}
+                          placeholder={p.placeholder}
+                          value={socialInputs[p.id]}
+                          onChange={e => setSocialInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                  <button onClick={() => setSocialEditing(false)} style={{ padding: "7px 14px", borderRadius: 6, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
+                  <button onClick={handleSaveSocial} style={{ padding: "7px 14px", borderRadius: 6, background: th.accent, border: "none", color: th.bg, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>Save</button>
+                </div>
+                {socialMsg && <div style={{ fontSize: 12, color: socialMsg.includes("Could not") ? "#8B2A2A" : "#6B8C5E", marginTop: 4 }}>{socialMsg}</div>}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {SOCIAL_PLATFORMS.map(p => {
+                  const handle = socialLinks[p.id];
+                  return (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 16, width: 22, textAlign: "center" }}>{p.emoji}</span>
+                      <span style={{ fontSize: 12, color: th.textSoft, width: 64 }}>{p.label}</span>
+                      {handle ? (
+                        <a href={p.prefix + handle} target="_blank" rel="noopener noreferrer"
+                          style={{ color: p.color, fontSize: 13, fontWeight: 600, textDecoration: "none" }}>@{handle}</a>
+                      ) : (
+                        <span style={{ color: th.textSoft, fontSize: 12, fontStyle: "italic" }}>Not connected</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {socialMsg && <div style={{ fontSize: 12, color: "#6B8C5E" }}>{socialMsg}</div>}
+              </div>
+            )}
+          </div>
+
+          {/* Privacy Controls */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Privacy Settings</div>
+
+            {/* Public toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: th.bgMuted, borderRadius: 10, marginBottom: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, color: th.text, fontWeight: 600 }}>Public Profile</div>
+                <div style={{ fontSize: 11, color: th.textSoft, marginTop: 2 }}>Allow others to view your profile via your link</div>
+              </div>
+              <div onClick={() => savePrivacy({ ...privacySettings, public: !privacySettings.public })} style={{
+                width: 44, height: 24, borderRadius: 12, cursor: "pointer", transition: "background 0.2s",
+                background: privacySettings.public ? th.accent : th.textSoft + "66",
+                position: "relative", flexShrink: 0,
+              }}>
+                <div style={{
+                  position: "absolute", top: 3, left: privacySettings.public ? 23 : 3,
+                  width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </div>
+            </div>
+
+            {privacySettings.public && (
+              <div style={{ paddingLeft: 8 }}>
+                {[
+                  { key: "showBio", label: "Bio", desc: "Your personal bio" },
+                  { key: "showTopBooks", label: "Top Books", desc: "Your favorite books list" },
+                  { key: "showStats", label: "Reading Stats", desc: "Total books, ebooks, audiobooks" },
+                  { key: "showSocials", label: "Social Links", desc: "Your linked social accounts" },
+                ].map(item => (
+                  <div key={item.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderRadius: 8, marginBottom: 4 }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: th.text }}>{item.label}</div>
+                      <div style={{ fontSize: 11, color: th.textSoft }}>{item.desc}</div>
+                    </div>
+                    <div onClick={() => savePrivacy({ ...privacySettings, [item.key]: !privacySettings[item.key] })} style={{
+                      width: 38, height: 20, borderRadius: 10, cursor: "pointer", transition: "background 0.2s",
+                      background: privacySettings[item.key] ? th.accent : th.textSoft + "55",
+                      position: "relative", flexShrink: 0,
+                    }}>
+                      <div style={{
+                        position: "absolute", top: 2, left: privacySettings[item.key] ? 20 : 2,
+                        width: 16, height: 16, borderRadius: "50%", background: "#fff",
+                        transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                      }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {privacyMsg && <div style={{ fontSize: 12, color: th.accent, textAlign: "center", marginTop: 6 }}>{privacyMsg}</div>}
+          </div>
 
           <button onClick={() => { onSignOut(); onClose(); }} style={{
             width: "100%", padding: "10px", borderRadius: 8, marginBottom: 8,
@@ -10991,7 +14504,243 @@ function AdminDashboard({ authUser, supabaseRef, onClose }) {
   );
 }
 
+function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const debounceRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
+    if (!isMobile) setTimeout(() => inputRef.current?.focus(), 50);
+  }, []);
+
+  const runSearch = (q) => {
+    const trimmed = q.toLowerCase().trim();
+    if (trimmed.length < 2) { setResults([]); return; }
+    try {
+      const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const userKeys = new Set(userBooks.map(b => b.isbn || b.title));
+      const builtInBooks = Object.entries(library).flatMap(([genre, books]) =>
+        books.map(b => ({ ...b, genre }))
+      ).filter(b => !userKeys.has(b.isbn || b.title));
+      const allBooks = [...userBooks, ...builtInBooks];
+      setResults(allBooks.filter(b =>
+        b.title?.toLowerCase().includes(trimmed) ||
+        b.author?.toLowerCase().includes(trimmed) ||
+        b.genre?.toLowerCase().includes(trimmed)
+      ).slice(0, 50));
+    } catch { setResults([]); }
+  };
+
+  const handleChange = (e) => {
+    const v = e.target.value;
+    setQuery(v);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => runSearch(v), 300);
+  };
+
+  const handleClose = () => { setQuery(""); setResults([]); onClose(); };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(30,18,8,0.85)", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 60 }}
+      onClick={handleClose}>
+      <div style={{ width: "min(600px, 92vw)", display: "flex", flexDirection: "column", gap: 0 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F5ECD7", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+          <span style={{ fontSize: 18 }}>🔍</span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={handleChange}
+            onKeyDown={e => { if (e.key === "Escape") handleClose(); }}
+            placeholder="Search your library by title, author, or genre…"
+            style={{ flex: 1, border: "none", background: "transparent", fontFamily: "Georgia, serif", fontSize: 15, color: "#3A2A1A", outline: "none" }}
+          />
+          {query && <button onClick={() => { setQuery(""); setResults([]); }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#8B5E3C" }}>✕</button>}
+        </div>
+        <div style={{ background: "#F5ECD7", borderRadius: 10, overflow: "hidden", maxHeight: "70vh", overflowY: "auto" }}>
+          {query.length < 2 ? (
+            <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center", fontStyle: "italic" }}>
+              Type at least 2 characters to search your library
+            </div>
+          ) : results.length === 0 ? (
+            <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center" }}>
+              <div style={{ fontStyle: "italic", marginBottom: 12 }}>No books found for "{query}"</div>
+              <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#8B5E3C", color: "#F8F1E4", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                📚 Search for this book to add it
+              </button>
+            </div>
+          ) : (
+            <>
+              {results.map((book, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid #E8D5B0", cursor: "pointer" }}
+                  onClick={() => { onSelectBook(book); handleClose(); }}>
+                  {book.coverUrl
+                    ? <img src={book.coverUrl} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
+                    : <div style={{ width: 36, height: 52, background: "#D8C3A5", borderRadius: 3, flexShrink: 0 }} />
+                  }
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, color: "#3A2A1A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{book.title}</div>
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic" }}>{book.author}</div>
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", marginTop: 2 }}>{book.genre}</div>
+                  </div>
+                  <div style={{ fontSize: 18, flexShrink: 0 }}>
+                    {(book.type === "audiobooks" || book.mediaType === "audiobook") ? "🎧" : (book.type === "physical" || book.mediaType === "physical") ? "📚" : "📱"}
+                  </div>
+                </div>
+              ))}
+              <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic", textAlign: "center" }}>
+                {results.length} result{results.length !== 1 ? "s" : ""}
+              </div>
+              <div style={{ padding: "10px 14px", borderTop: "1px solid #E8D5B0", textAlign: "center" }}>
+                <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: "transparent", color: "#8B5E3C", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600 }}>
+                  + Add a new book to your library
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+class SearchModalErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { crashed: false }; }
+  static getDerivedStateFromError() { return { crashed: true }; }
+  render() {
+    if (this.state.crashed) return null;
+    return this.props.children;
+  }
+}
+
+function GlobalSearchBookModal({ book, onClose, onGoToShelf }) {
+  const thKey = localStorage.getItem("sk_theme") || "firelight";
+  const th = (SK_THEMES[thKey] && SK_THEMES[thKey].accent) ? SK_THEMES[thKey] : { bg: "#FBF6EE", bgMuted: "#EDE0CC", accent: "#6B4E32", text: "#3A2A1A", textSoft: "#6B4E32" };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 8000, background: "rgba(20,14,8,0.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: th.bg, borderRadius: 14, padding: 24, maxWidth: 480, width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 16px 48px rgba(0,0,0,0.6)", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+        <button onClick={onClose} style={{ position: "absolute", top: 12, right: 16, background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
+        <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+          {book.coverUrl
+            ? <img src={book.coverUrl} alt="" style={{ width: 80, height: 120, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
+            : <div style={{ width: 80, height: 120, background: th.bgMuted, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>📖</div>
+          }
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: th.text, lineHeight: 1.3, marginBottom: 6 }}>{book.title}</div>
+            {book.author && <div style={{ fontSize: 14, color: th.textSoft, fontStyle: "italic", marginBottom: 4 }}>{book.author}</div>}
+            {book.genre && <div style={{ fontSize: 12, color: th.accent, marginBottom: 4 }}>{book.genre}</div>}
+            <div style={{ fontSize: 12, color: th.textSoft }}>
+              {(book.type === "audiobooks" || book.mediaType === "audiobook") ? "🎧 Audiobook" : (book.type === "physical" || book.mediaType === "physical") ? "📚 Physical" : "📱 eBook"}
+            </div>
+          </div>
+        </div>
+        {book.description && <p style={{ fontSize: 13, color: th.textSoft, lineHeight: 1.6, marginBottom: 16 }}>{book.description}</p>}
+        <button onClick={onGoToShelf} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: th.accent, color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+          📚 Open Full Book Details
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [soundOn, setSoundOn] = useState(false);
+  const audioRef = useRef(null);
+
+  const startAudio = (ctx) => {
+    const FADE_DURATION = 3000;
+    const FADE_STEPS = 30;
+    const TARGET_VOL = 0.85;
+    const startCrossfade = (c) => {
+      if (!c) return;
+      const incoming = c.activeRain === "A" ? c.rainB : c.rainA;
+      const outgoing = c.activeRain === "A" ? c.rainA : c.rainB;
+      c.activeRain = c.activeRain === "A" ? "B" : "A";
+      incoming.currentTime = 0; incoming.volume = 0;
+      incoming.play().catch(() => {});
+      let step = 0;
+      if (c.xfadeInterval) clearInterval(c.xfadeInterval);
+      c.xfadeInterval = setInterval(() => {
+        step++;
+        const t = step / FADE_STEPS;
+        incoming.volume = Math.min(TARGET_VOL * t, TARGET_VOL);
+        outgoing.volume = Math.max(TARGET_VOL * (1 - t), 0);
+        if (step >= FADE_STEPS) {
+          clearInterval(c.xfadeInterval); c.xfadeInterval = null;
+          try { outgoing.pause(); outgoing.currentTime = 0; } catch (_) {}
+          scheduleNext(c);
+        }
+      }, FADE_DURATION / FADE_STEPS);
+    };
+    const scheduleNext = (c) => {
+      if (!c) return;
+      const active = c.activeRain === "A" ? c.rainA : c.rainB;
+      const remaining = (active.duration - active.currentTime - FADE_DURATION / 1000) * 1000;
+      if (c.xfadeTimer) clearTimeout(c.xfadeTimer);
+      c.xfadeTimer = setTimeout(() => startCrossfade(c), Math.max(remaining, 500));
+    };
+    ctx.rainA.volume = TARGET_VOL;
+    ctx.fire.loop = true; ctx.fire.volume = 0.08;
+    ctx.rainA.addEventListener("loadedmetadata", () => scheduleNext(ctx), { once: true });
+    ctx.rainA.play().catch(() => {});
+    ctx.fire.play().catch(() => {});
+  };
+
+  const toggleSound = () => {
+    try {
+      if (soundOn) {
+        if (audioRef.current) {
+          try { audioRef.current.rainA.pause(); } catch (_) {}
+          try { audioRef.current.rainB.pause(); } catch (_) {}
+          try { audioRef.current.fire.pause(); } catch (_) {}
+          if (audioRef.current.xfadeInterval) clearInterval(audioRef.current.xfadeInterval);
+          if (audioRef.current.xfadeTimer) clearTimeout(audioRef.current.xfadeTimer);
+          audioRef.current = null;
+        }
+        localStorage.setItem("sk_sound", "off");
+        setSoundOn(false);
+        return;
+      }
+      const ctx = { rainA: new Audio("/sounds/rain-thunder.mp3"), rainB: new Audio("/sounds/rain-thunder.mp3"), fire: new Audio("/sounds/fire.mp3"), activeRain: "A", xfadeInterval: null, xfadeTimer: null };
+      startAudio(ctx);
+      audioRef.current = ctx;
+      localStorage.setItem("sk_sound", "on");
+      setSoundOn(true);
+    } catch (_) {
+      setSoundOn(false);
+      audioRef.current = null;
+    }
+  };
+
+  // Auto-resume sound after refresh if it was on.
+  // Browsers block autoplay without a user gesture, so we test-play and fall back
+  // to showing a "tap to resume" state if blocked.
+  useEffect(() => {
+    if (localStorage.getItem("sk_sound") !== "on") return;
+    const ctx = { rainA: new Audio("/sounds/rain-thunder.mp3"), rainB: new Audio("/sounds/rain-thunder.mp3"), fire: new Audio("/sounds/fire.mp3"), activeRain: "A", xfadeInterval: null, xfadeTimer: null };
+    ctx.rainA.volume = 0.85;
+    const playPromise = ctx.rainA.play();
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        // Autoplay allowed — start full audio system
+        ctx.rainA.pause();
+        ctx.rainA.currentTime = 0;
+        startAudio(ctx);
+        audioRef.current = ctx;
+        setSoundOn(true);
+      }).catch(() => {
+        // Autoplay blocked — reset so user knows to tap
+        localStorage.setItem("sk_sound", "off");
+        setSoundOn(false);
+      });
+    } else {
+      startAudio(ctx);
+      audioRef.current = ctx;
+      setSoundOn(true);
+    }
+  }, []);
+
   const [showHome, setShowHome] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     if (h && h !== "#") return false;
@@ -11011,10 +14760,34 @@ export default function App() {
   const [bgToast, setBgToast] = useState(null);
   const bgToastTimer = useRef(null);
   const supabaseRef = useRef(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      const dismissed = localStorage.getItem("sk_install_dismissed");
+      if (!dismissed) setShowInstallBanner(true);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === "accepted") setShowInstallBanner(false);
+    setInstallPrompt(null);
+  };
+
   const [authUser, setAuthUser] = useState(null);
+  const [appSocialLinks, setAppSocialLinks] = useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
+  const [communityAuthorGenres, setCommunityAuthorGenres] = useState({});
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("signin"); // "signin" | "signup"
-  const [authEmail, setAuthEmail] = useState("");
+  const [authEmail, setAuthEmail] = useState(() => localStorage.getItem("sk_saved_email") || "");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -11039,6 +14812,35 @@ export default function App() {
       window.removeEventListener('sk-bg-complete', onComplete);
     };
   }, []);
+
+  useEffect(() => {
+    if (!authUser?.id || !supabaseRef.current) return;
+    supabaseRef.current.from("user_social_links").select("*").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) setAppSocialLinks({ instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" });
+      });
+    // Handle OAuth callback hashes
+    const hash = window.location.hash;
+    if (hash.includes("tiktok_connected=")) {
+      const match = hash.match(/tiktok_connected=([^&]+)/);
+      if (match) {
+        const handle = decodeURIComponent(match[1]);
+        setAppSocialLinks(prev => ({ ...prev, tiktok: handle }));
+        window.location.hash = "";
+      }
+    }
+    if (hash.includes("x_connected=")) {
+      const match = hash.match(/x_connected=([^&]+)/);
+      if (match) {
+        const handle = decodeURIComponent(match[1]);
+        setAppSocialLinks(prev => ({ ...prev, x_twitter: handle }));
+        window.location.hash = "";
+      }
+    }
+    if (hash.includes("tiktok_error=") || hash.includes("x_error=")) {
+      window.location.hash = "";
+    }
+  }, [authUser?.id]);
 
   // --- Cloud sync helpers ---
   const SYNC_KEYS = [
@@ -11163,6 +14965,63 @@ export default function App() {
     syncDebounceRef.current = setTimeout(() => syncToCloud(user), 5000);
   };
 
+  // Sync from cloud whenever app comes back into focus (switching from Safari → PWA etc.)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && authUser) {
+        syncFromCloud(authUser);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [authUser]);
+
+  // Sync to cloud whenever books change
+  useEffect(() => {
+    const handleBooksChanged = () => {
+      if (authUser) triggerAutoSync(authUser);
+    };
+    window.addEventListener("sk-books-changed", handleBooksChanged);
+    return () => window.removeEventListener("sk-books-changed", handleBooksChanged);
+  }, [authUser]);
+
+  async function fetchCommunityAuthorGenres() {
+    const sb = supabaseRef.current || getSupabase();
+    if (!sb) return;
+    const { data } = await sb.from("author_genre_votes").select("author_key, genre");
+    if (!data) return;
+    const counts = {};
+    data.forEach(({ author_key, genre }) => {
+      const k = `${author_key}|||${genre}`;
+      counts[k] = (counts[k] || 0) + 1;
+    });
+    const result = {};
+    Object.entries(counts).forEach(([k, count]) => {
+      if (count >= 3) {
+        const [author_key, genre] = k.split("|||");
+        const existing = result[author_key];
+        if (!existing || counts[`${author_key}|||${existing}`] < count) {
+          result[author_key] = genre;
+        }
+      }
+    });
+    setCommunityAuthorGenres(result);
+  }
+
+  async function syncAuthorGenreVotes(user, authorRules) {
+    const sb = supabaseRef.current || getSupabase();
+    if (!sb || !user) return;
+    const rows = Object.entries(authorRules).map(([author_key, genre]) => ({
+      author_key,
+      genre,
+      user_id: user.id,
+      updated_at: new Date().toISOString(),
+    }));
+    if (rows.length === 0) return;
+    await sb.from("author_genre_votes").upsert(rows, { onConflict: "author_key,user_id" });
+    fetchCommunityAuthorGenres();
+  }
+
   // Supabase auth session
   useEffect(() => {
     const sb = getSupabase();
@@ -11179,23 +15038,76 @@ export default function App() {
         const LIFETIME_EMAILS = [
           "msbratt23@gmail.com",
           "ebratt13@yahoo.com",
+          "mbrady991@gmail.com",
+          "ceb5891@snet.net",
+          "mamadub83@yahoo.com",
         ];
         if (LIFETIME_EMAILS.includes(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
+          setUserTier("storykeeper");
         } else {
           // Load subscription tier from Supabase
-          sb.from("user_subscriptions").select("tier").eq("user_id", user.id).maybeSingle()
+          sb.from("user_subscriptions").select("tier, status").eq("user_id", user.id).maybeSingle()
             .then(({ data }) => {
-              localStorage.setItem("sk_user_tier", data?.tier || "reluctant");
+              const tier = (data?.status === "active" && data?.tier) ? data.tier : "reluctant";
+              localStorage.setItem("sk_user_tier", tier);
+              setUserTier(tier);
             });
         }
       } else {
         localStorage.setItem("sk_user_tier", "reluctant");
+        setUserTier("reluctant");
       }
-      // Only pull from cloud on an actual new sign-in, not on page refresh (INITIAL_SESSION / TOKEN_REFRESHED)
-      if (user && event === "SIGNED_IN") {
+      // On a fresh app load (INITIAL_SESSION), pull the latest cloud data so other devices stay in sync
+      if (user && event === "INITIAL_SESSION") {
+        syncFromCloud(user);
+        fetchCommunityAuthorGenres();
+      }
+      // On actual sign-in, do full sync + onboarding
+      if (user && (event === "SIGNED_IN" || event === "USER_UPDATED")) {
         const pulled = await syncFromCloud(user);
         if (!pulled) await syncToCloud(user);
+        // Always restore username from Supabase on sign-in (handles new devices + sign-out/in)
+        sb.from("usernames").select("username").eq("user_id", user.id).maybeSingle()
+          .then(({ data }) => {
+            if (data?.username) {
+              // Restore username to local flags and user metadata
+              localStorage.setItem("sk_username_set", "1");
+              if (!user.user_metadata?.full_name || user.user_metadata.full_name !== data.username) {
+                sb.auth.updateUser({ data: { full_name: data.username } });
+              }
+            } else if (!localStorage.getItem("sk_username_set")) {
+              // Auto-generate a username from the email prefix so every account always has one
+              const emailPrefix = (user.email || "reader").split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20) || "reader";
+              const tryInsert = async (candidate) => {
+                const { data: existing } = await sb.from("usernames").select("user_id").eq("username", candidate).maybeSingle();
+                if (existing) {
+                  return tryInsert(candidate.slice(0, 16) + Math.floor(1000 + Math.random() * 9000));
+                }
+                await sb.from("usernames").insert({ username: candidate, user_id: user.id });
+                localStorage.setItem("sk_username_set", "1");
+                await sb.auth.updateUser({ data: { full_name: candidate } });
+                setShowUsernameNudge(true);
+              };
+              tryInsert(emailPrefix);
+            }
+          });
+        // Show post-signup onboarding on first login
+        if (event === "SIGNED_IN" && window.location.hash.includes("type=signup")) {
+          setToast("✅ Email confirmed! Welcome to StoryKeeper 📚");
+          setTimeout(() => setToast(""), 5000);
+          window.location.hash = "";
+          if (!localStorage.getItem("sk_new_user_onboarded")) {
+            setShowNewUserOnboarding(true);
+          }
+        } else if (event === "SIGNED_IN" && !localStorage.getItem("sk_new_user_onboarded")) {
+          // Also show for Google OAuth new users
+          const isNewUser = !user.user_metadata?.full_name;
+          if (isNewUser) setShowNewUserOnboarding(true);
+        }
+        // Dismiss welcome screen now that they're signed in
+        localStorage.setItem("sk_onboarded", "1");
+        setShowWelcome(false);
       }
     });
     return () => subscription.unsubscribe();
@@ -11213,6 +15125,7 @@ export default function App() {
       } else {
         const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
         if (error) throw error;
+        localStorage.setItem("sk_saved_email", authEmail);
         setShowAuthModal(false);
       }
     } catch (e) {
@@ -11258,6 +15171,20 @@ export default function App() {
     return h === "#subscription" || localStorage.getItem("sk_current_page") === "subscription";
   });
   const [showAbout, setShowAbout] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [toast, setToast] = useState("");
+  const [userTier, setUserTier] = useState(() => localStorage.getItem("sk_user_tier") || "reluctant");
+  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem("sk_onboarded"));
+  const [showUsernameNudge, setShowUsernameNudge] = useState(false);
+  const [showNewUserOnboarding, setShowNewUserOnboarding] = useState(false);
+  const [showPWAInstallModal, setShowPWAInstallModal] = useState(false);
+  const [showAddToLibrary, setShowAddToLibrary] = useState(false);
+  const [publicProfileUsername, setPublicProfileUsername] = useState(() => {
+    const h = window.location.hash;
+    return h.startsWith("#u/") ? decodeURIComponent(h.slice(3)) : "";
+  });
   const [showAdmin, setShowAdmin] = useState(false);
   const isAdmin = authUser?.email === ADMIN_EMAIL;
   const [showSettings, setShowSettings] = useState(() => {
@@ -11283,6 +15210,9 @@ export default function App() {
     if (saved.startsWith("group:")) return saved.slice(6);
     return null;
   });
+  const [showMyClubs, setShowMyClubs] = useState(false);
+  const [groupPrevPage, setGroupPrevPage] = useState(null);   // "community" | "myclubs" | null
+  const [bookClubPrevPage, setBookClubPrevPage] = useState(null);
   const [showBookClub, setShowBookClub] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h.startsWith("#bookclub=") || localStorage.getItem("sk_current_page")?.startsWith("bookclub:");
@@ -11294,17 +15224,27 @@ export default function App() {
     if (saved.startsWith("bookclub:")) return saved.slice(9);
     return null;
   });
-  const isMobile = useIsMobile();
+  const { isMobile: isPhoneOnly, isTablet, isPWA, isIOS, isAndroid } = useDeviceInfo();
+  const isMobile = isPhoneOnly || isTablet; // phones + tablets use touch layout
   const [ebookProgressMode, setEbookProgressMode] = useState(() => localStorage.getItem("sk_ebook_progress_mode") || "page");
   const [audiobookProgressMode, setAudiobookProgressMode] = useState(() => localStorage.getItem("sk_audiobook_progress_mode") || "chapter");
   const [themeKey, setThemeKey] = useState(() => localStorage.getItem("sk_theme") || "firelight");
   const th = SK_THEMES[themeKey] || SK_THEMES.firelight;
-  const [globalSearch, setGlobalSearch] = useState("");
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [hoverKnot, setHoverKnot] = useState(null); // "toggle" | "stats"
   const [sidebarHover, setSidebarHover] = useState(null);
   const [searchBook, setSearchBook] = useState(null);
   const [autoOpenBook, setAutoOpenBook] = useState(null);
+  const [globalSearchOpenBook, setGlobalSearchOpenBook] = useState(null);
+
+  // Safety net: if nothing is visible, snap back to home
+  useEffect(() => {
+    const anyPageOpen = genre || showFavorites || showTBR || showStats || showSettings ||
+      showProfile || showCommunity || showPlatforms || showAddToLibrary || showSubscription ||
+      showGroup || showBookClub || showGlobalSearch || showMyClubs;
+    if (!anyPageOpen && !showHome) setShowHome(true);
+  }, [genre, showFavorites, showTBR, showStats, showSettings, showProfile, showCommunity,
+      showPlatforms, showAddToLibrary, showSubscription, showGroup, showBookClub, showGlobalSearch, showMyClubs, showHome]);
 
   // Persist current page to localStorage so refresh (including iOS pull-to-refresh) restores position
   useEffect(() => {
@@ -11348,6 +15288,11 @@ export default function App() {
       setShowProfile(h === "#profile");
       setShowSettings(h === "#settings");
       setShowCommunity(h === "#community");
+      if (h.startsWith("#u/")) {
+        setPublicProfileUsername(decodeURIComponent(h.slice(3)));
+      } else {
+        setPublicProfileUsername("");
+      }
       if (h.startsWith("#group=")) {
         setShowGroup(true);
         setGroupGenre(decodeURIComponent(h.slice(7)));
@@ -11448,19 +15393,32 @@ export default function App() {
       )}
 
       {/* PLATFORMS PAGE */}
-      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; }} mediaType={mediaType} th={th} themeKey={themeKey} />}
+      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} />}
+      {showAddToLibrary && <AddToLibraryModal onClose={() => setShowAddToLibrary(false)} th={th} />}
 
       {/* SUBSCRIPTION PAGE */}
-      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; }} />}
+      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; }} currentTier={userTier} />}
+
+      {/* MY CLUBS & GROUPS PAGE */}
+      {showMyClubs && (
+        <MyClubsPage
+          authUser={authUser}
+          supabaseRef={supabaseRef}
+          onClose={() => setShowMyClubs(false)}
+          onOpenGroup={(g) => { setShowMyClubs(false); setGroupPrevPage("myclubs"); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
+          onOpenBookClub={(g) => { setShowMyClubs(false); setBookClubPrevPage("myclubs"); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
+        />
+      )}
 
       {/* COMMUNITY PAGE */}
       {showCommunity && (
         <CommunityPage
           authUser={authUser}
+          userTier={userTier}
           supabaseRef={supabaseRef}
           onClose={() => { setShowCommunity(false); window.location.hash = ""; }}
-          onOpenGroup={(g) => { setShowCommunity(false); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
-          onOpenBookClub={(g) => { setShowCommunity(false); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
+          onOpenGroup={(g) => { setShowCommunity(false); setGroupPrevPage("community"); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
+          onOpenBookClub={(g) => { setShowCommunity(false); setBookClubPrevPage("community"); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
           onOpenSubscription={() => { setShowCommunity(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
         />
       )}
@@ -11470,8 +15428,15 @@ export default function App() {
         <GenreGroupPage
           genre={groupGenre}
           authUser={authUser}
+          userTier={userTier}
           supabaseRef={supabaseRef}
-          onClose={() => { setShowGroup(false); setGroupGenre(null); window.location.hash = ""; }}
+          onClose={() => {
+            setShowGroup(false); setGroupGenre(null);
+            if (groupPrevPage === "community") { setShowCommunity(true); window.location.hash = "#community"; }
+            else if (groupPrevPage === "myclubs") { setShowMyClubs(true); }
+            else { window.location.hash = ""; }
+            setGroupPrevPage(null);
+          }}
           onOpenSubscription={() => { setShowGroup(false); setGroupGenre(null); setShowSubscription(true); window.location.hash = "#subscription"; }}
         />
       )}
@@ -11481,8 +15446,15 @@ export default function App() {
         <BookClubPage
           genre={bookClubGenre}
           authUser={authUser}
+          userTier={userTier}
           supabaseRef={supabaseRef}
-          onClose={() => { setShowBookClub(false); setBookClubGenre(null); window.location.hash = ""; }}
+          onClose={() => {
+            setShowBookClub(false); setBookClubGenre(null);
+            if (bookClubPrevPage === "community") { setShowCommunity(true); window.location.hash = "#community"; }
+            else if (bookClubPrevPage === "myclubs") { setShowMyClubs(true); }
+            else { window.location.hash = ""; }
+            setBookClubPrevPage(null);
+          }}
           onOpenSubscription={() => { setShowBookClub(false); setBookClubGenre(null); setShowSubscription(true); window.location.hash = "#subscription"; }}
         />
       )}
@@ -11492,16 +15464,20 @@ export default function App() {
         onClick={() => setShowSidebar(true)}
         style={{
           position: "fixed",
-          top: 16,
-          left: 16,
+          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          left: "calc(16px + env(safe-area-inset-left, 0px))",
           zIndex: 1000,
-          background: "none",
-          border: "none",
-          fontSize: 22,
+          background: "rgba(58,34,16,0.72)",
+          border: "1px solid rgba(201,169,110,0.35)",
+          borderRadius: 10,
+          fontSize: isPWA && isIOS ? 24 : 22,
           color: "#F5ECD7",
           cursor: "pointer",
           lineHeight: 1,
-          padding: "4px 6px",
+          padding: "6px 10px",
+          backdropFilter: "blur(6px)",
+          WebkitBackdropFilter: "blur(6px)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           display: showSidebar ? "none" : "block",
         }}
         aria-label="Open menu"
@@ -11509,107 +15485,76 @@ export default function App() {
         ☰
       </button>
 
-      {/* GLOBAL SEARCH BUTTON — main screen only */}
-      <button
-        onClick={() => { setShowGlobalSearch(true); setGlobalSearch(""); }}
-        style={{
-          position: "fixed",
-          top: 16,
-          right: 16,
-          zIndex: 1000,
-          background: "rgba(0,0,0,0.25)",
-          border: "1px solid rgba(245,236,215,0.3)",
-          borderRadius: 20,
-          fontSize: 11,
-          color: "#F5ECD7",
-          cursor: "pointer",
-          padding: "4px 10px",
-          display: (showPlatforms || showFavorites || showTBR || showStats || showSubscription || genre) ? "none" : "flex",
-          alignItems: "center",
-          gap: 5,
-          fontFamily: "Georgia, serif",
-        }}
-        aria-label="Search library"
-      >
-        🔍 <span style={{ fontSize: 10, opacity: 0.85 }}>Search Library</span>
-      </button>
+      {/* SYNC NOW BUTTON — top-right, only when signed in */}
+      {authUser && !showSidebar && (
+        <button
+          onClick={async () => {
+            if (syncStatus === "syncing") return;
+            setSyncStatus("syncing");
+            try {
+              await syncToCloud(authUser);
+              await syncFromCloud(authUser);
+              setSyncStatus("done");
+              setTimeout(() => setSyncStatus(""), 3000);
+            } catch {
+              setSyncStatus("error");
+              setTimeout(() => setSyncStatus(""), 3000);
+            }
+          }}
+          title="Sync library across devices"
+          style={{
+            position: "fixed",
+            top: "calc(14px + env(safe-area-inset-top, 0px))",
+            right: "calc(16px + env(safe-area-inset-right, 0px))",
+            zIndex: 1000,
+            background: "rgba(0,0,0,0.25)",
+            border: "none",
+            borderRadius: 20,
+            padding: "5px 11px",
+            fontSize: 13,
+            color: syncStatus === "done" ? "#7ECE8A" : syncStatus === "error" ? "#E07070" : "#F5ECD7",
+            cursor: syncStatus === "syncing" ? "default" : "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            opacity: syncStatus === "syncing" ? 0.7 : 1,
+            transition: "color 0.3s",
+          }}
+        >
+          {syncStatus === "syncing" ? "⟳ Syncing…" : syncStatus === "done" ? "✓ Synced" : syncStatus === "error" ? "✕ Failed" : "⟳ Sync"}
+        </button>
+      )}
+
 
       {/* GLOBAL SEARCH OVERLAY */}
-      {showGlobalSearch && (() => {
-        const allUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-        const q = globalSearch.toLowerCase().trim();
-        const results = q.length < 2 ? [] : allUserBooks.filter(b =>
-          b.title?.toLowerCase().includes(q) ||
-          b.author?.toLowerCase().includes(q) ||
-          b.genre?.toLowerCase().includes(q)
-        ).slice(0, 50);
-        return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(30,18,8,0.85)", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 60 }}
-            onClick={(e) => { if (e.target === e.currentTarget) setShowGlobalSearch(false); }}>
-            <div style={{ width: "min(600px, 92vw)", display: "flex", flexDirection: "column", gap: 0 }} onClick={e => e.stopPropagation()}>
-              {/* Search input */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F5ECD7", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-                <span style={{ fontSize: 18 }}>🔍</span>
-                <input
-                  autoFocus
-                  value={globalSearch}
-                  onChange={e => setGlobalSearch(e.target.value)}
-                  onKeyDown={e => e.key === "Escape" && setShowGlobalSearch(false)}
-                  placeholder="Search by title, author, or genre…"
-                  style={{ flex: 1, border: "none", background: "transparent", fontFamily: "Georgia, serif", fontSize: 15, color: "#3A2A1A", outline: "none" }}
-                />
-                {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#8B5E3C" }}>✕</button>}
-              </div>
+      {showGlobalSearch && (
+        <GlobalSearchOverlay
+          onClose={() => setShowGlobalSearch(false)}
+          onSelectBook={(book) => setGlobalSearchOpenBook(book)}
+          onOpenTBR={() => { setShowTBR(true); setShowHome(false); }}
+        />
+      )}
 
-              {/* Results */}
-              <div style={{ background: "#F5ECD7", borderRadius: 10, overflow: "hidden", maxHeight: "70vh", overflowY: "auto" }}>
-                {q.length < 2 ? (
-                  <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center", fontStyle: "italic" }}>
-                    Type at least 2 characters to search your entire library
-                  </div>
-                ) : results.length === 0 ? (
-                  <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center", fontStyle: "italic" }}>
-                    No books found for "{globalSearch}"
-                  </div>
-                ) : results.map((book, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid #E8D5B0", cursor: "pointer" }}
-                    onClick={() => {
-                      const targetMedia = (book.type === "audiobooks" || book.mediaType === "audiobook") ? "audiobooks" : "ebooks";
-                      setMediaType(targetMedia);
-                      localStorage.setItem("sk_media_type", targetMedia);
-                      setAutoOpenBook(book);
-                      setGenre(book.genre || null);
-                      window.location.hash = "#genre=" + encodeURIComponent(book.genre || "");
-                      setShowHome(false);
-                      setShowGlobalSearch(false);
-                      setGlobalSearch("");
-                    }}>
-                    {book.coverUrl
-                      ? <img src={book.coverUrl} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
-                      : <div style={{ width: 36, height: 52, background: "#D8C3A5", borderRadius: 3, flexShrink: 0 }} />
-                    }
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, color: "#3A2A1A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {book.title}
-                      </div>
-                      <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic" }}>{book.author}</div>
-                      <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", marginTop: 2 }}>{book.genre}</div>
-                    </div>
-                    <div style={{ fontSize: 18, flexShrink: 0 }} title={(book.type === "audiobooks" || book.mediaType === "audiobook") ? "Audiobook" : "eBook"}>
-                      {(book.type === "audiobooks" || book.mediaType === "audiobook") ? "🎧" : "📚"}
-                    </div>
-                  </div>
-                ))}
-                {results.length > 0 && (
-                  <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic", textAlign: "center" }}>
-                    {results.length} result{results.length !== 1 ? "s" : ""}{allUserBooks.filter(b => b.title?.toLowerCase().includes(q) || b.author?.toLowerCase().includes(q) || b.genre?.toLowerCase().includes(q)).length > 50 ? " (showing first 50)" : ""}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* GLOBAL SEARCH BOOK MODAL */}
+      {globalSearchOpenBook && (
+        <GlobalSearchBookModal
+          book={globalSearchOpenBook}
+          onClose={() => setGlobalSearchOpenBook(null)}
+          onGoToShelf={() => {
+            const book = globalSearchOpenBook;
+            setGlobalSearchOpenBook(null);
+            const targetMedia = (book.type === "audiobooks" || book.mediaType === "audiobook") ? "audiobooks" : (book.type === "physical" || book.mediaType === "physical") ? "physical" : "ebooks";
+            setMediaType(targetMedia);
+            localStorage.setItem("sk_media_type", targetMedia);
+            setAutoOpenBook(book);
+            const targetGenre = book.genre || "Fiction";
+            setGenre(targetGenre);
+            window.location.hash = "#genre=" + encodeURIComponent(targetGenre);
+            setShowHome(false);
+          }}
+        />
+      )}
 
       {/* SIDEBAR OVERLAY */}
       {showSidebar && (
@@ -11638,6 +15583,9 @@ export default function App() {
         padding: "60px 0 20px 0",
         transform: showSidebar ? "translateX(0)" : "translateX(-100%)",
         transition: "transform 0.3s ease",
+        overflowY: "auto",
+        overflowX: "hidden",
+        WebkitOverflowScrolling: "touch",
       }}>
         {/* Close button */}
         <button
@@ -11685,60 +15633,95 @@ export default function App() {
           </div>
         )}
 
-        {/* Menu items */}
-        {[
-          { key: "community",     label: "👥 Community",             action: () => { setShowSidebar(false); setShowCommunity(true); window.location.hash = "#community"; } },
-          { key: "profile",       label: "👤 My Profile",            action: () => { setShowSidebar(false); setShowProfile(true); window.location.hash = "#profile"; } },
-          { key: "platforms",     label: "🔗 Platform Connections", action: () => { setShowSidebar(false); setShowPlatforms(true); window.location.hash = "#platforms"; } },
-          { key: "favorites",     label: "❤️ My Favorites",         action: () => { setShowSidebar(false); setShowFavorites(true); window.location.hash = "#favorites"; } },
-          { key: "tbr",           label: "📚 My TBR Shelf",          action: () => { setShowSidebar(false); setShowTBR(true); window.location.hash = "#tbr"; } },
-          { key: "stats",         label: "📖 My Story So Far",        action: () => { setShowSidebar(false); setShowStats(true); window.location.hash = "#stats"; } },
-          { key: "subscription",  label: "🗝️ Subscription",          action: () => { setShowSidebar(false); setShowSubscription(true); window.location.hash = "#subscription"; } },
-          { key: "contact",       label: "✉️ Contact Us",             action: () => { setShowSidebar(false); window.location.href = "mailto:support@thestorykeeper.co"; } },
-          { key: "about",         label: "💗 About StoryKeeper",      action: () => { setShowSidebar(false); setShowAbout(true); } },
-          ...(isAdmin ? [{ key: "admin", label: "🛡️ Moderation Dashboard", action: () => { setShowSidebar(false); setShowAdmin(true); } }] : []),
-          ...(!authUser ? [{ key: "signin", label: "🔐 Sign In / Sign Up", action: () => { setShowSidebar(false); setAuthMode("signin"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess(""); setShowAuthModal(true); } }] : [{ key: "signout", label: "🚪 Sign Out", action: handleSignOut }]),
-        ].map((item) => (
-          <div
-            key={item.key}
-            onClick={item.action}
-            onMouseEnter={() => setSidebarHover(item.key)}
-            onMouseLeave={() => setSidebarHover(null)}
-            style={{
-              padding: "14px 24px",
+        {/* Section helper */}
+        {(() => {
+          const sectionLabel = (text) => (
+            <div style={{
+              padding: "10px 20px 4px",
+              fontSize: 10,
               fontFamily: '"Palatino Linotype", Palatino, serif',
-              fontSize: 15,
-              color: th.text,
-              cursor: "pointer",
-              borderBottom: `1px solid ${th.border}`,
-              background: sidebarHover === item.key ? `${th.accent}18` : "transparent",
-              borderLeft: "3px solid transparent",
-              transition: "background 0.15s",
-            }}
-          >
-            {item.label}
-          </div>
-        ))}
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: th.textSoft,
+              opacity: 0.7,
+            }}>{text}</div>
+          );
+          const item = (key, label, action) => (
+            <div
+              key={key}
+              onClick={action}
+              onMouseEnter={() => setSidebarHover(key)}
+              onMouseLeave={() => setSidebarHover(null)}
+              style={{
+                padding: "12px 20px",
+                fontFamily: '"Palatino Linotype", Palatino, serif',
+                fontSize: 15,
+                color: th.text,
+                cursor: "pointer",
+                background: sidebarHover === key ? `${th.accent}18` : "transparent",
+                borderRadius: 8,
+                margin: "0 8px",
+                transition: "background 0.15s",
+              }}
+            >{label}</div>
+          );
+          const smallItem = (key, label, action) => (
+            <div
+              key={key}
+              onClick={action}
+              onMouseEnter={() => setSidebarHover(key)}
+              onMouseLeave={() => setSidebarHover(null)}
+              style={{
+                padding: "8px 20px",
+                fontFamily: '"Palatino Linotype", Palatino, serif',
+                fontSize: 13,
+                color: th.textSoft,
+                cursor: "pointer",
+                background: sidebarHover === key ? `${th.accent}12` : "transparent",
+                borderRadius: 8,
+                margin: "0 8px",
+                transition: "background 0.15s",
+              }}
+            >{label}</div>
+          );
+          return (
+            <>
+              {sectionLabel("Your Library")}
+              {item("favorites", "❤️ My Favorites",        () => { setShowSidebar(false); setShowFavorites(true); window.location.hash = "#favorites"; })}
+              {item("tbr",       "📚 My TBR Shelf",         () => { setShowSidebar(false); setShowTBR(true); window.location.hash = "#tbr"; })}
+              {item("addbook",   "➕ Add Book to Library",   () => { setShowSidebar(false); setShowAddToLibrary(true); })}
+              {item("stats",     "📖 My Story So Far",       () => { setShowSidebar(false); setShowStats(true); window.location.hash = "#stats"; })}
+              {item("myclubs",   "🏛️ My Clubs & Groups",    () => { setShowSidebar(false); setShowMyClubs(true); })}
 
-        {/* Settings */}
-        <div
-          onClick={() => { setShowSidebar(false); setShowSettings(true); window.location.hash = "#settings"; }}
-          onMouseEnter={() => setSidebarHover("settings")}
-          onMouseLeave={() => setSidebarHover(null)}
-          style={{
-            padding: "14px 24px",
-            fontFamily: '"Palatino Linotype", Palatino, serif',
-            fontSize: 15,
-            color: th.text,
-            borderBottom: `1px solid ${th.border}`,
-            background: sidebarHover === "settings" ? `${th.accent}18` : "transparent",
-            borderLeft: "3px solid transparent",
-            transition: "background 0.15s",
-            cursor: "pointer",
-          }}
-        >
-          ⚙️ Settings
-        </div>
+              <div style={{ borderTop: `1px solid ${th.border}`, margin: "10px 12px" }} />
+
+              {sectionLabel("Account")}
+              {item("profile",      "👤 My Profile",           () => { setShowSidebar(false); setShowProfile(true); window.location.hash = "#profile"; })}
+              {item("platforms",    "🔗 Platform Connections", () => { setShowSidebar(false); setShowPlatforms(true); window.location.hash = "#platforms"; })}
+              {item("subscription", "🗝️ Subscription",         () => { setShowSidebar(false); setShowSubscription(true); window.location.hash = "#subscription"; })}
+              {item("settings",     "⚙️ Settings",             () => { setShowSidebar(false); setShowSettings(true); window.location.hash = "#settings"; })}
+              {isAdmin && item("admin", "🛡️ Moderation",       () => { setShowSidebar(false); setShowAdmin(true); })}
+              {!authUser
+                ? item("signin", "🔐 Sign In / Sign Up", () => { setShowSidebar(false); setAuthMode("signin"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess(""); setShowAuthModal(true); })
+                : item("signout", "🚪 Sign Out", handleSignOut)
+              }
+
+              <div style={{ borderTop: `1px solid ${th.border}`, margin: "10px 12px" }} />
+
+              {sectionLabel("Community")}
+              {item("community", "👥 Community",    () => { setShowSidebar(false); setShowCommunity(true); window.location.hash = "#community"; })}
+              {item("feedback",  "💬 Send Feedback", () => { setShowSidebar(false); setShowFeedback(true); })}
+
+              <div style={{ borderTop: `1px solid ${th.border}`, margin: "10px 12px" }} />
+
+              {smallItem("about",   "💗 About StoryKeeper", () => { setShowSidebar(false); setShowAbout(true); })}
+              {smallItem("contact", "✉️ Contact Us",         () => { setShowSidebar(false); window.location.href = "mailto:support@thestorykeeper.co"; })}
+              {smallItem("privacy", "🔒 Privacy Policy",     () => { setShowSidebar(false); setShowPrivacy(true); })}
+              {smallItem("terms",   "📄 Terms of Service",   () => { setShowSidebar(false); setShowTerms(true); })}
+              <div style={{ height: 16 }} />
+            </>
+          );
+        })()}
       </div>
 
       {/* SEARCH RESULT MODAL */}
@@ -11795,7 +15778,13 @@ export default function App() {
         <MobileBookShelf
           genre={genre}
           mediaType={mediaType}
-          onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+          isTablet={isTablet}
+          isPWA={isPWA}
+          isIOS={isIOS}
+          userTier={userTier}
+          soundOn={soundOn}
+          toggleSound={toggleSound}
+          onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
           onClose={() => { setGenre(null); setShowHome(true); window.location.hash = ""; }}
           onOpenSettings={() => { setShowSettings(true); window.location.hash = "#settings"; }}
           onOpenStats={() => setShowStats(true)}
@@ -11820,7 +15809,13 @@ export default function App() {
         <div style={{ display: showHome ? "block" : "none", position: "fixed", inset: 0, zIndex: 500 }}>
           <MobileHomeView
             mediaType={mediaType}
-            onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+            isTablet={isTablet}
+            isPWA={isPWA}
+            isIOS={isIOS}
+            soundOn={soundOn}
+            toggleSound={toggleSound}
+            onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+            userTier={userTier}
             onGenreClick={(g) => {
               window.location.hash = "#genre=" + encodeURIComponent(g);
               setGenre(g);
@@ -11829,13 +15824,17 @@ export default function App() {
             onOpenSettings={() => { setShowSettings(true); window.location.hash = "#settings"; }}
             onOpenStats={() => setShowStats(true)}
             onOpenProfile={() => { setShowProfile(true); window.location.hash = "#profile"; }}
+            onOpenSearch={() => setShowGlobalSearch(true)}
           />
         </div>
       )}
       {!isMobile && showHome && (
         <HomeView
           mediaType={mediaType}
-          onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+          soundOn={soundOn}
+          toggleSound={toggleSound}
+          onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+          onSetMediaType={(t) => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; if (t === "physical" && isFree) return; localStorage.setItem("sk_media_type", t); setMediaType(t); }}
           onGenreClick={(g) => {
             if (g === "__settings__") {
               return;
@@ -11845,7 +15844,32 @@ export default function App() {
               setShowHome(false);
             }
           }}
+          onOpenSearch={() => setShowGlobalSearch(true)}
         />
+      )}
+
+      {/* PWA install banner */}
+      {showInstallBanner && (
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999,
+          background: "#3A2210", borderTop: "1px solid #6B4E3260",
+          padding: "14px 20px", display: "flex", alignItems: "center", gap: 12,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+        }}>
+          <span style={{ fontSize: 24 }}>📚</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "#F8F1E4", fontSize: 14, fontWeight: 700 }}>Add StoryKeeper to your home screen</div>
+            <div style={{ color: "#C4A870", fontSize: 12 }}>Read your library offline, anytime.</div>
+          </div>
+          <button onClick={handleInstall} style={{
+            background: "#8B5E3C", border: "none", borderRadius: 8,
+            color: "#F8F1E4", padding: "8px 16px", fontSize: 13,
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, cursor: "pointer",
+          }}>Install</button>
+          <button onClick={() => { setShowInstallBanner(false); localStorage.setItem("sk_install_dismissed", "1"); }} style={{
+            background: "none", border: "none", color: "#C4A870", fontSize: 18, cursor: "pointer", padding: "4px 8px",
+          }}>✕</button>
+        </div>
       )}
 
       {/* Floating background-task progress chip */}
@@ -11933,14 +15957,14 @@ export default function App() {
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Default Media Type</div>
               <div style={{ display: "flex", gap: 10 }}>
-                {["ebooks", "audiobooks"].map(t => (
+                {["ebooks", "audiobooks", "physical"].map(t => (
                   <button key={t} onClick={() => { setMediaType(t); localStorage.setItem("sk_media_type", t); }} style={{
                     flex: 1, padding: "9px", borderRadius: 8, cursor: "pointer", fontSize: 13,
                     background: mediaType === t ? th.accent : th.bgMuted,
                     color: mediaType === t ? th.bg : th.text,
                     border: "none", fontFamily: '"Palatino Linotype", Palatino, serif',
                   }}>
-                    {t === "ebooks" ? "📖 eBooks" : "🎧 Audiobooks"}
+                    {t === "ebooks" ? "📱 eBooks" : t === "audiobooks" ? "🎧 Audiobooks" : "📚 Physical"}
                   </button>
                 ))}
               </div>
@@ -11977,6 +16001,21 @@ export default function App() {
                   background: th.bgMuted, border: "none", cursor: "pointer", fontSize: 13,
                   fontFamily: '"Palatino Linotype", Palatino, serif', color: th.text,
                 }}>Change Password</button>
+              </div>
+            )}
+
+            {/* Admin Developer Tools */}
+            {isAdmin && (
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>🛠️ Developer Tools</div>
+                <button onClick={() => {
+                  localStorage.removeItem("sk_new_user_onboarded");
+                  setShowNewUserOnboarding(true);
+                }} style={{
+                  width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8,
+                  background: th.bgMuted, border: `1px solid ${th.accent}44`, cursor: "pointer", fontSize: 13,
+                  fontFamily: '"Palatino Linotype", Palatino, serif', color: th.accent,
+                }}>👁️ Preview New User Onboarding</button>
               </div>
             )}
 
@@ -12100,11 +16139,12 @@ export default function App() {
               </label>
               <button onClick={() => {
                 const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-                const incomplete = books.filter(b => needsDesc(b) || !b.coverUrl || !b.author);
+                const skipGenre = (b) => SKIP_DESC_GENRES.includes(b.genre);
+                const incomplete = books.filter(b => needsDesc(b) || !b.coverUrl || !b.author || (!b.isbn && !skipGenre(b)));
                 if (incomplete.length === 0) { alert("All books are complete — nothing to export!"); return; }
                 const headers = ["Title", "Author", "Genre", "Type", "Missing", "ISBN"];
                 const rows = incomplete.map(b => {
-                  const missing = [needsDesc(b) && "Description", !b.coverUrl && "Cover", !b.author && "Author"].filter(Boolean).join(", ");
+                  const missing = [needsDesc(b) && "Description", !b.coverUrl && "Cover", !b.author && "Author", (!b.isbn && !skipGenre(b)) && "ISBN"].filter(Boolean).join(", ");
                   return [b.title || "", b.author || "", b.genre || "", b.mediaType || b.type || "", missing, b.isbn || ""].map(v => `"${v}"`).join(",");
                 });
                 const csv = [headers.join(","), ...rows].join("\n");
@@ -12140,9 +16180,11 @@ export default function App() {
                     Signed in as <strong>{authUser.email}</strong>
                   </div>
                   <button onClick={async () => {
+                    if (syncStatus === "syncing") return;
                     setSyncStatus("syncing");
                     try {
                       await syncToCloud(authUser);
+                      await syncFromCloud(authUser);
                       setSyncStatus("done");
                       setTimeout(() => setSyncStatus(""), 3000);
                     } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus(""), 3000); }
@@ -12152,21 +16194,6 @@ export default function App() {
                     fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8,
                   }}>
                     {syncStatus === "syncing" ? "☁️ Syncing…" : syncStatus === "done" ? "✅ Synced!" : syncStatus === "error" ? "❌ Sync failed" : "☁️ Sync Now"}
-                  </button>
-                  <button onClick={async () => {
-                    setSyncStatus("syncing");
-                    try {
-                      await syncFromCloud(authUser);
-                      setSyncStatus("done");
-                      setTimeout(() => setSyncStatus(""), 3000);
-                      window.location.reload();
-                    } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus(""), 3000); }
-                  }} style={{
-                    width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
-                    background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
-                    fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8,
-                  }}>
-                    ⬇️ Pull from Cloud
                   </button>
                   <button onClick={() => { handleSignOut(); setShowSettings(false); }} style={{
                     width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
@@ -12216,6 +16243,9 @@ export default function App() {
             onClose={() => { setShowProfile(false); window.location.hash = ""; }}
             onSignOut={handleSignOut}
             onOpenSubscription={() => { setShowProfile(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
+            currentTier={userTier}
+            initialSocialLinks={appSocialLinks}
+            onSocialLinksChange={setAppSocialLinks}
           />
         ) : (
           <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowProfile(false)}>
@@ -12274,6 +16304,94 @@ export default function App() {
         </div>
       )}
 
+      {showPrivacy && <PrivacyPolicyPage onClose={() => setShowPrivacy(false)} />}
+      {showTerms && <TermsOfServicePage onClose={() => setShowTerms(false)} />}
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} supabaseRef={supabaseRef} authUser={authUser} />}
+      {showWelcome && !authUser && (
+        <OnboardingWelcome
+          onGetStarted={() => {
+            localStorage.setItem("sk_onboarded", "1");
+            setShowWelcome(false);
+            setAuthMode("signup"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess("");
+            setShowAuthModal(true);
+          }}
+          onSignIn={() => {
+            localStorage.setItem("sk_onboarded", "1");
+            setShowWelcome(false);
+            setAuthMode("signin"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess("");
+            setShowAuthModal(true);
+          }}
+          onSkip={() => {
+            localStorage.setItem("sk_onboarded", "1");
+            setShowWelcome(false);
+          }}
+        />
+      )}
+      {showUsernameNudge && authUser && (
+        <UsernameNudgeModal
+          onClose={() => setShowUsernameNudge(false)}
+          supabaseRef={supabaseRef}
+          authUser={authUser}
+        />
+      )}
+      {showNewUserOnboarding && authUser && (
+        <NewUserOnboarding
+          userName={authUser.user_metadata?.given_name || authUser.user_metadata?.name?.split(" ")[0] || authUser.email?.split("@")[0]}
+          onImportGoodreads={() => {
+            localStorage.setItem("sk_new_user_onboarded", "1");
+            setShowNewUserOnboarding(false);
+            setShowHome(false);
+            setShowPlatforms(true);
+            if (!isPWA && !localStorage.getItem("sk_pwa_prompt_shown")) setShowPWAInstallModal(true);
+          }}
+          onAddManually={() => {
+            localStorage.setItem("sk_new_user_onboarded", "1");
+            setShowNewUserOnboarding(false);
+            setShowAddToLibrary(true);
+            if (!isPWA && !localStorage.getItem("sk_pwa_prompt_shown")) setShowPWAInstallModal(true);
+          }}
+          onDismiss={() => {
+            localStorage.setItem("sk_new_user_onboarded", "1");
+            setShowNewUserOnboarding(false);
+            if (!isPWA && !localStorage.getItem("sk_pwa_prompt_shown")) setShowPWAInstallModal(true);
+          }}
+        />
+      )}
+
+      {showPWAInstallModal && (
+        <PWAInstallModal
+          isIOS={isIOS}
+          isAndroid={isAndroid}
+          installPrompt={installPrompt}
+          onInstall={async () => {
+            if (installPrompt) {
+              installPrompt.prompt();
+              const { outcome } = await installPrompt.userChoice;
+              if (outcome === "accepted") { setInstallPrompt(null); setShowInstallBanner(false); }
+            }
+            localStorage.setItem("sk_pwa_prompt_shown", "1");
+            setShowPWAInstallModal(false);
+          }}
+          onDismiss={() => {
+            localStorage.setItem("sk_pwa_prompt_shown", "1");
+            setShowPWAInstallModal(false);
+          }}
+        />
+      )}
+      {publicProfileUsername && <PublicProfilePage username={publicProfileUsername} supabaseRef={supabaseRef} onClose={() => { setPublicProfileUsername(""); window.location.hash = ""; }} />}
+
+      {/* TOAST */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)",
+          zIndex: 99999, background: "#2d6a2d", color: "#fff",
+          padding: "14px 24px", borderRadius: 12,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+          fontSize: 15, boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+          whiteSpace: "nowrap",
+        }}>{toast}</div>
+      )}
+
       {/* AUTH MODAL */}
       {showAuthModal && (
         <div style={{
@@ -12314,27 +16432,38 @@ export default function App() {
               type="password" placeholder="Password" value={authPassword}
               onChange={e => setAuthPassword(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
-              style={{ width: "100%", padding: "10px 12px", marginBottom: 16, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
+              style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
             />
 
-            {authError && <div style={{ fontSize: 12, color: "#B94A4A", marginBottom: 10, textAlign: "center" }}>{authError}</div>}
-            {authSuccess && <div style={{ fontSize: 12, color: "#2d6a2d", marginBottom: 10, textAlign: "center" }}>{authSuccess}</div>}
-
-            <button onClick={handleAuthSubmit} disabled={authLoading || !authEmail || !authPassword} style={{
-              width: "100%", padding: "11px", background: th.accent, border: "none", borderRadius: 8,
-              color: th.bg, fontSize: 15, cursor: "pointer", marginBottom: 14,
-              opacity: authLoading || !authEmail || !authPassword ? 0.6 : 1,
-            }}>
-              {authLoading ? "Please wait…" : authMode === "signin" ? "Sign In" : "Create Account"}
-            </button>
-
-            <div style={{ textAlign: "center", fontSize: 12, color: th.textMid }}>
-              {authMode === "signin" ? "Don't have an account? " : "Already have an account? "}
-              <span onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(""); setAuthSuccess(""); }}
-                style={{ color: th.accent, cursor: "pointer", textDecoration: "underline" }}>
-                {authMode === "signin" ? "Sign up" : "Sign in"}
-              </span>
-            </div>
+            {authSuccess ? (
+              <ConfirmEmailScreen
+                email={authEmail}
+                supabaseRef={supabaseRef}
+                onChangeEmail={(newEmail) => {
+                  setAuthEmail(newEmail);
+                  setAuthSuccess("");
+                  setAuthError("");
+                }}
+              />
+            ) : (
+              <>
+                {authError && <div style={{ fontSize: 12, color: "#B94A4A", marginBottom: 10, textAlign: "center" }}>{authError}</div>}
+                <button onClick={handleAuthSubmit} disabled={authLoading || !authEmail || !authPassword} style={{
+                  width: "100%", padding: "11px", background: th.accent, border: "none", borderRadius: 8,
+                  color: th.bg, fontSize: 15, cursor: "pointer", marginBottom: 14,
+                  opacity: authLoading || !authEmail || !authPassword ? 0.6 : 1,
+                }}>
+                  {authLoading ? "Please wait…" : authMode === "signin" ? "Sign In" : "Create Account"}
+                </button>
+                <div style={{ textAlign: "center", fontSize: 12, color: th.textMid }}>
+                  {authMode === "signin" ? "Don't have an account? " : "Already have an account? "}
+                  <span onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(""); setAuthSuccess(""); }}
+                    style={{ color: th.accent, cursor: "pointer", textDecoration: "underline" }}>
+                    {authMode === "signin" ? "Sign up" : "Sign in"}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
