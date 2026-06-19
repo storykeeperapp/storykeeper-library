@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script>
+    // Auto-redirect signed-in users to the app
+    try {
+      const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
+      const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
+      const storageKey = "sb-elmoftpybhfxqzkrhkwe-auth-token";
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const session = JSON.parse(raw);
+        const expiresAt = session?.expires_at;
+        if (expiresAt && Date.now() / 1000 < expiresAt) {
+          window.location.replace("/app");
+        }
+      }
+    } catch (_) {}
+  </script>
+  <title>StoryKeeper — Your Cozy Reading Home</title>
+  <meta name="description" content="One beautiful library for all your books. Import from Kindle, Goodreads, Audible, and more. Join the StoryKeeper community." />
+  <meta property="og:title" content="StoryKeeper — Your Cozy Reading Home" />
+  <meta property="og:description" content="One beautiful library for all your books across every platform." />
+  <meta property="og:image" content="/logo.png" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Palatino+Linotype&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', 'Palatino Linotype', Palatino, Georgia, serif;
+      background: #FBF6EE;
+      color: #3A2A1A;
+      line-height: 1.7;
+    }
+
+    /* NAV */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 40px;
+      background: rgba(251,246,238,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid #E8D9C4;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { width: 40px; height: 40px; border-radius: 50%; }
+    .nav-logo span { font-size: 20px; font-style: italic; color: #3A2A1A; font-weight: 600; }
+    .nav-links { display: flex; align-items: center; gap: 24px; }
+    .nav-links a { text-decoration: none; color: #6B4E32; font-size: 14px; transition: color 0.2s; }
+    .nav-links a:hover { color: #3A2A1A; }
+    .nav-cta {
+      background: #6B4E32; color: #FBF6EE !important;
+      padding: 8px 20px; border-radius: 8px; font-size: 14px !important;
+      transition: background 0.2s !important;
+    }
+    .nav-cta:hover { background: #3A2A1A !important; }
+
+    /* HERO */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      background: linear-gradient(180deg, #FBF6EE 0%, #F0E4CE 100%);
+      position: relative; overflow: hidden;
+    }
+    .hero-logo {
+      width: 120px; height: 120px; border-radius: 24px;
+      box-shadow: 0 8px 32px rgba(107,78,50,0.25);
+      margin-bottom: 28px;
+    }
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-style: italic; font-weight: 600;
+      color: #3A2A1A; margin-bottom: 16px;
+      line-height: 1.2;
+    }
+    .hero-sub {
+      font-size: clamp(16px, 2.5vw, 22px);
+      color: #6B4E32; margin-bottom: 12px; font-style: italic;
+      max-width: 560px;
+    }
+    .hero-desc {
+      font-size: 15px; color: #8B6A4A;
+      max-width: 480px; margin-bottom: 40px; line-height: 1.8;
+    }
+    .hero-btns { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    .btn-primary {
+      background: #6B4E32; color: #FBF6EE;
+      padding: 14px 36px; border-radius: 10px; font-size: 16px;
+      text-decoration: none; font-family: inherit; font-style: italic;
+      transition: background 0.2s, transform 0.1s;
+      box-shadow: 0 4px 16px rgba(107,78,50,0.3);
+    }
+    .btn-primary:hover { background: #3A2A1A; transform: translateY(-1px); }
+    .btn-secondary {
+      background: transparent; color: #6B4E32;
+      padding: 14px 36px; border-radius: 10px; font-size: 16px;
+      text-decoration: none; font-family: inherit; font-style: italic;
+      border: 1.5px solid #6B4E32; transition: all 0.2s;
+    }
+    .btn-secondary:hover { background: #6B4E32; color: #FBF6EE; }
+    .hero-img {
+      margin-top: 60px; width: 100%; max-width: 800px;
+      border-radius: 16px; box-shadow: 0 16px 64px rgba(107,78,50,0.2);
+    }
+
+    /* SECTION BASE */
+    section { padding: 80px 24px; }
+    .section-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: #6B4E32; margin-bottom: 12px;
+    }
+    .section-title {
+      font-size: clamp(26px, 4vw, 40px); font-style: italic;
+      color: #3A2A1A; margin-bottom: 16px;
+    }
+    .section-sub {
+      font-size: 15px; color: #8B6A4A; max-width: 540px;
+      margin: 0 auto 56px; line-height: 1.8; text-align: center;
+    }
+    .center { text-align: center; }
+
+    /* PLATFORMS */
+    .platforms { background: #F3E9D8; }
+    .platform-grid {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 16px;
+      max-width: 760px; margin: 0 auto;
+    }
+    .platform-chip {
+      background: #FBF6EE; border: 1px solid #E0CEB8;
+      border-radius: 40px; padding: 10px 20px;
+      font-size: 14px; color: #6B4E32; display: flex; align-items: center; gap: 8px;
+    }
+
+    /* FEATURES */
+    .features { background: #FBF6EE; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px; max-width: 900px; margin: 0 auto;
+    }
+    .feature-card {
+      background: #F3E9D8; border-radius: 16px; padding: 28px 24px;
+      border: 1px solid #E0CEB8;
+    }
+    .feature-emoji { font-size: 36px; margin-bottom: 14px; }
+    .feature-title { font-size: 17px; font-weight: 600; color: #3A2A1A; margin-bottom: 8px; }
+    .feature-body { font-size: 13px; color: #8B6A4A; line-height: 1.7; }
+
+    /* COMMUNITY */
+    .community {
+      background: linear-gradient(135deg, #3A2A1A 0%, #6B4E32 100%);
+      color: #FBF6EE; text-align: center;
+    }
+    .community .section-title { color: #FBF6EE; }
+    .community .section-sub { color: #D4B896; }
+    .community-stats {
+      display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; margin-top: 48px;
+    }
+    .stat-num { font-size: 40px; font-style: italic; font-weight: 600; color: #D4B896; }
+    .stat-label { font-size: 13px; color: #C4A47A; margin-top: 4px; }
+
+    /* PRICING */
+    .pricing { background: #F3E9D8; }
+    .pricing-toggle {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      margin-bottom: 40px;
+    }
+    .toggle-label { font-size: 14px; color: #6B4E32; }
+    .toggle-switch {
+      width: 48px; height: 26px; background: #6B4E32; border-radius: 13px;
+      position: relative; cursor: pointer; transition: background 0.2s;
+    }
+    .toggle-knob {
+      position: absolute; top: 3px; left: 3px;
+      width: 20px; height: 20px; border-radius: 50%; background: #FBF6EE;
+      transition: left 0.2s;
+    }
+    .toggle-switch.yearly .toggle-knob { left: 25px; }
+    .save-badge {
+      background: #6B4E32; color: #FBF6EE;
+      font-size: 11px; padding: 3px 8px; border-radius: 20px;
+    }
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 20px; max-width: 960px; margin: 0 auto;
+    }
+    .pricing-card {
+      background: #FBF6EE; border-radius: 16px; padding: 28px 24px;
+      border: 1.5px solid #E0CEB8; position: relative;
+    }
+    .pricing-card.popular {
+      border-color: #6B4E32;
+      box-shadow: 0 8px 32px rgba(107,78,50,0.15);
+    }
+    .popular-badge {
+      position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+      background: #6B4E32; color: #FBF6EE;
+      font-size: 11px; padding: 4px 14px; border-radius: 20px; white-space: nowrap;
+    }
+    .tier-icon { font-size: 32px; margin-bottom: 10px; }
+    .tier-name { font-size: 18px; font-weight: 600; color: #3A2A1A; margin-bottom: 4px; }
+    .tier-price { font-size: 32px; font-style: italic; color: #6B4E32; margin: 12px 0 4px; }
+    .tier-period { font-size: 12px; color: #8B6A4A; margin-bottom: 20px; }
+    .tier-features { list-style: none; margin-bottom: 24px; }
+    .tier-features li {
+      font-size: 13px; color: #6B4E32; padding: 5px 0;
+      border-bottom: 1px solid #E8D9C4; display: flex; align-items: flex-start; gap: 8px;
+    }
+    .tier-features li::before { content: "✓"; color: #6B4E32; flex-shrink: 0; }
+    .tier-btn {
+      display: block; width: 100%; padding: 11px;
+      background: #6B4E32; color: #FBF6EE; border: none;
+      border-radius: 8px; font-size: 14px; font-family: inherit;
+      text-align: center; text-decoration: none; cursor: pointer;
+      transition: background 0.2s; font-style: italic;
+    }
+    .tier-btn:hover { background: #3A2A1A; }
+    .tier-btn.outline {
+      background: transparent; color: #6B4E32;
+      border: 1.5px solid #6B4E32;
+    }
+    .tier-btn.outline:hover { background: #6B4E32; color: #FBF6EE; }
+
+    /* FOOTER */
+    footer {
+      background: #3A2A1A; color: #C4A47A;
+      padding: 48px 40px 32px; text-align: center;
+    }
+    .footer-logo { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px; }
+    .footer-logo img { width: 36px; height: 36px; border-radius: 50%; }
+    .footer-logo span { font-size: 18px; font-style: italic; color: #FBF6EE; }
+    .footer-links { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; margin-bottom: 20px; }
+    .footer-links a { color: #C4A47A; text-decoration: none; font-size: 13px; transition: color 0.2s; }
+    .footer-links a:hover { color: #FBF6EE; }
+    .footer-copy { font-size: 12px; color: #8B6A4A; }
+
+    /* MOBILE */
+    @media (max-width: 600px) {
+      nav { padding: 14px 20px; }
+      .nav-links { display: none; }
+      .hero { padding: 100px 20px 60px; }
+      section { padding: 60px 20px; }
+      .community-stats { gap: 32px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <a class="nav-logo" href="/">
+      <img src="/logo.png" alt="StoryKeeper" />
+      <span>StoryKeeper</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="mailto:hello@thestorykeeper.co">Contact</a>
+      <a href="/app" class="nav-cta">Get Started</a>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <img src="/logo.png" alt="StoryKeeper" class="hero-logo" />
+    <h1>Your cozy reading home.</h1>
+    <p class="hero-sub">One beautiful library for all your books.</p>
+    <p class="hero-desc">
+      Import from Kindle, Goodreads, Audible, and more. Organize by genre,
+      track your progress, and connect with readers who love what you love.
+    </p>
+    <div class="hero-btns">
+      <a href="/app" class="btn-primary">Start for Free</a>
+      <a href="#features" class="btn-secondary">See How It Works</a>
+    </div>
+    <img src="/reading-nook.jpg" alt="StoryKeeper reading nook" class="hero-img" />
+  </section>
+
+  <!-- PLATFORMS -->
+  <section class="platforms center" id="platforms">
+    <p class="section-label">Works With Your Platforms</p>
+    <h2 class="section-title">All your books, finally together.</h2>
+    <p class="section-sub">
+      Already have books on Kindle, Goodreads, or Audible? Import them in minutes
+      and see your entire library in one place.
+    </p>
+    <div class="platform-grid">
+      <div class="platform-chip">📱 Amazon Kindle</div>
+      <div class="platform-chip">🎧 Audible</div>
+      <div class="platform-chip">📗 Goodreads</div>
+      <div class="platform-chip">📘 LibraryThing</div>
+      <div class="platform-chip">📙 Barnes & Noble Nook</div>
+      <div class="platform-chip">📚 Kobo <span style="font-size:11px;color:#8B6A4A">(coming soon)</span></div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="features center" id="features">
+    <p class="section-label">Features</p>
+    <h2 class="section-title">Everything a reader could want.</h2>
+    <p class="section-sub">Built for the reader who takes their books seriously.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-emoji">📚</div>
+        <div class="feature-title">Beautiful Shelves</div>
+        <div class="feature-body">Browse your library by genre with stunning shelf layouts. Drag, reorder, and make it yours.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">⭐</div>
+        <div class="feature-title">Rich Ratings</div>
+        <div class="feature-body">Rate books by genre — spice level for romance, cry factor for drama, scare factor for thrillers.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">📊</div>
+        <div class="feature-title">Reading Stats</div>
+        <div class="feature-body">See your reading history, track streaks, and explore your story calendar month by month.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">📖</div>
+        <div class="feature-title">TBR Shelf</div>
+        <div class="feature-body">Save books you want to read next. Search, add covers, and move them to your library when you're ready.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">👥</div>
+        <div class="feature-title">Community</div>
+        <div class="feature-body">Join genre discussions and book clubs. Connect with readers who love the same books you do.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">☁️</div>
+        <div class="feature-title">Cloud Sync</div>
+        <div class="feature-body">Your library follows you everywhere. Access your books from any device, any time.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">📅</div>
+        <div class="feature-title">Book of the Month</div>
+        <div class="feature-body">A hand-picked book featured every month by the StoryKeeper team. Add it to your TBR with one tap.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-emoji">🔗</div>
+        <div class="feature-title">Share Your Profile</div>
+        <div class="feature-body">Get your own StoryKeeper link to share on social media. Show the world what you're reading.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMMUNITY -->
+  <section class="community">
+    <p class="section-label" style="color:#C4A47A">Community</p>
+    <h2 class="section-title">Reading is better together.</h2>
+    <p class="section-sub">
+      Discuss your favorite books, join genre-specific groups, and participate in
+      monthly book clubs — all inside StoryKeeper.
+    </p>
+    <div class="community-stats">
+      <div>
+        <div class="stat-num">20+</div>
+        <div class="stat-label">Genre communities</div>
+      </div>
+      <div>
+        <div class="stat-num">📚</div>
+        <div class="stat-label">Monthly book pick</div>
+      </div>
+      <div>
+        <div class="stat-num">100%</div>
+        <div class="stat-label">Moderated & safe</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section class="pricing center" id="pricing">
+    <p class="section-label">Pricing</p>
+    <h2 class="section-title">Start free. Upgrade when you're ready.</h2>
+    <p class="section-sub">No credit card required to get started.</p>
+
+    <div class="pricing-toggle">
+      <span class="toggle-label">Monthly</span>
+      <div class="toggle-switch" id="billingToggle" onclick="toggleBilling()">
+        <div class="toggle-knob"></div>
+      </div>
+      <span class="toggle-label">Yearly <span class="save-badge">Save up to 17%</span></span>
+    </div>
+
+    <div class="pricing-grid">
+      <!-- Free -->
+      <div class="pricing-card">
+        <div class="tier-icon">📖</div>
+        <div class="tier-name">The Reluctant Reader</div>
+        <div class="tier-price">Free</div>
+        <div class="tier-period">forever</div>
+        <ul class="tier-features">
+          <li>Up to 100 eBooks + 100 Audiobooks</li>
+          <li>All genre shelves</li>
+          <li>eBooks & Audiobooks toggle</li>
+          <li>1 platform import</li>
+          <li>Reading status tracking</li>
+        </ul>
+        <a href="/app" class="tier-btn outline">Get Started Free</a>
+      </div>
+
+      <!-- Storyteller -->
+      <div class="pricing-card">
+        <div class="tier-icon">✍️</div>
+        <div class="tier-name">The Storyteller</div>
+        <div class="tier-price" id="price-storyteller">$4.99</div>
+        <div class="tier-period" id="period-storyteller">per month</div>
+        <ul class="tier-features">
+          <li>Up to 500 eBooks + 500 Audiobooks</li>
+          <li>2 platform imports</li>
+          <li>Genre drag-and-drop reordering</li>
+          <li>View community discussions</li>
+          <li>Connect social accounts</li>
+          <li>TBR shelf, bio & top books</li>
+        </ul>
+        <a href="https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00" id="link-storyteller" class="tier-btn">Get Storyteller</a>
+      </div>
+
+      <!-- Librarian -->
+      <div class="pricing-card">
+        <div class="tier-icon">📚</div>
+        <div class="tier-name">The Librarian</div>
+        <div class="tier-price" id="price-librarian">$9.99</div>
+        <div class="tier-period" id="period-librarian">per month</div>
+        <ul class="tier-features">
+          <li>Up to 2,000 books total</li>
+          <li>Unlimited platform imports</li>
+          <li>Full genre customization</li>
+          <li>Reading stats & story calendar</li>
+          <li>Post in community discussions</li>
+          <li>Book club access</li>
+          <li>Cloud sync across 2 devices</li>
+        </ul>
+        <a href="https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02" id="link-librarian" class="tier-btn">Get Librarian</a>
+      </div>
+
+      <!-- StoryKeeper -->
+      <div class="pricing-card popular">
+        <div class="popular-badge">Most Popular</div>
+        <div class="tier-icon">🗝️</div>
+        <div class="tier-name">The StoryKeeper</div>
+        <div class="tier-price" id="price-storykeeper">$14.99</div>
+        <div class="tier-period" id="period-storykeeper">per month</div>
+        <ul class="tier-features">
+          <li>Unlimited books</li>
+          <li>Everything in The Librarian</li>
+          <li>Cloud sync across unlimited devices</li>
+          <li>Priority support</li>
+        </ul>
+        <a href="https://buy.stripe.com/bJe9AS5QRew04BscQteQM04" id="link-storykeeper" class="tier-btn">Get StoryKeeper</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section style="background:#FBF6EE; text-align:center; padding:80px 24px;">
+    <img src="/logo.png" alt="StoryKeeper" style="width:80px;height:80px;border-radius:20px;margin-bottom:24px;box-shadow:0 4px 20px rgba(107,78,50,0.2);" />
+    <h2 style="font-size:clamp(28px,4vw,44px);font-style:italic;color:#3A2A1A;margin-bottom:16px;">Ready to find your reading home?</h2>
+    <p style="font-size:15px;color:#8B6A4A;margin-bottom:36px;max-width:440px;margin-left:auto;margin-right:auto;line-height:1.8;">
+      Join StoryKeeper for free today. No credit card needed.
+      Your cozy corner of the internet is waiting.
+    </p>
+    <a href="/app" class="btn-primary" style="font-size:18px;padding:16px 48px;">Start Your Library</a>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-logo">
+      <img src="/logo.png" alt="StoryKeeper" />
+      <span>StoryKeeper</span>
+    </div>
+    <div class="footer-links">
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="/landing.html#privacy" onclick="window.location='/?page=privacy'">Privacy Policy</a>
+      <a href="/landing.html#terms" onclick="window.location='/?page=terms'">Terms of Service</a>
+      <a href="mailto:hello@thestorykeeper.co">Contact</a>
+    </div>
+    <p class="footer-copy">© 2026 StoryKeeper LLC · All rights reserved · hello@thestorykeeper.co</p>
+  </footer>
+
+  <script>
+    let yearly = false;
+    const prices = {
+      storyteller:  { monthly: "$4.99",  yearly: "$49.99", mperiod: "per month", yperiod: "per year — save $9.89"  },
+      librarian:    { monthly: "$9.99",  yearly: "$99.99", mperiod: "per month", yperiod: "per year — save $19.89" },
+      storykeeper:  { monthly: "$14.99", yearly: "$149.99", mperiod: "per month", yperiod: "per year — save $29.89" },
+    };
+    const links = {
+      storyteller:  { monthly: "https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00", yearly: "https://buy.stripe.com/3cI00ia772Ni5Fw4jXeQM01" },
+      librarian:    { monthly: "https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02", yearly: "https://buy.stripe.com/aFa3cu4MN5Zu6JAdUxeQM03" },
+      storykeeper:  { monthly: "https://buy.stripe.com/bJe9AS5QRew04BscQteQM04", yearly: "https://buy.stripe.com/4gMeVca7773y6JA7w9eQM05" },
+    };
+
+    function toggleBilling() {
+      yearly = !yearly;
+      document.getElementById('billingToggle').classList.toggle('yearly', yearly);
+      ['storyteller','librarian','storykeeper'].forEach(t => {
+        document.getElementById('price-' + t).textContent = yearly ? prices[t].yearly : prices[t].monthly;
+        document.getElementById('period-' + t).textContent = yearly ? prices[t].yperiod : prices[t].mperiod;
+        document.getElementById('link-' + t).href = yearly ? links[t].yearly : links[t].monthly;
+      });
+    }
+
+    // Smooth scroll
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        const target = document.querySelector(a.getAttribute('href'));
+        if (target) { e.preventDefault(); target.scrollIntoView({ behavior: 'smooth' }); }
+      });
+    });
+  </script>
+</body>
+</html>
