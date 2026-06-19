@@ -15062,6 +15062,12 @@ export default function App() {
       if (user && event === "INITIAL_SESSION") {
         syncFromCloud(user);
         fetchCommunityAuthorGenres();
+        // Apply saved theme from account (syncs across devices)
+        const cloudTheme = user.user_metadata?.theme;
+        if (cloudTheme && SK_THEMES[cloudTheme]) {
+          setThemeKey(cloudTheme);
+          localStorage.setItem("sk_theme", cloudTheme);
+        }
       }
       // On actual sign-in, do full sync + onboarding
       if (user && (event === "SIGNED_IN" || event === "USER_UPDATED")) {
@@ -15229,6 +15235,12 @@ export default function App() {
   const [ebookProgressMode, setEbookProgressMode] = useState(() => localStorage.getItem("sk_ebook_progress_mode") || "page");
   const [audiobookProgressMode, setAudiobookProgressMode] = useState(() => localStorage.getItem("sk_audiobook_progress_mode") || "chapter");
   const [themeKey, setThemeKey] = useState(() => localStorage.getItem("sk_theme") || "firelight");
+  const applyTheme = React.useCallback((key, sb) => {
+    if (!SK_THEMES[key]) return;
+    setThemeKey(key);
+    localStorage.setItem("sk_theme", key);
+    if (sb) sb.auth.updateUser({ data: { theme: key } }).catch(() => {});
+  }, []);
   const th = SK_THEMES[themeKey] || SK_THEMES.firelight;
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [hoverKnot, setHoverKnot] = useState(null); // "toggle" | "stats"
@@ -15936,7 +15948,7 @@ export default function App() {
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Color Theme</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {Object.entries(SK_THEMES).map(([key, t]) => (
-                  <button key={key} onClick={() => { setThemeKey(key); localStorage.setItem("sk_theme", key); }} style={{
+                  <button key={key} onClick={() => applyTheme(key, supabaseRef.current)} style={{
                     padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12,
                     fontFamily: '"Palatino Linotype", Palatino, serif',
                     border: themeKey === key ? `2px solid ${t.accent}` : `2px solid transparent`,
