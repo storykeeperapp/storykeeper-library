@@ -14820,10 +14820,15 @@ export default function App() {
         // Autoplay blocked (Safari mobile) — show as on, resume on first tap
         setSoundOn(true);
         const resume = () => {
-          startAudio(ctx);
-          audioRef.current = ctx;
-          document.removeEventListener("touchstart", resume);
-          document.removeEventListener("click", resume);
+          // Create fresh audio objects so loadedmetadata fires correctly after tap
+          const freshCtx = {
+            rainA: new Audio("/sounds/rain-thunder.mp3"),
+            rainB: new Audio("/sounds/rain-thunder.mp3"),
+            fire: new Audio("/sounds/fire.mp3"),
+            activeRain: "A", xfadeInterval: null, xfadeTimer: null
+          };
+          startAudio(freshCtx);
+          audioRef.current = freshCtx;
         };
         document.addEventListener("touchstart", resume, { once: true });
         document.addEventListener("click", resume, { once: true });
