@@ -3784,15 +3784,6 @@ function FavoritesShelf({ onClose }) {
     });
   } catch { /* ignore */ }
 
-  // Split into rows — fewer books per row on mobile
-  const booksPerRow = isMobile ? 5 : 12;
-  const rows = [];
-  for (let i = 0; i < favoritedBooks.length; i += booksPerRow) {
-    rows.push(favoritedBooks.slice(i, i + booksPerRow));
-  }
-
-  const scrollRef = useRef(null);
-  const [atTop, setAtTop] = useState(true);
 
   return (
     <div
@@ -3800,6 +3791,8 @@ function FavoritesShelf({ onClose }) {
         position: "fixed",
         inset: 0,
         zIndex: 200,
+        display: "flex",
+        flexDirection: "column",
         backgroundColor: "#F8F1E4",
         backgroundImage:
           'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
@@ -3807,194 +3800,77 @@ function FavoritesShelf({ onClose }) {
         backgroundPosition: "center",
       }}
     >
-      {/* Back button */}
-      <button
-        onClick={onClose}
-        style={{
-          position: "fixed",
-          top: "calc(16px + env(safe-area-inset-top, 0px))",
-          left: "calc(16px + env(safe-area-inset-left, 0px))",
-          padding: "8px 18px",
-          borderRadius: 10,
-          border: "1px solid rgba(201,169,110,0.35)",
-          cursor: "pointer",
-          background: "rgba(58,34,16,0.72)",
-          backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
-          color: "#F5ECD7",
-          fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
-          fontWeight: 700,
-          fontStyle: "italic",
-          fontSize: 15,
-          letterSpacing: "0.5px",
+      {/* Header bar */}
+      <div style={{
+        flexShrink: 0,
+        paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)",
+        paddingLeft: 16, paddingRight: 16, paddingBottom: 10,
+        background: "linear-gradient(to bottom, rgba(248,241,228,0.98) 0%, rgba(248,241,228,0.92) 100%)",
+        borderBottom: "1px solid rgba(139,94,60,0.3)",
+        zIndex: 201,
+        display: "flex", alignItems: "center", gap: 10,
+      }}>
+        <button onClick={onClose} style={{
+          background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10,
+          padding: "7px 16px", color: "#F5ECD7", cursor: "pointer",
+          fontFamily: "Georgia, serif", fontSize: 15, flexShrink: 0,
           boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-          zIndex: 201,
-        }}
-      >
-        ← Return to Reading Nook
-      </button>
-
-      {/* Back to top button */}
-      <button
-        onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
-        style={{
-          position: "absolute",
-          bottom: 28,
-          right: 28,
-          width: 48,
-          height: 48,
-          borderRadius: "50%",
-          border: "1px solid #8B5E3C",
-          cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
-          color: "#3A2A1A",
-          fontSize: 20,
-          boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
-          zIndex: 201,
-          opacity: atTop ? 0 : 1,
-          pointerEvents: atTop ? "none" : "auto",
-          transition: "opacity 0.25s ease",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-        title="Back to top"
-      >
-        ↑
-      </button>
+        }}>← Return to Reading Nook</button>
+        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, color: "#3A2010", fontWeight: 700 }}>♥ My Favorites</div>
+      </div>
 
       {/* Scrollable content */}
-      <div
-        ref={scrollRef}
-        onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
-        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: isMobile ? "calc(env(safe-area-inset-top, 0px) + 70px) 8px 80px" : "60px 40px 30px" }}
-      >
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}>
 
-      {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: 20, paddingTop: 10 }}>
-        <h1 style={{
-          fontFamily: '"Palatino Linotype", Palatino, serif',
-          color: "#3A2A1A",
-          fontSize: isMobile ? 26 : 34,
-          letterSpacing: "1.5px",
-          marginBottom: 6,
-        }}>
-          ♥ My Favorites
-        </h1>
-        <p style={{
-          fontFamily: '"Palatino Linotype", Palatino, serif',
-          color: "#4B3A2A",
-          fontStyle: "italic",
-          fontSize: isMobile ? 13 : 15,
-        }}>
-          Your most beloved books, all in one place
+
+      {favoritedBooks.length === 0 ? (
+        <p style={{ textAlign: "center", fontFamily: '"Palatino Linotype", Palatino, serif', fontStyle: "italic", color: "#6B4E32", fontSize: 16, marginTop: 40 }}>
+          You haven&apos;t added any favorites yet. Click the ♡ on any book to add it here.
         </p>
-      </div>
+      ) : (() => {
+        const perRowBooks = isMobile ? 5 : 12;
+        const shelfRows = [];
+        for (let i = 0; i < favoritedBooks.length; i += perRowBooks) shelfRows.push(favoritedBooks.slice(i, i + perRowBooks));
+        const bookGap = isMobile ? 3 : 4;
+        const rowMinH = isMobile ? 230 : 280;
+        const spineW = isMobile ? 44 : 56;
+        const plantW = isMobile ? 220 : 300;
 
-      {/* Bookshelves */}
-      <div style={{ maxWidth: isMobile ? "100%" : 1050, margin: "0 auto", paddingRight: isMobile ? 0 : 160 }}>
-        {favoritedBooks.length === 0 ? (
-          <p style={{
-            textAlign: "center",
-            fontFamily: '"Palatino Linotype", Palatino, serif',
-            fontStyle: "italic",
-            color: "#6B4E32",
-            fontSize: 16,
-            marginTop: 40,
-          }}>
-            You haven&apos;t added any favorites yet. Click the ♡ on any book to add it here.
-          </p>
-        ) : (
-          rows.map((row, rowIndex) => {
-            if (isMobile) {
-              // Mobile: all upright, no stacks, plant after every other row
-              const plantBottom = -90;
-              const plantX = "60%";
-              return (
-                <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
-                  <div style={{ display: "flex", alignItems: "flex-end", gap: 3, padding: "0 8px", flexWrap: "nowrap", overflow: "hidden", minHeight: 180 }}>
-                    {row.map((book, i) => (
-                      <BookSpine key={i} book={book} index={rowIndex * booksPerRow + i} rowIndex={rowIndex} onClick={setSelectedBook} />
-                    ))}
-                  </div>
-                  {rowIndex % 2 === 0 && (
-                    <div style={{ position: "absolute", bottom: plantBottom, left: plantX, transform: "translateX(-50%)", zIndex: 15, pointerEvents: "none" }}>
-                      <ShelfPlant plantIndex={rowIndex} />
-                    </div>
-                  )}
-                  <img src="/shelf2.jpg" alt="shelf" style={{ width: "100%", height: 22, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }} />
-                  <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 28 }} />
-                </div>
-              );
-            }
+        return shelfRows.map((row, rowIndex) => {
+          const layout = rowIndex % 3;
+          const plantSrc = "/" + PLANT_IMAGES[rowIndex % PLANT_IMAGES.length];
+          const plantEl = (
+            <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: "translateY(112px)", position: "relative", zIndex: 10 }}>
+              <img src={plantSrc} alt="plant" style={{ width: plantW, height: "auto", display: "block" }} />
+            </div>
+          );
+          const bookEls = row.map((book, i) => {
+            const isEdge = i === 0 || i === row.length - 1;
+            const w = isEdge ? Math.round(spineW * 0.72) : spineW;
+            return <BookSpine key={book.isbn || book.title} book={book} index={rowIndex * perRowBooks + i} rowIndex={rowIndex} onClick={setSelectedBook} spineWidth={w} />;
+          });
 
-            const layout = rowIndex % 3;
-            const third = Math.max(2, Math.floor(row.length / 3));
-            const leftBooks  = layout === 2 ? row.slice(0, third)         : (layout === 0 ? row.slice(0, -Math.min(4, row.length)) : []);
-            const stackBooks = layout === 2 ? row.slice(third, third * 2) : row.slice(-Math.min(4, row.length));
-            const rightBooks = layout === 2 ? row.slice(third * 2)        : (layout === 0 ? [] : row.slice(0, -Math.min(4, row.length)));
-            const hasStack   = row.length >= 6;
-            const renderUpright = (books, startIdx) => books.map((book, i) => (
-              <BookSpine key={i} book={book} index={startIdx + i} rowIndex={rowIndex} onClick={setSelectedBook} />
-            ));
-            const bookW = 62;
-            const stackW = 300;
-            const padL = 24;
-            let plantPx;
-            if (layout === 0) plantPx = padL + leftBooks.length * bookW + 60;
-            else if (layout === 1) plantPx = padL + stackW + 24;
-            else plantPx = padL + leftBooks.length * bookW + stackW + 16;
-            const plantX = Math.min(plantPx, 950) + "px";
-            const plantBottom = layout === 0 ? -90 : layout === 1 ? -100 : -110;
-            return (
-              <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
-                <div style={{
-                  display: "flex",
-                  alignItems: "flex-end",
-                  justifyContent: "flex-start",
-                  gap: 4,
-                  padding: "0 12px",
-                  flexWrap: "nowrap",
-                  overflow: "hidden",
-                  minHeight: 230,
-                }}>
-                  {layout === 0 && <>
-                    {renderUpright(leftBooks, 0)}
-                    {hasStack && <div style={{ marginLeft: "auto", marginRight: 60 }}>
-                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} mediaType={stackBooks[0]?.type || "ebooks"} />
-                    </div>}
-                  </>}
-                  {layout === 1 && <>
-                    {hasStack && <div style={{ marginRight: 8 }}>
-                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={rightBooks.length} onBookClick={setSelectedBook} mediaType={stackBooks[0]?.type || "ebooks"} />
-                    </div>}
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginRight: 60 }}>
-                      {renderUpright(rightBooks, 0)}
-                    </div>
-                  </>}
-                  {layout === 2 && <>
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>{renderUpright(leftBooks, 0)}</div>
-                    {hasStack && <div style={{ marginLeft: "auto" }}>
-                      <StackedBooks books={stackBooks} rowIndex={rowIndex} startColorIndex={leftBooks.length} onBookClick={setSelectedBook} mediaType={stackBooks[0]?.type || "ebooks"} />
-                    </div>}
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginLeft: 16, marginRight: 60 }}>{renderUpright(rightBooks, leftBooks.length + stackBooks.length)}</div>
-                  </>}
-                </div>
+          const plantGap = 6;
+          const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: "center", width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
+          let rowContent;
+          if (layout === 0) {
+            rowContent = <div style={rowBase}>{plantEl}<div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div></div>;
+          } else if (layout === 1) {
+            const half = Math.floor(bookEls.length / 2);
+            rowContent = <div style={rowBase}><div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls.slice(0, half)}</div>{plantEl}<div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls.slice(half)}</div></div>;
+          } else {
+            rowContent = <div style={rowBase}><div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div>{plantEl}</div>;
+          }
 
-                <div style={{ position: "absolute", bottom: plantBottom, left: plantX, transform: "translateX(-50%)", zIndex: 15, pointerEvents: "none" }}>
-                  <ShelfPlant plantIndex={rowIndex} />
-                </div>
-
-                <img
-                  src="/shelf2.jpg"
-                  alt="shelf"
-                  style={{ width: "100%", height: 28, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }}
-                />
-                <div style={{ height: 8, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 32 }} />
-              </div>
-            );
-          })
-        )}
-      </div>
+          return (
+            <div key={rowIndex} style={{ position: "relative" }}>
+              {rowContent}
+              <img src="/shelf2.jpg" alt="shelf" style={{ width: "100%", height: 22, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 4px 10px rgba(0,0,0,0.5)", position: "relative", zIndex: 5 }} />
+              <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)", marginBottom: 8 }} />
+            </div>
+          );
+        });
+      })()}
 
       </div>{/* end scrollable content */}
 
