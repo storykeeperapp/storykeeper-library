@@ -12501,9 +12501,9 @@ function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose,
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
-          <h2 style={{ margin: 0, fontSize: 22, color: th.text, flex: 1 }}>👥 Community</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)", flexShrink: 0 }}>‹</button>
+          <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>👥 Community</h2>
         </div>
         <p style={{ color: th.textSoft, fontSize: 14, marginBottom: 20, marginLeft: 32 }}>
           Connect with other readers — join genre groups, discuss books, and join monthly book clubs.
