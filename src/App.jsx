@@ -16359,36 +16359,36 @@ export default function App() {
       `}</style>
 
       {/* STATS PAGE */}
-      {showStats && <StatsPage onClose={() => { setShowStats(false); window.location.hash = ""; }} mediaType={mediaType} />}
+      {showStats && <StatsPage onClose={() => { setShowStats(false); window.location.hash = ""; setShowSidebar(true); }} mediaType={mediaType} />}
 
       {/* FAVORITES SHELF PAGE */}
       {showFavorites && (
-        <FavoritesShelf onClose={() => { setShowFavorites(false); window.location.hash = ""; }} />
+        <FavoritesShelf onClose={() => { setShowFavorites(false); window.location.hash = ""; setShowSidebar(true); }} />
       )}
 
       {/* TBR SHELF PAGE */}
       {showTBR && (
-        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; }} onOpenSubscription={() => { setShowTBR(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />
+        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; setShowSidebar(true); }} onOpenSubscription={() => { setShowTBR(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />
       )}
 
       {/* ADMIN DASHBOARD */}
       {showAdmin && isAdmin && (
-        <AdminDashboard authUser={authUser} supabaseRef={supabaseRef} onClose={() => setShowAdmin(false)} />
+        <AdminDashboard authUser={authUser} supabaseRef={supabaseRef} onClose={() => { setShowAdmin(false); setShowSidebar(true); }} />
       )}
 
       {/* PLATFORMS PAGE */}
-      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} />}
+      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; setShowSidebar(true); }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} />}
       {showAddToLibrary && <AddToLibraryModal onClose={() => setShowAddToLibrary(false)} th={th} onOpenSubscription={() => { setShowAddToLibrary(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
 
       {/* SUBSCRIPTION PAGE */}
-      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; }} currentTier={userTier} />}
+      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} />}
 
       {/* MY CLUBS & GROUPS PAGE */}
       {showMyClubs && (
         <MyClubsPage
           authUser={authUser}
           supabaseRef={supabaseRef}
-          onClose={() => setShowMyClubs(false)}
+          onClose={() => { setShowMyClubs(false); setShowSidebar(true); }}
           onOpenGroup={(g) => { setShowMyClubs(false); setGroupPrevPage("myclubs"); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
           onOpenBookClub={(g) => { setShowMyClubs(false); setBookClubPrevPage("myclubs"); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
         />
@@ -16400,7 +16400,7 @@ export default function App() {
           authUser={authUser}
           userTier={userTier}
           supabaseRef={supabaseRef}
-          onClose={() => { setShowCommunity(false); window.location.hash = ""; }}
+          onClose={() => { setShowCommunity(false); window.location.hash = ""; setShowSidebar(true); }}
           onOpenGroup={(g) => { setShowCommunity(false); setGroupPrevPage("community"); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
           onOpenBookClub={(g) => { setShowCommunity(false); setBookClubPrevPage("community"); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
           onOpenSubscription={() => { setShowCommunity(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
@@ -16905,7 +16905,7 @@ export default function App() {
           position: "fixed", inset: 0, zIndex: 9000,
           background: "rgba(0,0,0,0.65)",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }} onClick={() => { setShowSettings(false); window.location.hash = ""; }}>
+        }} onClick={() => { setShowSettings(false); window.location.hash = ""; setShowSidebar(true); }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: th.bg, borderRadius: 14, padding: "36px 32px",
             width: 420, maxHeight: "85vh", overflowY: "auto",
@@ -16913,7 +16913,7 @@ export default function App() {
             fontFamily: '"Palatino Linotype", Palatino, serif',
           }}>
             <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
-              <button onClick={() => { setShowSettings(false); window.location.hash = ""; }} style={{
+              <button onClick={() => { setShowSettings(false); window.location.hash = ""; setShowSidebar(true); }} style={{
                 background: "none", border: "none", cursor: "pointer", color: th.accent,
                 fontSize: 30, padding: "4px 14px 4px 0", lineHeight: 1, fontFamily: '"Palatino Linotype", Palatino, serif',
               }}>‹</button>
@@ -17235,7 +17235,7 @@ export default function App() {
           <UserProfileModal
             authUser={authUser}
             supabaseRef={supabaseRef}
-            onClose={() => { setShowProfile(false); window.location.hash = ""; }}
+            onClose={() => { setShowProfile(false); window.location.hash = ""; setShowSidebar(true); }}
             onSignOut={handleSignOut}
             onOpenSubscription={() => { setShowProfile(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
             currentTier={userTier}
@@ -17264,7 +17264,7 @@ export default function App() {
           position: "fixed", inset: 0, zIndex: 9000,
           background: "rgba(0,0,0,0.65)",
           display: "flex", alignItems: "center", justifyContent: "center",
-        }} onClick={() => setShowAbout(false)}>
+        }} onClick={() => { setShowAbout(false); setShowSidebar(true); }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: th.bg, borderRadius: 14, padding: "40px 36px",
             width: 420, boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
@@ -17299,9 +17299,9 @@ export default function App() {
         </div>
       )}
 
-      {showPrivacy && <PrivacyPolicyPage onClose={() => setShowPrivacy(false)} />}
-      {showTerms && <TermsOfServicePage onClose={() => setShowTerms(false)} />}
-      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} supabaseRef={supabaseRef} authUser={authUser} />}
+      {showPrivacy && <PrivacyPolicyPage onClose={() => { setShowPrivacy(false); setShowSidebar(true); }} />}
+      {showTerms && <TermsOfServicePage onClose={() => { setShowTerms(false); setShowSidebar(true); }} />}
+      {showFeedback && <FeedbackModal onClose={() => { setShowFeedback(false); setShowSidebar(true); }} supabaseRef={supabaseRef} authUser={authUser} />}
       {showWelcome && !authUser && (
         <OnboardingWelcome
           onGetStarted={() => {
