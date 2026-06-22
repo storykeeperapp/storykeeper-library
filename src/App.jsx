@@ -15910,9 +15910,9 @@ export default function App() {
         localStorage.setItem("sk_user_tier", "reluctant");
         setUserTier("reluctant");
       }
-      // On a fresh app load (INITIAL_SESSION), pull the latest cloud data so other devices stay in sync
+      // On a fresh app load (INITIAL_SESSION), do a full sync so all devices stay up to date
       if (user && event === "INITIAL_SESSION") {
-        syncFromCloud(user);
+        syncFromCloud(user).then(() => syncToCloud(user));
         fetchCommunityAuthorGenres();
       }
       // On actual sign-in, do full sync + onboarding
