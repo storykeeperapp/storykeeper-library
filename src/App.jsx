@@ -14723,10 +14723,10 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ flex: 1, fontSize: 12, color: th.accent, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 6, padding: "7px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                storykeeper-library.vercel.app/#u/{currentUsername}
+                thestorykeeper.co/#u/{currentUsername}
               </div>
               <button onClick={() => {
-                navigator.clipboard.writeText(`https://storykeeper-library.vercel.app/#u/${currentUsername}`);
+                navigator.clipboard.writeText(`https://www.thestorykeeper.co/#u/${currentUsername}`);
                 setLinkCopied(true);
                 setTimeout(() => setLinkCopied(false), 2000);
               }} style={{
