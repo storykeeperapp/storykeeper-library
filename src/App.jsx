@@ -1,8 +1,28 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { BarcodeDetector as BarcodeDetectorPolyfill } from "barcode-detector/ponyfill";
 
 // Module-level background task bus — survives component unmounts
 const skDispatch = (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail }));
+
+// Genre name migrations — old name → new name
+const GENRE_MIGRATIONS = {
+  "Fantasy": "Fantasy & Romantasy",
+  "Fiction": "Fiction & Drama",
+  "Drama": "Fiction & Drama",
+};
+const migrateGenre = (g) => GENRE_MIGRATIONS[g] || g;
+
+// One-time migration: permanently rewrite old genre names in sk_user_books
+(function migrateUserBookGenres() {
+  if (localStorage.getItem("sk_genre_migrated_v2")) return;
+  try {
+    const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const updated = books.map(b => ({ ...b, genre: migrateGenre(b.genre) }));
+    localStorage.setItem("sk_user_books", JSON.stringify(updated));
+    localStorage.setItem("sk_genre_migrated_v2", "1");
+  } catch {}
+})();
 
 const SK_THEMES = {
   firelight: {
@@ -65,11 +85,15 @@ const SK_THEMES = {
 
 const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
-const SKIP_DESC_GENRES = ["Cookbooks", "Crafting", "Self Help", "Gardening & Landscaping", "Gardening", "Landscaping", "Health & Wellness", "Health", "Wellness", "DIY"];
+const SKIP_DESC_GENRES = ["Cookbooks", "Crafting", "Self Help", "Gardening & Landscaping", "Gardening", "Landscaping", "Health & Wellness", "Health & Wellness", "Health", "Wellness", "DIY", "Home & DIY", "Sewing & Crafts"];
 const needsDesc = (b) => !b.description && !SKIP_DESC_GENRES.includes(b.genre);
+let _supabaseInstance = null;
 function getSupabase() {
-  const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
-  return createClient(SUPABASE_URL, key);
+  if (!_supabaseInstance) {
+    const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+    _supabaseInstance = createClient(SUPABASE_URL, key);
+  }
+  return _supabaseInstance;
 }
 
 function KnotScrollTooltip({ text, left, top }) {
@@ -224,12 +248,20 @@ const TIER_BOOK_LIMITS = {
 };
 
 const ALL_GENRES = [
-  "Classics", "Cookbooks", "Cozy Mystery", "Dark Romance", "Drama",
-  "Fantasy", "Fiction", "Gardening & Landscaping", "Health & Wellness",
-  "Historical Fiction", "Home & DIY", "Horror", "Miscellaneous",
+  "Classics", "Cookbooks", "Cozy Mystery", "Dark Romance",
+  "Fantasy & Romantasy", "Fiction & Drama", "Gardening & Landscaping", "Health & Wellness",
+  "History & Biography", "Historical Fiction",
+  "Home & DIY", "Horror", "Miscellaneous",
   "Mystery & Thriller", "Romance", "Sci-Fi", "Self Help",
   "Sewing & Crafts", "True Crime",
 ];
+
+const genreOptions = (currentGenre) => {
+  const rest = ALL_GENRES.filter(g => g !== currentGenre);
+  return currentGenre && ALL_GENRES.includes(currentGenre)
+    ? [<option key="__current" value={currentGenre}>{currentGenre}</option>, <option key="__divider" disabled>──────────</option>, ...rest.map(g => <option key={g} value={g}>{g}</option>)]
+    : ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>);
+};
 
 // Built-in author → genre defaults. User-set rules (sk_author_genres) always take precedence.
 const AUTHOR_GENRE_DEFAULTS = {
@@ -258,119 +290,119 @@ const AUTHOR_GENRE_DEFAULTS = {
   "peter straub": "Horror",
   "mary shelley": "Horror",
   // Fantasy
-  "sarah j. maas": "Fantasy",
-  "sarah j maas": "Fantasy",
-  "rebecca yarros": "Fantasy",
-  "brandon sanderson": "Fantasy",
-  "george r.r. martin": "Fantasy",
-  "george r r martin": "Fantasy",
-  "j.r.r. tolkien": "Fantasy",
-  "j r r tolkien": "Fantasy",
-  "patrick rothfuss": "Fantasy",
-  "robin hobb": "Fantasy",
-  "terry pratchett": "Fantasy",
-  "neil gaiman": "Fantasy",
-  "naomi novik": "Fantasy",
-  "katherine arden": "Fantasy",
-  "v.e. schwab": "Fantasy",
-  "ve schwab": "Fantasy",
-  "victoria schwab": "Fantasy",
-  "joe abercrombie": "Fantasy",
-  "lloyd alexander": "Fantasy",
-  "ilona andrews": "Fantasy",
-  "stephanie garber": "Fantasy",
-  "alex aster": "Fantasy",
-  "jasmine mas": "Fantasy",
-  "briar boleyn": "Fantasy",
-  "devney perry": "Fantasy",
-  "caroline peckham": "Fantasy",
-  "suzanne valenti": "Fantasy",
-  "abigail owen": "Fantasy",
-  "harper l. woods": "Fantasy",
-  "harper l woods": "Fantasy",
-  "kerri maniscalco": "Fantasy",
-  "rachel gillig": "Fantasy",
-  "hans christian andersen": "Fantasy",
-  "e.t.a. hoffmann": "Fantasy",
-  "eta hoffmann": "Fantasy",
-  "piers anthony": "Fantasy",
-  "katherine applegate": "Fantasy",
-  "jennifer l. armentrout": "Fantasy",
-  "jennifer l armentrout": "Fantasy",
-  "leigh bardugo": "Fantasy",
+  "sarah j. maas": "Fantasy & Romantasy",
+  "sarah j maas": "Fantasy & Romantasy",
+  "rebecca yarros": "Fantasy & Romantasy",
+  "brandon sanderson": "Fantasy & Romantasy",
+  "george r.r. martin": "Fantasy & Romantasy",
+  "george r r martin": "Fantasy & Romantasy",
+  "j.r.r. tolkien": "Fantasy & Romantasy",
+  "j r r tolkien": "Fantasy & Romantasy",
+  "patrick rothfuss": "Fantasy & Romantasy",
+  "robin hobb": "Fantasy & Romantasy",
+  "terry pratchett": "Fantasy & Romantasy",
+  "neil gaiman": "Fantasy & Romantasy",
+  "naomi novik": "Fantasy & Romantasy",
+  "katherine arden": "Fantasy & Romantasy",
+  "v.e. schwab": "Fantasy & Romantasy",
+  "ve schwab": "Fantasy & Romantasy",
+  "victoria schwab": "Fantasy & Romantasy",
+  "joe abercrombie": "Fantasy & Romantasy",
+  "lloyd alexander": "Fantasy & Romantasy",
+  "ilona andrews": "Fantasy & Romantasy",
+  "stephanie garber": "Fantasy & Romantasy",
+  "alex aster": "Fantasy & Romantasy",
+  "jasmine mas": "Fantasy & Romantasy",
+  "briar boleyn": "Fantasy & Romantasy",
+  "devney perry": "Fantasy & Romantasy",
+  "caroline peckham": "Fantasy & Romantasy",
+  "suzanne valenti": "Fantasy & Romantasy",
+  "abigail owen": "Fantasy & Romantasy",
+  "harper l. woods": "Fantasy & Romantasy",
+  "harper l woods": "Fantasy & Romantasy",
+  "kerri maniscalco": "Fantasy & Romantasy",
+  "rachel gillig": "Fantasy & Romantasy",
+  "hans christian andersen": "Fantasy & Romantasy",
+  "e.t.a. hoffmann": "Fantasy & Romantasy",
+  "eta hoffmann": "Fantasy & Romantasy",
+  "piers anthony": "Fantasy & Romantasy",
+  "katherine applegate": "Fantasy & Romantasy",
+  "jennifer l. armentrout": "Fantasy & Romantasy",
+  "jennifer l armentrout": "Fantasy & Romantasy",
+  "leigh bardugo": "Fantasy & Romantasy",
   "clive barker": "Horror",
-  "peter s. beagle": "Fantasy",
-  "peter s beagle": "Fantasy",
-  "holly black": "Fantasy",
+  "peter s. beagle": "Fantasy & Romantasy",
+  "peter s beagle": "Fantasy & Romantasy",
+  "holly black": "Fantasy & Romantasy",
   "ray bradbury": "Science Fiction",
-  "marion zimmer bradley": "Fantasy",
-  "patricia briggs": "Fantasy",
-  "terry brooks": "Fantasy",
-  "lois mcmaster bujold": "Fantasy",
-  "jim butcher": "Fantasy",
-  "jacqueline carey": "Fantasy",
-  "lewis carroll": "Fantasy",
-  "cassandra clare": "Fantasy",
-  "susanna clarke": "Fantasy",
-  "suzanne collins": "Fantasy",
-  "stephen donaldson": "Fantasy",
-  "david eddings": "Fantasy",
-  "steven erikson": "Fantasy",
-  "raymond e. feist": "Fantasy",
-  "raymond e feist": "Fantasy",
-  "cornelia funke": "Fantasy",
-  "david gemmell": "Fantasy",
-  "terry goodkind": "Fantasy",
-  "laurell k. hamilton": "Fantasy",
-  "laurell k hamilton": "Fantasy",
-  "charlaine harris": "Fantasy",
-  "kim harrison": "Fantasy",
-  "robert e. howard": "Fantasy",
-  "robert e howard": "Fantasy",
-  "robert jordan": "Fantasy",
-  "diana wynne jones": "Fantasy",
-  "guy gavriel kay": "Fantasy",
-  "r.f. kuang": "Fantasy",
-  "rf kuang": "Fantasy",
-  "mercedes lackey": "Fantasy",
-  "c.s. lewis": "Fantasy",
-  "cs lewis": "Fantasy",
-  "madeleine l'engle": "Fantasy",
-  "madeleine lengle": "Fantasy",
+  "marion zimmer bradley": "Fantasy & Romantasy",
+  "patricia briggs": "Fantasy & Romantasy",
+  "terry brooks": "Fantasy & Romantasy",
+  "lois mcmaster bujold": "Fantasy & Romantasy",
+  "jim butcher": "Fantasy & Romantasy",
+  "jacqueline carey": "Fantasy & Romantasy",
+  "lewis carroll": "Fantasy & Romantasy",
+  "cassandra clare": "Fantasy & Romantasy",
+  "susanna clarke": "Fantasy & Romantasy",
+  "suzanne collins": "Fantasy & Romantasy",
+  "stephen donaldson": "Fantasy & Romantasy",
+  "david eddings": "Fantasy & Romantasy",
+  "steven erikson": "Fantasy & Romantasy",
+  "raymond e. feist": "Fantasy & Romantasy",
+  "raymond e feist": "Fantasy & Romantasy",
+  "cornelia funke": "Fantasy & Romantasy",
+  "david gemmell": "Fantasy & Romantasy",
+  "terry goodkind": "Fantasy & Romantasy",
+  "laurell k. hamilton": "Fantasy & Romantasy",
+  "laurell k hamilton": "Fantasy & Romantasy",
+  "charlaine harris": "Fantasy & Romantasy",
+  "kim harrison": "Fantasy & Romantasy",
+  "robert e. howard": "Fantasy & Romantasy",
+  "robert e howard": "Fantasy & Romantasy",
+  "robert jordan": "Fantasy & Romantasy",
+  "diana wynne jones": "Fantasy & Romantasy",
+  "guy gavriel kay": "Fantasy & Romantasy",
+  "r.f. kuang": "Fantasy & Romantasy",
+  "rf kuang": "Fantasy & Romantasy",
+  "mercedes lackey": "Fantasy & Romantasy",
+  "c.s. lewis": "Fantasy & Romantasy",
+  "cs lewis": "Fantasy & Romantasy",
+  "madeleine l'engle": "Fantasy & Romantasy",
+  "madeleine lengle": "Fantasy & Romantasy",
   "h.p. lovecraft": "Horror",
   "hp lovecraft": "Horror",
-  "scott lynch": "Fantasy",
-  "lev grossman": "Fantasy",
-  "anne mccaffrey": "Fantasy",
-  "seanan mcguire": "Fantasy",
-  "richelle mead": "Fantasy",
-  "stephenie meyer": "Fantasy",
-  "china miéville": "Fantasy",
-  "china mieille": "Fantasy",
-  "robin mckinley": "Fantasy",
-  "michael moorcock": "Fantasy",
-  "tamsyn muir": "Fantasy",
-  "marissa meyer": "Fantasy",
-  "garth nix": "Fantasy",
-  "nnedi okorafor": "Fantasy",
-  "christopher paolini": "Fantasy",
-  "tamora pierce": "Fantasy",
-  "philip pullman": "Fantasy",
+  "scott lynch": "Fantasy & Romantasy",
+  "lev grossman": "Fantasy & Romantasy",
+  "anne mccaffrey": "Fantasy & Romantasy",
+  "seanan mcguire": "Fantasy & Romantasy",
+  "richelle mead": "Fantasy & Romantasy",
+  "stephenie meyer": "Fantasy & Romantasy",
+  "china miéville": "Fantasy & Romantasy",
+  "china mieille": "Fantasy & Romantasy",
+  "robin mckinley": "Fantasy & Romantasy",
+  "michael moorcock": "Fantasy & Romantasy",
+  "tamsyn muir": "Fantasy & Romantasy",
+  "marissa meyer": "Fantasy & Romantasy",
+  "garth nix": "Fantasy & Romantasy",
+  "nnedi okorafor": "Fantasy & Romantasy",
+  "christopher paolini": "Fantasy & Romantasy",
+  "tamora pierce": "Fantasy & Romantasy",
+  "philip pullman": "Fantasy & Romantasy",
   "anne rice": "Horror",
-  "rick riordan": "Fantasy",
-  "j.k. rowling": "Fantasy",
-  "jk rowling": "Fantasy",
-  "veronica roth": "Fantasy",
-  "r.a. salvatore": "Fantasy",
-  "ra salvatore": "Fantasy",
-  "andrzej sapkowski": "Fantasy",
-  "samantha shannon": "Fantasy",
+  "rick riordan": "Fantasy & Romantasy",
+  "j.k. rowling": "Fantasy & Romantasy",
+  "jk rowling": "Fantasy & Romantasy",
+  "veronica roth": "Fantasy & Romantasy",
+  "r.a. salvatore": "Fantasy & Romantasy",
+  "ra salvatore": "Fantasy & Romantasy",
+  "andrzej sapkowski": "Fantasy & Romantasy",
+  "samantha shannon": "Fantasy & Romantasy",
   "darren shan": "Horror",
-  "maggie stiefvater": "Fantasy",
-  "trudi canavan": "Fantasy",
-  "brent weeks": "Fantasy",
-  "tad williams": "Fantasy",
-  "roger zelazny": "Fantasy",
+  "maggie stiefvater": "Fantasy & Romantasy",
+  "trudi canavan": "Fantasy & Romantasy",
+  "brent weeks": "Fantasy & Romantasy",
+  "tad williams": "Fantasy & Romantasy",
+  "roger zelazny": "Fantasy & Romantasy",
   // Romance
   "nora roberts": "Romance",
   "j.d. robb": "Romance",
@@ -458,7 +490,7 @@ const AUTHOR_GENRE_DEFAULTS = {
   "j. bree": "Dark Romance",
   "j bree": "Dark Romance",
   "harley laroux": "Dark Romance",
-  "callie hart": "Fantasy",
+  "callie hart": "Fantasy & Romantasy",
   "navessa allen": "Dark Romance",
   "tillie cole": "Dark Romance",
   "tarryn fisher": "Dark Romance",
@@ -747,6 +779,159 @@ const AUTHOR_GENRE_DEFAULTS = {
   "brené brown": "Nonfiction",
   "brene brown": "Nonfiction",
   "james clear": "Nonfiction",
+  "blake pierce": "Mystery & Thriller",
+  "cagney, j. j.": "Mystery & Thriller",
+  "cagney, j.j.": "Mystery & Thriller",
+  "j. j. cagney": "Mystery & Thriller",
+  "j.j. cagney": "Mystery & Thriller",
+  "storm, melissa": "Romance",
+  "melissa storm": "Romance",
+  "keim, judith": "Romance",
+  "judith keim": "Romance",
+  "baker, blythe": "Mystery & Thriller",
+  "blythe baker": "Mystery & Thriller",
+  "moser, nancy": "Fiction & Drama",
+  "nancy moser": "Fiction & Drama",
+  "renée, ella": "Health & Wellness",
+  "renee, ella": "Health & Wellness",
+  "ella renée": "Health & Wellness",
+  "ella renee": "Health & Wellness",
+  "shoop, kathleen": "Historical Fiction",
+  "kathleen shoop": "Historical Fiction",
+  "sheridan, mia": "Romance",
+  "mia sheridan": "Romance",
+  "koren, yossi": "Historical Fiction",
+  "yossi koren": "Historical Fiction",
+  "meadows, hana": "Dark Romance",
+  "hana meadows": "Dark Romance",
+  "murphy, peter w.": "Self Help",
+  "peter w. murphy": "Self Help",
+  "sherwood, sj": "Mystery & Thriller",
+  "sherwood, s.j.": "Mystery & Thriller",
+  "sj sherwood": "Mystery & Thriller",
+  "s.j. sherwood": "Mystery & Thriller",
+  "grainger, peter": "Mystery & Thriller",
+  "peter grainger": "Mystery & Thriller",
+  "kirkwood, gwen": "Historical Fiction",
+  "gwen kirkwood": "Historical Fiction",
+  "dounaeva, lorna": "Mystery & Thriller",
+  "lorna dounaeva": "Mystery & Thriller",
+  "lekkas, ioannis": "Health & Wellness",
+  "ioannis lekkas": "Health & Wellness",
+  "harper, kristin": "Fiction & Drama",
+  "kristin harper": "Fiction & Drama",
+  "binks, john": "Non-Fiction",
+  "john binks": "Non-Fiction",
+  "kenborn, cora": "Dark Romance",
+  "cora kenborn": "Dark Romance",
+  "luna, carla": "Romance",
+  "carla luna": "Romance",
+  "parry, hannah": "Dark Romance",
+  "hannah parry": "Dark Romance",
+  "darby, d.l.": "Dark Romance",
+  "d.l. darby": "Dark Romance",
+  "j. thomas, samuel": "Health & Wellness",
+  "samuel j. thomas": "Health & Wellness",
+  "knightly, wl": "Mystery & Thriller",
+  "knightly, w.l.": "Mystery & Thriller",
+  "wl knightly": "Mystery & Thriller",
+  "w.l. knightly": "Mystery & Thriller",
+  "shaw, beth": "Sewing & Crafts",
+  "beth shaw": "Sewing & Crafts",
+  "white, billy": "Cookbooks",
+  "billy white": "Cookbooks",
+  "hartwell, willa": "Mystery & Thriller",
+  "willa hartwell": "Mystery & Thriller",
+  "james, ceecee": "Cozy Mystery",
+  "ceecee james": "Cozy Mystery",
+  "hager, krysten lindsay": "Fiction & Drama",
+  "krysten lindsay hager": "Fiction & Drama",
+  "williams, lacy": "Romance",
+  "lacy williams": "Romance",
+  "black, molly": "Mystery & Thriller",
+  "molly black": "Mystery & Thriller",
+  "boyes, shandi": "Dark Romance",
+  "shandi boyes": "Dark Romance",
+  "soleil, marie": "Romance",
+  "marie soleil": "Romance",
+  "tunnesa, sayeda": "Health & Wellness",
+  "sayeda tunnesa": "Health & Wellness",
+  "helfand, h. c.": "Mystery & Thriller",
+  "h. c. helfand": "Mystery & Thriller",
+  "cory, susan": "Mystery & Thriller",
+  "susan cory": "Mystery & Thriller",
+  "dondlinger, marisa rae": "Mystery & Thriller",
+  "marisa rae dondlinger": "Mystery & Thriller",
+  "garcia, dee": "Dark Romance",
+  "dee garcia": "Dark Romance",
+  "r, saumya": "Self Help",
+  "saumya r": "Self Help",
+  "layne, kennedy": "Dark Romance",
+  "kennedy layne": "Dark Romance",
+  "miller, melissa f.": "Mystery & Thriller",
+  "melissa f. miller": "Mystery & Thriller",
+  "gedling, cc": "Dark Romance",
+  "cc gedling": "Dark Romance",
+  "o'flynn, meghan": "Mystery & Thriller",
+  "meghan o'flynn": "Mystery & Thriller",
+  "knightly, wl": "Dark Romance",
+  "wl knightly": "Dark Romance",
+  "mor, vijay veer singh": "Cookbooks",
+  "vijay veer singh mor": "Cookbooks",
+  "mallow, jack": "Self Help",
+  "jack mallow": "Self Help",
+  "reid, taylor jenkins": "Fiction & Drama",
+  "taylor jenkins reid": "Fiction & Drama",
+  "callow, pamela": "Mystery & Thriller",
+  "pamela callow": "Mystery & Thriller",
+  "macy, al": "Mystery & Thriller",
+  "al macy": "Mystery & Thriller",
+  "coleman, gloria": "Self Help",
+  "gloria coleman": "Self Help",
+  "colt, melinda": "Mystery & Thriller",
+  "melinda colt": "Mystery & Thriller",
+  "hopkins, karen ann": "Mystery & Thriller",
+  "karen ann hopkins": "Mystery & Thriller",
+  "rigby, sally": "Mystery & Thriller",
+  "sally rigby": "Mystery & Thriller",
+  "mcknight, ashley": "Dark Romance",
+  "ashley mcknight": "Dark Romance",
+  "morrison, margaret": "Self Help",
+  "margaret morrison": "Self Help",
+  "redrum": "Dark Romance",
+  "andrews, vc": "Fiction & Drama",
+  "vc andrews": "Fiction & Drama",
+  "andrews, v.c.": "Fiction & Drama",
+  "v.c. andrews": "Fiction & Drama",
+  "ferrari, marco": "Health & Wellness",
+  "marco ferrari": "Health & Wellness",
+  "light, luna": "Health & Wellness",
+  "luna light": "Health & Wellness",
+  "wright, aaron": "Health & Wellness",
+  "aaron wright": "Health & Wellness",
+  "studridge, jasmine": "Health & Wellness",
+  "jasmine studridge": "Health & Wellness",
+  "martin, henry": "Health & Wellness",
+  "henry martin": "Health & Wellness",
+  "richards, leo": "Health & Wellness",
+  "leo richards": "Health & Wellness",
+  "author, ashlynn": "Dark Romance",
+  "ashlynn author": "Dark Romance",
+  "hicks, tom": "History & Biography",
+  "tom hicks": "History & Biography",
+  "john, c.j": "Cookbooks",
+  "john, c.j.": "Cookbooks",
+  "c.j. john": "Cookbooks",
+  "scott, stephanie j.": "Romance",
+  "stephanie j. scott": "Romance",
+  "bretton, barbara": "Romance",
+  "barbara bretton": "Romance",
+  "carey, ella": "Historical Fiction",
+  "ella carey": "Historical Fiction",
+  "kostov, nayden": "Non-Fiction",
+  "nayden kostov": "Non-Fiction",
+  "ricafranca, arnel": "Health & Wellness",
+  "arnel ricafranca": "Health & Wellness",
   "michelle obama": "Nonfiction",
   "trevor noah": "Nonfiction",
 };
@@ -781,8 +966,18 @@ function detectGenreFromTitle(title = "") {
       t.includes("quick meals") || t.includes("easy meals") || t.includes("dinner recipes") ||
       t.includes("breakfast recipes") || t.includes("lunch recipes") || t.includes("soup recipes") ||
       t.includes("pressure cooker") || t.includes("dutch oven") || t.includes("wok ") ||
+      t.includes("canning") || t.includes("preserving") || t.includes("mason jar") ||
+      t.includes("fermentation") || t.includes("pickling") || t.includes("dehydrating") ||
       t.includes("no-bake") || t.includes("sheet pan") || t.includes("skillet recipes") ||
+      (t.includes("breakfast") && t.includes("guide")) || t.includes("morning magic") ||
+      t.includes("crafting morning") ||
       t.includes("fix-it and forget-it") || t.includes("fix it and forget it")) return "Cookbooks";
+
+  if (t.includes("candle making") || t.includes("candle-making") || t.includes("soap making") ||
+      t.includes("soap-making") || t.includes("knitting") || t.includes("crochet") ||
+      t.includes("quilting") || t.includes("embroidery") || t.includes("cross-stitch") ||
+      t.includes("macrame") || t.includes("scrapbook") || t.includes("hand lettering") ||
+      t.includes("calligraphy") || t.includes("paper crafts")) return "Sewing & Crafts";
 
   if (t.includes("garden") || t.includes("gardening") || t.includes("landscaping") ||
       t.includes("horticulture") || t.includes("plant care") ||
@@ -792,9 +987,45 @@ function detectGenreFromTitle(title = "") {
   if (t.includes("true crime") || t.includes("serial killer") || t.includes("cold case") ||
       t.includes("unsolved murder") || t.includes("crime scene")) return "True Crime";
 
+  if (t.includes("world war") || t.includes("ww2") || t.includes("wwii") ||
+      t.includes("historical novel") || t.includes("historical fiction") ||
+      t.includes("historical romance") || t.includes("a historical") ||
+      t.includes("medieval") || t.includes("victorian") || t.includes("regency") ||
+      t.includes("ancient rome") || t.includes("ancient egypt") || t.includes("tudor") ||
+      t.includes("18th century") || t.includes("19th century")) return "Historical Fiction";
+
+  if (t.includes("memoir") || t.includes("a memoir") || t.includes("my memoir") ||
+      t.includes("autobiography") || t.includes("my story") || t.includes("my life") ||
+      t.includes("biography") || t.includes("in my own words") ||
+      t.includes("hard to believe facts") || t.includes("fun facts") || t.includes("did you know") ||
+      t.includes("trivia") || t.includes("amazing facts") || t.includes("weird facts") ||
+      t.includes("incredible facts") || t.includes("shocking facts")) return "Non-Fiction";
+
+  if (t.includes("menopause") || t.includes("perimenopause") || t.includes("hormones") ||
+      t.includes("over 50") || t.includes("over 60") || t.includes("over 40") ||
+      t.includes("gut health") || t.includes("weight loss") || t.includes("mental health guide") ||
+      t.includes("anxiety guide") || t.includes("depression guide") ||
+      t.includes("for seniors") || t.includes("fall prevention") || t.includes("balance exercises") ||
+      t.includes("posture") || t.includes("5 minutes daily") || t.includes("exercises for") ||
+      t.includes("belly fat") || t.includes("burning fat") || t.includes("burn fat") ||
+      t.includes("leaner") || t.includes("healthier you") || t.includes("fat loss") ||
+      t.includes("comprehensive guide to") && t.includes("health")) return "Health & Wellness";
+
+  if (t.includes("workout") || t.includes("bodyweight") || t.includes("weight training") ||
+      t.includes("strength training") || t.includes("hiit") || t.includes("crossfit") ||
+      t.includes("exercise plan") || t.includes("fitness plan") || t.includes("30 day") && t.includes("fit") ||
+      t.includes("running plan") || t.includes("marathon training")) return "Health & Wellness";
+
   if (t.includes("self-help") || t.includes("self help") || (t.includes("how to") && t.includes("life")) ||
       t.includes("habits") || t.includes("mindset") || t.includes("atomic habits") ||
-      t.includes("productivity") || t.includes("mindfulness") || t.includes("meditation guide")) return "Self Help";
+      t.includes("productivity") || t.includes("mindfulness") || t.includes("meditation guide") ||
+      t.includes("artificial intelligence") || t.includes("machine learning") ||
+      t.includes("things you should know") || t.includes("101 things") || t.includes("things to know") ||
+      t.includes("talk to anyone") || t.includes("what to say") || t.includes("how to talk") ||
+      t.includes("communication skills") || t.includes("social skills") ||
+      t.includes("easy ways to") || t.includes("approach and talk") ||
+      t.includes("step-by-step guide") || t.includes("a complete guide") ||
+      t.includes("a beginner's guide") || t.includes("beginners guide")) return "Self Help";
 
   // Fantasy — paranormal/supernatural title signals
   if (t.includes("vampire") || t.includes("werewolf") || t.includes("shifter") || t.includes("shifted") ||
@@ -813,7 +1044,6 @@ function detectGenreFromTitle(title = "") {
       t.includes("heir of") || t.includes("crown of") || t.includes("emperor of") ||
       t.includes("twisted crown") || t.includes("two crowns") || t.includes("vows & ruin") ||
       t.includes("blood & steel") || t.includes("blood and steel") ||
-      t.includes("coven") || t.includes("fated mate") || t.includes("true mate") || t.includes("mate bond") ||
       t.includes("alpha") || t.includes("omega") || (t.includes("wolf") && !t.includes("wolf of wall")) ||
       t.includes("traitor wolf") || t.includes("prowling") ||
       t.includes("feathers so") || t.includes("winter king") ||
@@ -827,17 +1057,20 @@ function detectGenreFromTitle(title = "") {
       t.includes("what lies beyond") || t.includes("what lurks") || t.includes("what hunts") ||
       t.includes("the cursed") || t.includes("cloaked") || t.includes("oathbreaker") ||
       t.includes("hidden deep") || t.includes("hidden saga") || t.includes("flame") && t.includes("book") ||
-      t.includes("the darkness within") || t.includes("one dark summer") || t.includes("stolen") && t.includes("mate")) return "Fantasy";
+      t.includes("the darkness within") || t.includes("one dark summer") || t.includes("stolen") && t.includes("mate")) return "Fantasy & Romantasy";
 
   // Dark Romance — possessive/taboo/morally-grey titles
   if (t.includes("dark romance") || t.includes("forbidden desire") || t.includes("forbidden love") ||
       t.includes("morally grey") || t.includes("anti-hero") ||
+      t.includes("cartel") || t.includes("bratva") || t.includes("mob boss") ||
+      (t.includes("mafia") && !t.includes("mafia wars")) ||
       (t.includes("villain") && t.includes("romance"))) return "Dark Romance";
 
   // Mystery & Thriller — title signals
   if (t.includes("cozy mystery") || t.includes("amateur sleuth") || t.includes("cozy crime")) return "Cozy Mystery";
 
-  if (t.includes("thriller") || t.includes("suspense") || t.includes("mystery") ||
+  if (t.includes("thriller") || t.includes("suspense") || t.includes("mystery") || t.includes("mysteries") ||
+      t.includes("investigation") || t.includes("detective") || t.includes("a dc ") || t.includes("an di ") ||
       t.includes("detective") || t.includes("fbi") || t.includes("psychological suspense") ||
       t.includes("serial killer") || t.includes("cold case") || t.includes("murder") ||
       t.includes("killer") || t.includes("assassin") || t.includes("espionage") || t.includes("spy") ||
@@ -862,6 +1095,8 @@ function detectGenreFromTitle(title = "") {
       t.includes("the plumber and the widow") || t.includes("love will grow") ||
       t.includes("what i'm looking for") || t.includes("same page") ||
       t.includes("the price of a promise") || (t.includes("stolen") && !t.includes("mate")) ||
+      t.includes("texas hearts") || t.includes("sweet grove") || t.includes("small town romance") ||
+      t.includes("love on summer") || t.includes("summer love") || t.includes("summer romance") ||
       t.includes("single dad") || t.includes("single mom") || t.includes("surprise baby") ||
       t.includes("secret baby") || t.includes("fake date") || t.includes("fake fiance") ||
       t.includes("fake boyfriend") || t.includes("second chance") || t.includes("grumpy") ||
@@ -883,7 +1118,7 @@ function detectGenreFromTitle(title = "") {
   if (t.includes("hamlet") || t.includes("othello") || t.includes("king lear") ||
       t.includes("julius caesar") || t.includes("romeo and juliet") || t.includes("midsummer") ||
       t.includes("wuthering heights") || t.includes("macabre mansion") ||
-      t.includes("fall of the house")) return "Fiction";
+      t.includes("fall of the house")) return "Fiction & Drama";
 
   return null;
 }
@@ -969,7 +1204,7 @@ function detectGenre(subjects = [], title = "") {
       s.includes("time travel") || s.includes("robot") || s.includes("artificial intelligence") ||
       s.includes("post-apocalyptic") || s.includes("post apocalyptic")) return "Sci-Fi";
 
-  if (s.includes("fantasy") || s.includes("epic fantasy") || s.includes("high fantasy") ||
+  if (s.includes("romantasy") || s.includes("fantasy") || s.includes("epic fantasy") || s.includes("high fantasy") ||
       s.includes("urban fantasy") || s.includes("magic") || s.includes("dragon") ||
       s.includes("wizard") || s.includes("witch") || s.includes("fae") || s.includes("faery") ||
       s.includes("fairy tale") || s.includes("sword") || s.includes("sorcery") ||
@@ -1006,7 +1241,7 @@ function detectGenre(subjects = [], title = "") {
       s.includes("flesh & bone") || s.includes("lightlark") || s.includes("nightbane") ||
       s.includes("everflame") || s.includes("kindred's curse") || s.includes("crowns of nyaxia") ||
       s.includes("star-cursed") || s.includes("nyaxia") || s.includes("hierarchy") ||
-      s.includes("kiss of iron")) return "Fantasy";
+      s.includes("kiss of iron")) return "Fantasy & Romantasy";
 
   if (s.includes("cozy mystery") || s.includes("cozy crime") || s.includes("amateur sleuth") ||
       s.includes("tea shop mystery") || s.includes("bakery mystery") || s.includes("cat mystery") ||
@@ -1031,27 +1266,27 @@ function detectGenre(subjects = [], title = "") {
       s.includes("reverse harem") || s.includes("why choose")) return "Romance";
 
   if (s.includes("drama") || s.includes("play") || s.includes("theatre") ||
-      s.includes("theater") || s.includes("screenplay")) return "Drama";
+      s.includes("theater") || s.includes("screenplay")) return "Fiction & Drama";
 
   // --- Generic fiction last ---
   if (s.includes("fiction") || s.includes("literary fiction") || s.includes("literary") ||
       s.includes("novel") || s.includes("short stories") || s.includes("coming of age") ||
-      s.includes("family") || s.includes("friendship") || s.includes("women's fiction")) return "Fiction";
+      s.includes("family") || s.includes("friendship") || s.includes("women's fiction")) return "Fiction & Drama";
 
   return null; // return null so caller can try another source before defaulting
 }
 
 const DEFAULT_ASSIGNMENTS = [
-  { id: 1,  left: "28%", top: "8%",  genre: "Fantasy"            },
+  { id: 1,  left: "28%", top: "8%",  genre: "Fantasy & Romantasy"            },
   { id: 2,  left: "68%", top: "10%", genre: "Mystery & Thriller" },
   { id: 3,  left: "38%", top: "28%", genre: "Sci-Fi"             },
   { id: 4,  left: "70%", top: "36%", genre: "Romance"            },
   { id: 5,  left: "36%", top: "52%", genre: "Self Help"          },
   { id: 6,  left: "68%", top: "53%", genre: "Dark Romance"       },
-  { id: 7,  left: "66%", top: "68%", genre: "Fiction"            },
+  { id: 7,  left: "66%", top: "68%", genre: "Fiction & Drama"            },
   { id: 8,  left: "40%", top: "18%", genre: "Historical Fiction" },
   { id: 9,  left: "60%", top: "20%", genre: "Cookbooks"          },
-  { id: 10, left: "34%", top: "40%", genre: "Drama"                   },
+  { id: 10, left: "34%", top: "40%", genre: "Fiction & Drama"                  },
   { id: 11, left: "51%", top: "32%", genre: "True Crime"              },
   { id: 12, left: "44%", top: "55%", genre: "Gardening & Landscaping" },
   { id: 13, left: "55%", top: "45%", genre: "Classics" },
@@ -1474,6 +1709,35 @@ function DatePickerModal({ label, value, onSelect, onClose, themeAccent, themeBg
   );
 }
 
+async function compressAndUploadCover(file, isbn, sb) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = async () => {
+      URL.revokeObjectURL(objectUrl);
+      const MAX_W = 400;
+      const scale = img.width > MAX_W ? MAX_W / img.width : 1;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(async (blob) => {
+        try {
+          const filename = `${isbn || Date.now()}.jpg`;
+          const { error: upErr } = await sb.storage.from("book-covers").upload(filename, blob, { contentType: "image/jpeg", upsert: true });
+          if (upErr) return reject(upErr);
+          const { data } = sb.storage.from("book-covers").getPublicUrl(filename);
+          const publicUrl = data.publicUrl;
+          await sb.from("community_covers").upsert({ isbn: isbn || filename, cover_url: publicUrl, uploaded_by: (await sb.auth.getUser()).data.user?.id });
+          resolve(publicUrl);
+        } catch (e) { reject(e); }
+      }, "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("Image load failed")); };
+    img.src = objectUrl;
+  });
+}
+
 function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType, onBookEdited, onDelete }) {
   const ebookProgressMode = localStorage.getItem("sk_ebook_progress_mode") || "page";
   const audiobookProgressMode = localStorage.getItem("sk_audiobook_progress_mode") || "chapter";
@@ -1481,6 +1745,20 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const modalTheme = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const thAccent = modalTheme.accent;
   const [imgError, setImgError] = useState(false);
+  const [communityCover, setCommunityCover] = useState(() => {
+    const cached = sessionStorage.getItem(`sk_cover_${book.isbn}`);
+    return cached && cached !== "none" ? cached : null;
+  });
+  React.useEffect(() => {
+    if (!book.isbn || book.coverUrl) return;
+    const cacheKey = `sk_cover_${book.isbn}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) { if (cached !== "none") setCommunityCover(cached); return; }
+    getSupabase().from("community_covers").select("cover_url").eq("isbn", book.isbn).maybeSingle().then(({ data }) => {
+      if (data?.cover_url) { sessionStorage.setItem(cacheKey, data.cover_url); setCommunityCover(data.cover_url); }
+      else sessionStorage.setItem(cacheKey, "none");
+    });
+  }, [book.isbn]);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAuthorRulePrompt, setShowAuthorRulePrompt] = useState(false);
@@ -1504,7 +1782,31 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const isThriller = ["Mystery & Thriller", "Cozy Mystery"].includes(book.genre);
   const popupRef = useRef(null);
   const popupPollRef = useRef(null);
-  const [editFields, setEditFields] = useState({ title: book.title, author: book.author || "", description: book.description || "", genre: book.genre || "Fiction", coverUrl: book.coverUrl || "", mediaType: book.mediaType || "ebook" });
+  const [editFields, setEditFields] = useState({ title: book.title, author: book.author || "", description: book.description || "", genre: book.genre || "Fiction & Drama", coverUrl: book.coverUrl || "", mediaType: book.mediaType || "ebook" });
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState(null); // null | "saving" | "saved"
+  const autoSaveTimer = useRef(null);
+  const isFirstRender = useRef(true);
+  React.useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    setAutoSaveStatus("saving");
+    clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      try {
+        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+        const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+        if (idx !== -1) {
+          all[idx] = { ...all[idx], ...editFields };
+          localStorage.setItem("sk_user_books", JSON.stringify(all));
+          if (onBookEdited) onBookEdited({ ...all[idx] });
+        }
+      } catch { /* ignore */ }
+      setAutoSaveStatus("saved");
+      setTimeout(() => setAutoSaveStatus(null), 2500);
+    }, 800);
+    return () => clearTimeout(autoSaveTimer.current);
+  }, [editFields]);
   const [dates, setDates] = useState(() => {
     try { return JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`)) || {}; } catch { return {}; }
   });
@@ -1632,11 +1934,12 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     } catch { return book.genre || ""; }
   })();
   const [selectedGenre, setSelectedGenre] = useState(currentGenre);
+  const [genreSaved, setGenreSaved] = useState(false);
   const activeGenre = selectedGenre || book.genre;
-  const isDrama = ["Drama", "Fiction", "Historical Fiction"].includes(activeGenre);
+  const isDrama = ["Fiction & Drama", "Historical Fiction"].includes(activeGenre);
   const isRomance = activeGenre === "Romance";
   const isHorror = activeGenre === "Horror";
-  const isFantasy = ["Fantasy", "Sci-Fi"].includes(activeGenre);
+  const isFantasy = ["Fantasy & Romantasy", "Sci-Fi"].includes(activeGenre);
   const isDarkRomance = activeGenre === "Dark Romance";
 
   const handleGenreChange = (newGenre) => {
@@ -1660,10 +1963,12 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
       }
     } catch { /* ignore */ }
     // If this book was in Fiction and is being moved, offer to save author rule
-    if (book.author && (book.genre === "Fiction" || selectedGenre === "Fiction") && newGenre !== "Fiction") {
+    if (book.author && (book.genre === "Fiction & Drama" || selectedGenre === "Fiction & Drama") && newGenre !== "Fiction & Drama") {
       setShowAuthorRulePrompt(true);
     }
     if (onBookEdited) onBookEdited({ ...book, genre: newGenre });
+    setGenreSaved(true);
+    setTimeout(() => setGenreSaved(false), 2500);
   };
 
   const handleSaveEdit = () => {
@@ -1793,9 +2098,10 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
         zIndex: 8000,
         background: "rgba(20,14,8,0.72)",
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "center",
-        padding: 20,
+        padding: "20px 20px",
+        overflowY: "auto",
       }}
     >
       <div
@@ -1809,9 +2115,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
           padding: "30px 20px",
           position: "relative",
           boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
-          maxHeight: "90vh",
-          overflowY: "auto",
           boxSizing: "border-box",
+          marginTop: "auto",
+          marginBottom: "auto",
         }}
       >
         {/* Close button */}
@@ -1869,19 +2175,63 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             {[
               { label: "Title", field: "title" },
               { label: "Author", field: "author" },
-              { label: "Cover URL", field: "coverUrl", placeholder: "https://..." },
-            ].map(({ label, field, placeholder }) => (
+            ].map(({ label, field }) => (
               <div key={field} style={{ marginBottom: 12 }}>
                 <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>{label}</label>
                 <input
                   type="text"
                   value={editFields[field]}
-                  placeholder={placeholder || ""}
                   onChange={e => setEditFields(p => ({ ...p, [field]: e.target.value }))}
                   style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text, boxSizing: "border-box" }}
                 />
               </div>
             ))}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>Book Cover</label>
+              <input
+                type="text"
+                value={editFields.coverUrl}
+                placeholder="Paste a URL, or upload a photo below"
+                onChange={e => setEditFields(p => ({ ...p, coverUrl: e.target.value }))}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text, boxSizing: "border-box", marginBottom: 6 }}
+              />
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: modalTheme.textSoft, marginBottom: 6 }}>
+                💡 Tip: crop your image before uploading for best results
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", background: modalTheme.accent, color: modalTheme.bg, borderRadius: 6, cursor: coverUploading ? "not-allowed" : "pointer", fontFamily: "Georgia, serif", fontSize: 12, opacity: coverUploading ? 0.6 : 1 }}>
+                  {coverUploading ? "Uploading…" : "📷 Upload Photo"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    disabled={coverUploading}
+                    onChange={async e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setCoverUploadError(null);
+                      setCoverUploading(true);
+                      try {
+                        const sb = getSupabase();
+                        const url = await compressAndUploadCover(file, book.isbn, sb);
+                        setEditFields(p => ({ ...p, coverUrl: url }));
+                      } catch (err) {
+                        setCoverUploadError("Upload failed. Please try again.");
+                      } finally {
+                        setCoverUploading(false);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
+                </label>
+                {editFields.coverUrl && (
+                  <img src={editFields.coverUrl} alt="Cover preview" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 4, border: "1px solid #8B5E3C" }} />
+                )}
+                {coverUploadError && (
+                  <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#B05040", fontStyle: "italic" }}>{coverUploadError}</span>
+                )}
+              </div>
+            </div>
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>Genre</label>
               <select
@@ -1889,7 +2239,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 onChange={e => setEditFields(p => ({ ...p, genre: e.target.value }))}
                 style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }}
               >
-                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                {genreOptions(editFields.genre)}
               </select>
             </div>
             <div style={{ marginBottom: 12 }}>
@@ -1904,7 +2254,14 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               </select>
             </div>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>Description</label>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid }}>Description</label>
+                {autoSaveStatus && (
+                  <span style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: autoSaveStatus === "saved" ? "#6B8C5A" : modalTheme.textSoft, transition: "opacity 0.3s" }}>
+                    {autoSaveStatus === "saving" ? "Saving…" : "✓ Automatically saved"}
+                  </span>
+                )}
+              </div>
               <textarea
                 value={editFields.description}
                 onChange={e => setEditFields(p => ({ ...p, description: e.target.value }))}
@@ -1936,7 +2293,19 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
           <div style={{ width: 140, flexShrink: 0, margin: "0 auto" }}>
             {!imgError ? (
               <img
-                src={book.coverUrl || (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg` : "")}
+                src={(() => {
+                  if (book.coverUrl) return book.coverUrl;
+                  if (communityCover) return communityCover;
+                  // Check if any other format of this book (ebook/audiobook) has a cover
+                  if (book.isbn) {
+                    try {
+                      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                      const match = all.find(b => b.isbn === book.isbn && b.coverUrl);
+                      if (match?.coverUrl) return match.coverUrl;
+                    } catch { /* ignore */ }
+                  }
+                  return isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg` : "";
+                })()}
                 alt={book.title}
                 onError={() => {
                   if (book.coverUrl && !imgError) { setImgError(true); }
@@ -2012,7 +2381,19 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               lineHeight: 1.7,
               margin: "0 0 4px 0",
             }}>
-              {(book.description && !book.description.includes("LibraryThing") && !book.description.includes("catalogs your") && !book.description.includes("easily, quickly and for free")) ? book.description : ""}
+              {(() => {
+                // Read fresh from localStorage so PWA picks up descriptions fetched after page load
+                let desc = book.description || "";
+                if (!desc && book.isbn) {
+                  try {
+                    const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                    const found = all.find(b => b.isbn === book.isbn);
+                    if (found?.description) desc = found.description;
+                  } catch { /* ignore */ }
+                }
+                const junk = ["LibraryThing", "catalogs your", "easily, quickly and for free"];
+                return desc && !junk.some(j => desc.includes(j)) ? desc : "";
+              })()}
             </p>
 
             {/* Read / Listen button */}
@@ -2207,11 +2588,11 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   flex: 1,
                 }}
               >
-                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                {genreOptions(selectedGenre)}
               </select>
-              {selectedGenre !== currentGenre && (
-                <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: modalTheme.textSoft, fontStyle: "italic" }}>
-                  ✓ saved
+              {genreSaved && (
+                <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B8C5A", fontStyle: "italic" }}>
+                  ✓ Automatically saved
                 </span>
               )}
             </div>
@@ -2919,7 +3300,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
         const all = JSON.parse(localStorage.getItem("sk_user_books")) || [];
         return all.filter(b => {
           const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
-          const effectiveGenre = genreOverrides[b.isbn || b.title] || b.genre;
+          const effectiveGenre = migrateGenre(genreOverrides[b.isbn || b.title] || b.genre || "");
           return effectiveGenre === genre && bookMedia === mediaType;
         });
       } catch { return []; }
@@ -3304,9 +3685,10 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
                 Import your books from Kindle, Goodreads, Audible, and more to get started.
               </p>
               <button onClick={onClose} style={{
-                padding: "11px 28px", borderRadius: 10, fontSize: 14,
-                border: "none", background: "#6B4E32", color: "#fff", cursor: "pointer",
+                padding: "10px 24px", borderRadius: 10, fontSize: 16,
+                border: "1px solid rgba(201,169,110,0.35)", background: "rgba(58,34,16,0.72)", color: "#F5ECD7", cursor: "pointer",
                 fontFamily: '"Palatino Linotype", Palatino, serif',
+                boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
               }}>← Go Import Books</button>
             </div>
           );
@@ -3627,11 +4009,8 @@ function BarcodeScannerModal({ onDetected, onClose }) {
   const scanningRef = React.useRef(true);
 
   React.useEffect(() => {
-    if (!("BarcodeDetector" in window)) {
-      setStatus("unsupported");
-      return;
-    }
-    detectorRef.current = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
+    const Detector = ("BarcodeDetector" in window) ? window.BarcodeDetector : BarcodeDetectorPolyfill;
+    detectorRef.current = new Detector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
 
     navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
       .then(stream => {
@@ -3678,7 +4057,7 @@ function BarcodeScannerModal({ onDetected, onClose }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 9999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ position: "relative", width: "100%", maxWidth: 420, padding: "0 16px" }}>
+      <div style={{ position: "relative", width: "100%", maxWidth: 680, padding: "0 16px" }}>
         <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, fontWeight: 700, color: "#fff", textAlign: "center", marginBottom: 16 }}>
           📷 Scan Book Barcode
         </div>
@@ -3686,8 +4065,8 @@ function BarcodeScannerModal({ onDetected, onClose }) {
         {status === "unsupported" && (
           <div style={{ background: "#fff8ee", borderRadius: 12, padding: 20, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 14, color: "#5C3A1E" }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>😕</div>
-            <strong>Barcode scanning isn't supported on this browser.</strong>
-            <div style={{ marginTop: 8, color: "#8B5E3C" }}>Try Chrome on Android or Safari on iOS 17+. You can also search by title instead.</div>
+            <strong>Camera not available.</strong>
+            <div style={{ marginTop: 8, color: "#8B5E3C" }}>Make sure you're using the StoryKeeper app and have granted camera permission.</div>
           </div>
         )}
 
@@ -3701,10 +4080,10 @@ function BarcodeScannerModal({ onDetected, onClose }) {
 
         {(status === "starting" || status === "scanning") && (
           <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#000" }}>
-            <video ref={videoRef} playsInline muted style={{ width: "100%", display: "block", maxHeight: 360, objectFit: "cover" }} />
+            <video ref={videoRef} playsInline muted style={{ width: "100%", display: "block", maxHeight: 650, objectFit: "cover" }} />
             {/* scanning overlay */}
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-              <div style={{ width: "75%", height: 80, border: "2px solid rgba(255,200,80,0.9)", borderRadius: 8, boxShadow: "0 0 0 2000px rgba(0,0,0,0.35)" }} />
+              <div style={{ width: "80%", height: 120, border: "2px solid rgba(255,200,80,0.9)", borderRadius: 8, boxShadow: "0 0 0 2000px rgba(0,0,0,0.35)" }} />
             </div>
             {status === "scanning" && (
               <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 13, color: "rgba(255,255,255,0.85)" }}>
@@ -3783,8 +4162,19 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
   const handleAdd = () => {
     if (!selected) return;
     const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
-    const already = userBooks.some(b => (b.isbn && b.isbn === selected.isbn) || b.title === selected.title);
-    if (already) { setMsg("This book is already in your library!"); return; }
+    const addingMediaType = mediaType === "audiobooks" ? "audiobook" : mediaType === "physical" ? "physical" : "ebook";
+    const existingCopy = userBooks.find(b => {
+      const sameBook = (b.isbn && b.isbn === selected.isbn) || b.title === selected.title;
+      if (!sameBook) return false;
+      return (b.mediaType || b.type) === addingMediaType;
+    });
+    if (existingCopy) {
+      if (addingMediaType === "physical") {
+        if (!window.confirm(`"${selected.title}" is already on your physical book shelf. Add it again anyway?`)) return;
+      } else {
+        setMsg("This book is already in your library!"); return;
+      }
+    }
     const tier = localStorage.getItem("sk_user_tier") || "reluctant";
     const limit = TIER_BOOK_LIMITS[tier] ?? 250;
     if (userBooks.length >= limit) {
@@ -3796,7 +4186,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
       ...selected,
       type: mediaType,
       mediaType: isAudio ? "audiobook" : mediaType === "physical" ? "physical" : "ebook",
-      genre: genre || selected.genre || "Fiction",
+      genre: genre || selected.genre || "Fiction & Drama",
       status,
       addedAt: Date.now(),
     });
@@ -3821,7 +4211,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
         {/* Header */}
         <div style={{ padding: "20px 20px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0, fontSize: 18, color: thm.text }}>📖 Add Book to Library</h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: thm.textSoft, cursor: "pointer" }}>✕</button>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, color: "#F5ECD7", cursor: "pointer", padding: "6px 11px", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", boxShadow: "0 2px 8px rgba(0,0,0,0.35)", lineHeight: 1 }}>✕</button>
         </div>
 
         <div style={{ padding: 20, boxSizing: "border-box", width: "100%" }}>
@@ -3942,7 +4332,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
                 background: thm.bgMuted, fontSize: 13, fontFamily: "Georgia, serif", color: thm.text, outline: "none", marginBottom: 16,
               }}>
                 <option value="">— Select a genre —</option>
-                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                {genreOptions(genre)}
               </select>
 
               {/* Reading status */}
@@ -4051,7 +4441,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
         type: moveMediaType,
         mediaType: isAudio ? "audiobook" : moveMediaType === "physical" ? "physical" : "ebook",
         platform: platformId,
-        genre: moveGenre || book.genre || "Fiction",
+        genre: moveGenre || book.genre || "Fiction & Drama",
         status: "unread",
         addedAt: Date.now(),
       });
@@ -4132,12 +4522,13 @@ function TBRShelf({ onClose, onOpenSubscription }) {
     }}>
       <button onClick={onClose} style={{
         position: "fixed", top: 16, left: 16,
-        padding: "10px 18px", borderRadius: "50px", border: "1px solid #8B5E3C",
+        padding: "10px 22px", borderRadius: 10, border: "1px solid rgba(201,169,110,0.35)",
         cursor: "pointer",
-        background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
-        color: "#3A2A1A",
+        background: "rgba(58,34,16,0.72)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+        color: "#F5ECD7",
         fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
-        fontWeight: 700, fontStyle: "italic", fontSize: 14, letterSpacing: "0.5px",
+        fontWeight: 700, fontStyle: "italic", fontSize: 16, letterSpacing: "0.5px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
         boxShadow: "0 2px 6px rgba(0,0,0,0.12)", zIndex: 601,
       }}>← Back</button>
 
@@ -4333,7 +4724,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
                 color: "#3A2A1A", outline: "none", cursor: "pointer",
               }}>
                 <option value="">— Auto-detect from book data —</option>
-                {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                {genreOptions(moveGenre)}
               </select>
             </div>
 
@@ -5023,9 +5414,9 @@ function detectGenreFromGoodreads(bookshelves, exclusiveShelf) {
   if (shelves.includes('true-crime') || shelves.includes('true crime') || shelves.includes('murder') || shelves.includes('serial-killer') || shelves.includes('forensic') || shelves.includes('crime-investigation')) return 'True Crime';
   if (shelves.includes('garden') || shelves.includes('gardening') || shelves.includes('landscape') || shelves.includes('landscaping') || shelves.includes('horticulture') || shelves.includes('botany') || shelves.includes('plants')) return 'Gardening & Landscaping';
   if (shelves.includes('historical-fiction') || shelves.includes('historical fiction') || shelves.includes('historical') || shelves.includes('world-war') || shelves.includes('medieval')) return 'Historical Fiction';
-  if (shelves.includes('drama') || shelves.includes('play') || shelves.includes('theatre') || shelves.includes('shakespeare')) return 'Drama';
+  if (shelves.includes('drama') || shelves.includes('play') || shelves.includes('theatre') || shelves.includes('shakespeare')) return 'Fiction & Drama';
   if (shelves.includes('romance') || shelves.includes('love') || shelves.includes('chick-lit')) return 'Romance';
-  if (shelves.includes('fantasy') || shelves.includes('magic') || shelves.includes('dragon') || shelves.includes('wizard')) return 'Fantasy';
+  if (shelves.includes('romantasy') || shelves.includes('fantasy') || shelves.includes('magic') || shelves.includes('dragon') || shelves.includes('wizard') || shelves.includes('fae') || shelves.includes('faerie')) return 'Fantasy & Romantasy';
   if (shelves.includes('mystery') || shelves.includes('detective') || shelves.includes('crime') || shelves.includes('cozy') ||
       shelves.includes('thriller') || shelves.includes('suspense') || shelves.includes('horror')) return 'Mystery & Thriller';
   if (shelves.includes('sci-fi') || shelves.includes('science-fiction') || shelves.includes('science fiction') || shelves.includes('scifi') || shelves.includes('space')) return 'Sci-Fi';
@@ -5046,7 +5437,7 @@ function BookmarkletCopyButton({ code, label, isScript }) {
   );
 }
 
-function ImportModal({ platform, mediaType, onClose, onImport }) {
+function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA }) {
   const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel"];
   const showCSV = csvPlatforms.includes(platform.id);
   const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
@@ -5059,6 +5450,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
   const [csvEnriching, setCsvEnriching] = useState(false);
   const [csvEnrichProgress, setCsvEnrichProgress] = useState(null);
   const [csvDragOver, setCsvDragOver] = useState(false);
+  const csvFileRef = useRef(null);
 
   // Bulk paste state
   const [bulkText, setBulkText] = useState("");
@@ -5104,7 +5496,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
           const pendingId = `bulk-${i}`;
           const bulkAuthor = (vol.authors || []).join(", ");
           const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
-          const genre = getAuthorGenre(bulkAuthor, authorRules, communityAuthorGenres) || detectGenre(vol.categories || [], title);
+          const genre = getAuthorGenre(bulkAuthor, authorRules, {}) || detectGenre(vol.categories || [], title);
           const book = {
             _pendingId: pendingId,
             title: vol.title || title,
@@ -5137,26 +5529,20 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
     onImport(books);
   };
 
-  const handleCSVFile = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const handleCSVFile = (file) => {
+    if (!file || !file.name) return;
     const reader = new FileReader();
+    reader.onerror = () => alert("❌ Could not read the file. Please try again.");
     reader.onload = async (ev) => {
       const rows = parseCSV(ev.target.result);
+      if (rows.length === 0) { alert("⚠️ No data found in this file. Make sure you're uploading the correct CSV export."); return; }
       const isGoodreads = platform.id === "goodreads";
       const isApple = platform.id === "apple";
 
-      // Build duplicate lookup from existing books
+      // Build duplicate lookup from the user's own books only (not the community catalog)
       const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-      const allLibraryBooks = Object.values(library).flat();
-      const existingIsbns = new Set([
-        ...existingUserBooks.map(b => b.isbn).filter(Boolean),
-        ...allLibraryBooks.map(b => b.isbn).filter(Boolean),
-      ]);
-      const existingTitles = new Set([
-        ...existingUserBooks.map(b => b.title.toLowerCase().trim()),
-        ...allLibraryBooks.map(b => b.title.toLowerCase().trim()),
-      ]);
+      const existingIsbns = new Set(existingUserBooks.map(b => b.isbn).filter(Boolean));
+      const existingTitles = new Set(existingUserBooks.map(b => b.title.toLowerCase().trim()));
 
       const isAudible = platform.id === "audible";
       const isChirp = platform.id === "chirp";
@@ -5227,18 +5613,18 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
         const chirpBlurb = isChirp ? (row["description"] || row["blurb"] || "") : "";
         const bfBlurb = isBookFunnel ? (row["description"] || row["blurb"] || "") : "";
         const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
-        const authorGenre = getAuthorGenre(author, authorRules, communityAuthorGenres);
+        const authorGenre = getAuthorGenre(author, authorRules, {});
         const shelfGenre = authorGenre || (isGoodreads
-          ? (detectGenreFromGoodreads(shelves, exclusiveShelf) || detectGenreFromTitle(title) || "Fiction")
+          ? (detectGenreFromGoodreads(shelves, exclusiveShelf) || detectGenreFromTitle(title) || "Fiction & Drama")
           : isApple
-            ? (detectGenre([rawGenre], title) || "Fiction")
+            ? (detectGenre([rawGenre], title) || "Fiction & Drama")
             : isAudible
-              ? (detectGenre([audibleBlurb, audibleSeries, rawGenre], title) || "Fiction")
+              ? (detectGenre([audibleBlurb, audibleSeries, rawGenre], title) || "Fiction & Drama")
               : isChirp
-                ? (detectGenre([chirpBlurb, title], title) || "Fiction")
+                ? (detectGenre([chirpBlurb, title], title) || "Fiction & Drama")
                 : isBookFunnel
                   ? (detectGenre([bfBlurb, title], title) || "Romance")
-                  : (detectGenre([title], title) || "Fiction"));
+                  : (detectGenre([title], title) || "Fiction & Drama"));
 
         // Status mapping
         let status = null;
@@ -5273,9 +5659,14 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
 
       csvUserEditedRef.current = new Set();
       setCsvBooks(books);
-      setCsvSkipped(rows.filter(r => r["title"] || r["book title"]).length - books.length);
+      const totalTitled = rows.filter(r => r["title"] || r["book title"]).length;
+      setCsvSkipped(totalTitled - books.length);
+      if (books.length === 0 && totalTitled > 0) {
+        alert(`⚠️ All ${totalTitled} books in this file are already in your library.`);
+        return;
+      }
       const genreMap = {};
-      books.forEach(b => { genreMap[b._csvIdx] = b.shelfGenre || "Fiction"; });
+      books.forEach(b => { genreMap[b._csvIdx] = b.shelfGenre || "Fiction & Drama"; });
       setCsvGenres(genreMap);
 
       if (books.length > 0) {
@@ -5292,7 +5683,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
             const applySubjects = (subjects) => {
               const genre = detectGenre(subjects, b.title);
               if (genre && !csvUserEditedRef.current.has(b._csvIdx)) {
-                if (updatedGenres[b._csvIdx] === "Fiction" || !updatedGenres[b._csvIdx] || genre !== "Fiction")
+                if (updatedGenres[b._csvIdx] === "Fiction & Drama" || !updatedGenres[b._csvIdx] || genre !== "Fiction & Drama")
                   updatedGenres[b._csvIdx] = genre;
               }
             };
@@ -5374,7 +5765,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
             }
 
             // Step 3: Google Books fallback if still no description or genre
-            if (!enrichedBooks[i].description || updatedGenres[b._csvIdx] === "Fiction") {
+            if (!enrichedBooks[i].description || updatedGenres[b._csvIdx] === "Fiction & Drama") {
               try {
                 const gKey = localStorage.getItem("sk_google_api_key") || "";
                 const gKeySuffix = gKey ? `&key=${gKey}` : "";
@@ -5390,9 +5781,9 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
                     enrichedBooks[i].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://");
                   if (vol?.categories?.length) {
                     const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
-                    const cachedGenre = getAuthorGenre(b.author, authorRules, communityAuthorGenres);
+                    const cachedGenre = getAuthorGenre(b.author, authorRules, {});
                     const genre = cachedGenre || detectGenre(vol.categories, b.title);
-                    if (genre && genre !== "Fiction") updatedGenres[b._csvIdx] = genre;
+                    if (genre && genre !== "Fiction & Drama") updatedGenres[b._csvIdx] = genre;
                   }
                 }
               } catch { /* Google unavailable */ }
@@ -5495,7 +5886,7 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
       coverUrl: b.coverUrl || "",
       readUrl: b.readUrl || "",
       type: isApple && b.mediaType ? (b.mediaType === "audiobook" ? "audiobooks" : "ebooks") : mediaType,
-      genre: csvGenres[b._csvIdx] || "Fiction",
+      genre: csvGenres[b._csvIdx] || "Fiction & Drama",
       platform: platform.id,
       description: b.description || "",
       storeId: isApple ? (b.storeId || "") : undefined,
@@ -5534,12 +5925,12 @@ function ImportModal({ platform, mediaType, onClose, onImport }) {
         cursor: "pointer",
       }}
     >
-      {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+      {genreOptions(value)}
     </select>
   );
 
   const PLATFORM_CONFIG = {
-    kindle:     { url: "https://www.amazon.com/hz/mycd/myx#/home/content/booksAll/dateDsc/", step1: 'Open DevTools (F12 or Cmd+Option+J), go to the Console tab, paste the script below, and press Enter. A CSV will download automatically.' },
+    kindle:     { url: "https://read.amazon.com", step1: 'Go to read.amazon.com (your Kindle Cloud Reader), open the Console (Safari: Cmd+Option+C — Chrome/Edge: F12 or Cmd+Option+J), paste the script below, and press Enter. A CSV will download automatically.' },
     kobo:       { url: "https://www.kobo.com/ww/en/account/books", step1: 'Go to My Books, click "Export" in the top right to download your library CSV.' },
     goodreads:  { url: "https://www.goodreads.com/review/import", step1: 'Scroll down to "Export Library" and click the export button. A CSV file will download.' },
     apple:      { url: null, step1: 'Run the export script below in Terminal. It reads your Apple Books library directly from your Mac and saves a CSV file to your Desktop.' },
@@ -5761,9 +6152,9 @@ exportBookFunnel();`;
     <div
       onClick={onClose}
       style={{
-        position: "fixed",
+        position: "absolute",
         inset: 0,
-        zIndex: 400,
+        zIndex: 10,
         background: "rgba(20,14,8,0.72)",
         display: "flex",
         alignItems: "center",
@@ -5789,7 +6180,7 @@ exportBookFunnel();`;
         {/* Close button */}
         <button
           onClick={onClose}
-          style={{ position: "absolute", top: 14, right: 16, background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#6B4E32", lineHeight: 1, padding: "2px 6px" }}
+          style={{ position: "absolute", top: 12, right: 14, background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, cursor: "pointer", color: "#F5ECD7", lineHeight: 1, padding: "6px 11px", boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}
           aria-label="Close"
         >✕</button>
 
@@ -5835,17 +6226,21 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 2 — Upload Your CSV
                   </div>
-                  <label
+                  <div
                     onDragOver={e => { e.preventDefault(); setCsvDragOver(true); }}
                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setCsvDragOver(false); }}
-                    onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile({ target: { files: [f] } }); }}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                    onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile(f); }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, transition: "all 0.2s", marginBottom: 10 }}>
                     <span style={{ fontSize: 28 }}>📄</span>
                     <span style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>
                       {csvDragOver ? "Drop it here!" : "Drag & drop your CSV here"}
                     </span>
-                    <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>or click to browse</span>
-                    <input type="file" accept=".csv" onChange={handleCSVFile} style={{ display: "none" }} />
+                  </div>
+                  <label style={{ display: "block", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                    <span style={{ display: "inline-block", padding: "7px 18px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, cursor: "pointer" }}>
+                      📁 Choose File
+                    </span>
+                    <input type="file" accept=".csv" onChange={e => { const f = e.target.files && e.target.files[0]; if (f) { handleCSVFile(f); } e.target.value = ""; }} style={{ display: "none" }} />
                   </label>
                   {csvBooks.length > 0 && (
                     <>
@@ -5859,7 +6254,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                               <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
                               <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author} {b.mediaType === "audiobook" ? "🎧" : "📖"}</div>
                             </div>
-                            {genreSelect(csvGenres[b._csvIdx] || "Fiction", (val) => { csvUserEditedRef.current.add(b._csvIdx); { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); }; })}
+                            {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); }; })}
                           </div>
                         ))}
                       </div>
@@ -5909,7 +6304,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 2 — Export Your Library
                   </div>
-                  {isAdmin ? (<>
+                  <>
                     {platform.id === "audible" && (
                       <div style={{ background: "#FFF8EE", border: "1px solid #C9A96E", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A" }}>
                         <strong>Option A — Chrome Extension (easiest):</strong> Install the free <em>"Audible Library Exporter"</em> Chrome extension from the Chrome Web Store, then click its icon while on your Audible library page to download a CSV instantly. Skip to Step 3.
@@ -5928,14 +6323,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                       {platform.id === "kindle" ? kindleScript : platform.id === "audible" ? audibleScript : platform.id === "bookfunnel" ? bookfunnelScript : chirpScript}
                     </pre>
                     <BookmarkletCopyButton code={platform.id === "kindle" ? kindleScript : platform.id === "audible" ? audibleScript : platform.id === "bookfunnel" ? bookfunnelScript : chirpScript} label="Copy Script" isScript />
-                  </>) : (
-                    <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", lineHeight: 1.7 }}>
-                      {platform.id === "audible"
-                        ? <>Install the free <strong>"Audible Library Exporter"</strong> Chrome extension from the Chrome Web Store, then click its icon while on your Audible library page to download a CSV. Then upload it in Step 3.</>
-                        : <>Visit {platform.name}, download your library export, and upload the CSV file in Step 3 below.</>
-                      }
-                    </div>
-                  )}
+                  </>
                 </div>
 
                 {/* Step 3: Upload */}
@@ -5943,17 +6331,21 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 3 — Upload Your CSV
                   </div>
-                  <label
+                  <div
                     onDragOver={e => { e.preventDefault(); setCsvDragOver(true); }}
                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setCsvDragOver(false); }}
-                    onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile({ target: { files: [f] } }); }}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                    onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile(f); }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, transition: "all 0.2s", marginBottom: 10 }}>
                     <span style={{ fontSize: 28 }}>📄</span>
                     <span style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>
                       {csvDragOver ? "Drop it here!" : "Drag & drop your CSV here"}
                     </span>
-                    <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>or click to browse</span>
-                    <input type="file" accept=".csv" onChange={handleCSVFile} style={{ display: "none" }} />
+                  </div>
+                  <label style={{ display: "block", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                    <span style={{ display: "inline-block", padding: "7px 18px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, cursor: "pointer" }}>
+                      📁 Choose File
+                    </span>
+                    <input type="file" accept=".csv" onChange={e => { const f = e.target.files && e.target.files[0]; if (f) { handleCSVFile(f); } e.target.value = ""; }} style={{ display: "none" }} />
                   </label>
                   {csvBooks.length > 0 && (
                     <>
@@ -5977,7 +6369,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                               <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
                               <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                             </div>
-                            {genreSelect(csvGenres[b._csvIdx] || "Fiction", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
+                            {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
                           </div>
                         ))}
                       </div>
@@ -6019,17 +6411,21 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 2 — Upload Your CSV
                   </div>
-                  <label
+                  <div
                     onDragOver={e => { e.preventDefault(); setCsvDragOver(true); }}
                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setCsvDragOver(false); }}
-                    onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile({ target: { files: [f] } }); }}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, cursor: "pointer", transition: "all 0.2s", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                    onDrop={e => { e.preventDefault(); setCsvDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleCSVFile(f); }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: "20px 16px", background: csvDragOver ? "#EDE0CC" : "rgba(255,255,255,0.5)", border: `2px dashed ${csvDragOver ? "#8B5E3C" : "#C9A96E"}`, borderRadius: 8, transition: "all 0.2s", marginBottom: 10 }}>
                     <span style={{ fontSize: 28 }}>📄</span>
                     <span style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: "#3A2A1A", fontWeight: 600 }}>
                       {csvDragOver ? "Drop it here!" : "Drag & drop your CSV here"}
                     </span>
-                    <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>or click to browse</span>
-                    <input type="file" accept=".csv" onChange={handleCSVFile} style={{ display: "none" }} />
+                  </div>
+                  <label style={{ display: "block", marginBottom: csvBooks.length > 0 ? 14 : 0 }}>
+                    <span style={{ display: "inline-block", padding: "7px 18px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, cursor: "pointer" }}>
+                      📁 Choose File
+                    </span>
+                    <input type="file" accept=".csv" onChange={e => { const f = e.target.files && e.target.files[0]; if (f) { handleCSVFile(f); } e.target.value = ""; }} style={{ display: "none" }} />
                   </label>
                   {csvBooks.length > 0 && (
                     <>
@@ -6053,7 +6449,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                               <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
                               <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                             </div>
-                            {genreSelect(csvGenres[b._csvIdx] || "Fiction", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
+                            {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
                           </div>
                         ))}
                       </div>
@@ -6116,7 +6512,7 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                       <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                     </div>
                     <select value={bulkGenres[b._pendingId] || b.genre} onChange={e => setBulkGenres(prev => ({ ...prev, [b._pendingId]: e.target.value }))} style={{ fontFamily: "Georgia, serif", fontSize: 12, padding: "3px 6px", borderRadius: 4, border: "1px solid #8B5E3C", background: "#F8F1E4", color: "#3A2A1A" }}>
-                      {ALL_GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+                      {genreOptions(bulkGenres[b._pendingId] || b.genre)}
                     </select>
                   </div>
                 ))}
@@ -6540,10 +6936,11 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
         onClick={onClose}
         style={{
           position: "fixed", top: 56, left: 20, zIndex: 600,
-          background: "rgba(245,236,215,0.9)", border: "1px solid #C9A96E",
-          borderRadius: 20, padding: "6px 14px", cursor: "pointer",
+          background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)",
+          borderRadius: 10, padding: "8px 18px", cursor: "pointer",
           fontFamily: '"Palatino Linotype", Palatino, serif',
-          fontSize: 13, color: "#3A2A1A",
+          fontSize: 16, color: "#F5ECD7", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           opacity: atTop ? 1 : 0, pointerEvents: atTop ? "auto" : "none",
           transition: "opacity 0.3s",
         }}
@@ -6782,6 +7179,7 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
 function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin, isPWA }) {
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
+  const [showFetchDesc, setShowFetchDesc] = useState(false);
   const [connections, setConnections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_connections")) || {}; } catch { return {}; }
   });
@@ -6811,6 +7209,19 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
     return { total: all.length, noDesc: all.filter(needsDesc).length, noCover: all.filter(b => !b.coverUrl).length, noAuthor: all.filter(b => !b.author).length };
   });
+
+  // One-time migrations
+  (() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const updated = all.map(b => {
+        if (GENRE_MIGRATIONS[b.genre]) return { ...b, genre: migrateGenre(b.genre) };
+        if (b.genre === "Health & Fitness") return { ...b, genre: "Health & Wellness" };
+        return b;
+      });
+      if (updated.some((b, i) => b.genre !== all[i].genre)) localStorage.setItem("sk_user_books", JSON.stringify(updated));
+    } catch { /* ignore */ }
+  })();
 
   const refreshBookCounts = () => {
     const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
@@ -6991,8 +7402,8 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         const idx = userBooks.findIndex(b => b === book);
 
         // Check author map before hitting any API
-        const cachedAuthorGenre = getAuthorGenre(book.author, enrichAuthorRules, communityAuthorGenres);
-        if (cachedAuthorGenre && (!userBooks[idx].genre || userBooks[idx].genre === "Fiction")) {
+        const cachedAuthorGenre = getAuthorGenre(book.author, enrichAuthorRules, {});
+        if (cachedAuthorGenre && (!userBooks[idx].genre || userBooks[idx].genre === "Fiction & Drama")) {
           userBooks[idx].genre = cachedAuthorGenre;
         }
 
@@ -7221,83 +7632,97 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     setRedetectProgress({ done: 0, total: userBooks.length, changed: 0, current: "" });
 
     const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+    const overrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
+    const genericGenres = new Set(["Fiction & Drama", "Fantasy & Romantasy", "", null, undefined]);
+
+    const fetchWithTimeout = async (url, ms = 4000) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ms);
+      try { const r = await fetch(url, { signal: ctrl.signal }); clearTimeout(timer); return r; }
+      catch(e) { clearTimeout(timer); throw e; }
+    };
+
+    const yield_ = () => new Promise(r => setTimeout(r, 0));
+
     for (let i = 0; i < userBooks.length; i++) {
       if (redetectStopRef.current) break;
       const book = userBooks[i];
-      // Apply author rule first before hitting any API
-      const authorGenreHit = getAuthorGenre(book.author, authorRules, communityAuthorGenres);
-      if (authorGenreHit && userBooks[i].genre !== authorGenreHit) {
+
+      // Step 1: skip manually overridden books
+      if (book.isbn && overrides[book.isbn]) {
+        setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
+        await yield_();
+        continue;
+      }
+
+      // Step 2: title keyword detection — instant, local
+      const titleGenre = detectGenreFromTitle(book.title || "");
+      if (titleGenre && titleGenre !== book.genre) {
+        userBooks[i].genre = titleGenre;
+        changed++;
+        setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
+        await yield_();
+        continue;
+      }
+
+      // Step 3: author→genre map — instant, local
+      const authorGenreHit = getAuthorGenre(book.author, authorRules, {});
+      if (authorGenreHit && authorGenreHit !== book.genre) {
         userBooks[i].genre = authorGenreHit;
         changed++;
         setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
+        await yield_();
         continue;
       }
+
+      // Step 4: skip API if already in a specific genre
+      if (!genericGenres.has(book.genre)) {
+        setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
+        await yield_();
+        continue;
+      }
+
+      // Step 5: OpenLibrary — only for books stuck in Fiction/Fantasy/blank
       try {
         const cleaned = cleanTitle(book.title);
         const normAuthor = normalizeAuthor(book.author);
-
-        // Try OL by ISBN first, then by title+author
         let subjects = [];
         const queries = book.isbn
-          ? [`https://openlibrary.org/search.json?isbn=${encodeURIComponent(book.isbn)}&limit=1&fields=key,subject,cover_i`]
+          ? [`https://openlibrary.org/search.json?isbn=${encodeURIComponent(book.isbn)}&limit=1&fields=subject`]
           : [];
-        const q = normAuthor
-          ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(normAuthor)}`
-          : `title=${encodeURIComponent(cleaned)}`;
-        queries.push(`https://openlibrary.org/search.json?${q}&limit=1&fields=key,subject,cover_i`);
-
+        const q = normAuthor ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(normAuthor)}` : `title=${encodeURIComponent(cleaned)}`;
+        queries.push(`https://openlibrary.org/search.json?${q}&limit=1&fields=subject`);
         for (const url of queries) {
           if (subjects.length) break;
-          try {
-            const res = await fetch(url);
-            const doc = (await res.json()).docs?.[0];
-            if (doc?.subject?.length) subjects = doc.subject;
-          } catch { /* ignore */ }
+          try { const res = await fetchWithTimeout(url, 4000); const doc = (await res.json()).docs?.[0]; if (doc?.subject?.length) subjects = doc.subject; } catch { /* ignore */ }
         }
-
         if (subjects.length) {
-          const genre = detectGenre(subjects, userBooks[i].title);
-          if (genre && genre !== userBooks[i].genre) {
-            userBooks[i].genre = genre;
-            changed++;
-          }
+          const genre = detectGenre(subjects, book.title);
+          if (genre && genre !== book.genre) { userBooks[i].genre = genre; changed++; }
         }
 
-        // If still Fiction/Fantasy (or no subjects found), try Google Books categories
-        if (!subjects.length || userBooks[i].genre === "Fiction" || userBooks[i].genre === "Fantasy") {
+        // Step 6: Google Books — only if still generic after OpenLibrary
+        if (genericGenres.has(userBooks[i].genre)) {
           try {
             const gKey = localStorage.getItem("sk_google_api_key") || "";
-            const gKeySuffix = gKey ? `&key=${gKey}` : "";
-            const gq = normAuthor
-              ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(normAuthor)}`
-              : `intitle:${encodeURIComponent(cleaned)}`;
-            const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKeySuffix}`);
+            const gq = normAuthor ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(normAuthor)}` : `intitle:${encodeURIComponent(cleaned)}`;
+            const res = await fetchWithTimeout(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKey ? `&key=${gKey}` : ""}`, 4000);
             const json = await res.json();
             if (!json.error) {
               const vol = json.items?.[0]?.volumeInfo;
               if (vol?.categories?.length) {
-                const genre = detectGenre(vol.categories, userBooks[i].title);
-                if (genre && genre !== "Fiction" && genre !== userBooks[i].genre) {
-                  userBooks[i].genre = genre;
-                  changed++;
-                }
+                const genre = detectGenre(vol.categories, book.title);
+                if (genre && genre !== "Fiction & Drama" && genre !== userBooks[i].genre) { userBooks[i].genre = genre; changed++; }
               }
             }
-          } catch { /* Google unavailable */ }
+          } catch { /* ignore */ }
         }
-
-        // Final fallback: always check title keywords — catches books APIs couldn't identify
-        const titleGenre = detectGenreFromTitle(userBooks[i].title);
-        if (titleGenre && titleGenre !== userBooks[i].genre) {
-          userBooks[i].genre = titleGenre;
-          changed++;
-        }
+        await new Promise(r => setTimeout(r, 100));
       } catch { /* skip */ }
 
-      // Small delay to avoid hammering APIs
-      await new Promise(r => setTimeout(r, 200));
       setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
       skDispatch('sk-bg-progress', { task: 'redetect', done: i + 1, total: userBooks.length, changed, current: book.title });
+      await yield_();
     }
 
     // Write updated books back — only touching the filtered indices
@@ -7321,10 +7746,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
   );
 
   return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 550 }}>
     <div style={{
-      position: "fixed",
+      position: "absolute",
       inset: 0,
-      zIndex: 550,
       backgroundColor: th.bgDeep,
       backgroundImage: (themeKey === "firelight" || themeKey === "midnight" || themeKey === "forest") ? 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")' : "none",
       backgroundSize: "cover",
@@ -7344,15 +7769,16 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           top: 56,
           left: 20,
           padding: "8px 18px",
-          borderRadius: "50px",
-          border: `1px solid ${th.accent}`,
+          borderRadius: 10,
+          border: "1px solid rgba(201,169,110,0.35)",
           cursor: "pointer",
-          background: th.bgMuted,
-          color: th.text,
+          background: "rgba(58,34,16,0.72)",
+          color: "#F5ECD7",
           fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
           fontWeight: 700,
           fontStyle: "italic",
-          fontSize: 15,
+          fontSize: 16,
+          backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
           letterSpacing: "0.5px",
           boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
           zIndex: 201,
@@ -7563,6 +7989,38 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
               </button>
             )}
           </div>
+        </div>
+
+        {/* Fetch Missing Descriptions */}
+        <div style={{
+          background: th.bgMuted,
+          border: `1px solid ${th.border}`,
+          borderRadius: 10,
+          padding: "18px 24px",
+          marginBottom: 20,
+          display: "flex",
+          alignItems: "center",
+          gap: 20,
+          flexWrap: "wrap",
+        }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 4 }}>📖 Fetch Missing Descriptions</div>
+            <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, fontStyle: "italic" }}>
+              Pulls descriptions from the community cache, OpenLibrary, and Google Books for all books missing one. Cookbooks, gardening, health, home & DIY, and self help books are skipped.
+            </div>
+          </div>
+          <button onClick={() => setShowFetchDesc(true)} style={{
+            padding: "10px 22px",
+            background: th.accent,
+            color: th.bg,
+            border: "none",
+            borderRadius: 8,
+            cursor: "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            fontSize: 14,
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}>📖 Fetch Descriptions</button>
         </div>
 
         {/* Find Missing ISBNs */}
@@ -8716,7 +9174,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
               💡 If you keep getting sent back to the Amazon sign-in page, sign into Amazon in a separate tab first, then return to Goodreads and try the export again.
             </div>
             <button
-              onClick={() => setImportingPlatform(EBOOK_PLATFORMS.find(p => p.id === "goodreads"))}
+              onClick={() => { connect("goodreads"); setImportingPlatform(EBOOK_PLATFORMS.find(p => p.id === "goodreads")); }}
               style={{ padding: "10px 22px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
             >
               🌸 Import from Goodreads
@@ -8781,8 +9239,11 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         </div>
       </div>
 
+    </div>{/* end inner scroll div */}
       {importingPlatform && (
         <ImportModal
+          isAdmin={isAdmin}
+          isPWA={isPWA}
           platform={importingPlatform}
           mediaType={AUDIO_PLATFORMS.some(p => p.id === importingPlatform.id) ? "audiobooks" : "ebooks"}
           onClose={() => setImportingPlatform(null)}
@@ -8812,6 +9273,9 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
             localStorage.setItem(statusKey, JSON.stringify(statuses));
             localStorage.setItem(datesKey,  JSON.stringify(dates));
 
+            connect(importingPlatform.id);
+            const updatedConnections = { ...JSON.parse(localStorage.getItem("sk_connections") || "{}"), [importingPlatform.id]: true };
+            localStorage.setItem("sk_connections", JSON.stringify(updatedConnections));
             setImportingPlatform(null);
             refreshBookCounts();
             syncToCloud(authUser);
@@ -8820,6 +9284,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           }}
         />
       )}
+      {showFetchDesc && <FetchDescriptionsModal onClose={() => setShowFetchDesc(false)} th={th} />}
     </div>
   );
 }
@@ -9084,7 +9549,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
         const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
         return all.filter(b => {
           const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
-          const effectiveGenre = genreOverrides[b.isbn || b.title] || b.genre;
+          const effectiveGenre = migrateGenre(genreOverrides[b.isbn || b.title] || b.genre || "");
           return effectiveGenre === genre && bookMedia === mediaType;
         });
       } catch { return []; }
@@ -9109,6 +9574,17 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
     if (sortBy === "author") return [...arr].sort((a, b) => (a.author || "").split(" ").pop().localeCompare((b.author || "").split(" ").pop()));
     return arr;
   };
+  const crossMediaMatches = filterQuery.trim().length >= 2 ? (() => {
+    try {
+      const q = filterQuery.toLowerCase();
+      const allUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      return allUserBooks.filter(b => {
+        const bMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
+        if (bMedia === mediaType) return false; // already in current shelf
+        return b.title?.toLowerCase().includes(q) || (b.author || "").toLowerCase().includes(q);
+      });
+    } catch { return []; }
+  })() : [];
   const filtered = filterQuery.trim()
     ? allShelfBooks.filter(b => b.title.toLowerCase().includes(filterQuery.toLowerCase()) || (b.author || "").toLowerCase().includes(filterQuery.toLowerCase()))
     : allShelfBooks;
@@ -9169,9 +9645,10 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
         {/* Row 2: Back + action buttons */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <button onClick={onClose} style={{
-            background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
-            borderRadius: 20, padding: "5px 12px", color: "#5C3A1E", cursor: "pointer",
-            fontFamily: "Georgia, serif", fontSize: 13, flexShrink: 0,
+            background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)",
+            borderRadius: 10, padding: "7px 16px", color: "#F5ECD7", cursor: "pointer",
+            fontFamily: "Georgia, serif", fontSize: 16, flexShrink: 0,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           }}>← Back</button>
           <button onClick={onToggleMediaType} style={{
             background: "rgba(139,94,60,0.12)", border: "1px solid rgba(139,94,60,0.4)",
@@ -9216,6 +9693,29 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
 
       {/* Book shelf */}
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}>
+        {crossMediaMatches.length > 0 && (
+          <div style={{ margin: "12px 12px 0", background: "rgba(255,255,255,0.6)", border: "1px solid #D8C3A5", borderRadius: 10, padding: "10px 14px" }}>
+            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: "#5C3A1E", marginBottom: 8 }}>
+              Also found in your other shelves:
+            </div>
+            {crossMediaMatches.map((b, i) => {
+              const bMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
+              const emoji = bMedia === "physical" ? "📚" : bMedia === "audiobooks" ? "🎧" : "📱";
+              const label = bMedia === "physical" ? "Physical" : bMedia === "audiobooks" ? "Audiobook" : "eBook";
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: i < crossMediaMatches.length - 1 ? "1px solid #E8D5B0" : "none", cursor: "pointer" }}
+                  onClick={() => { setFilterQuery(""); }}>
+                  {b.coverUrl ? <img src={b.coverUrl} alt="" style={{ width: 28, height: 40, objectFit: "cover", borderRadius: 2, flexShrink: 0 }} /> : <div style={{ width: 28, height: 40, background: "#D8C3A5", borderRadius: 2, flexShrink: 0 }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.title}</div>
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>{b.author}</div>
+                  </div>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", flexShrink: 0 }}>{emoji} {label}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {books.length === 0 ? (
           <div style={{ textAlign: "center", color: "rgba(200,180,140,0.5)", fontFamily: "Georgia, serif", fontSize: 14, fontStyle: "italic", marginTop: 60 }}>
             {filterQuery ? "No books match your search." : "No books in this collection yet."}
@@ -9525,7 +10025,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   };
 
   const DEFAULT_LEFT = [
-    { genre: "Fantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
     { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
     { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
     { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
@@ -9533,10 +10033,9 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
     { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
   ];
   const DEFAULT_RIGHT = [
-    { genre: "Fiction",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
+    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
     { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
     { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
-    { genre: "Drama",                   image: "/botanicals/drama-blue-hydrangea.png" },
     { genre: "True Crime",             image: "/botanicals/truecrime-purple-dahlia.jpg" },
     { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
     { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
@@ -9546,7 +10045,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   const [genreOrder, setGenreOrder] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("sk_mobile_genre_order") || "null");
-      if (saved && Array.isArray(saved)) return saved;
+      if (saved && Array.isArray(saved)) return saved.map(migrateGenre);
     } catch {}
     return defaultGenreOrder;
   });
@@ -9891,7 +10390,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
   };
 
   const DEFAULT_LEFT = [
-    { genre: "Fantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
     { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
     { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
     { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
@@ -9899,10 +10398,9 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
     { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
   ];
   const DEFAULT_RIGHT = [
-    { genre: "Fiction",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
+    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
     { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
     { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
-    { genre: "Drama",                   image: "/botanicals/drama-blue-hydrangea.png" },
     { genre: "True Crime",              image: "/botanicals/truecrime-purple-dahlia.jpg" },
     { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
     { genre: "Classics",                image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
@@ -9913,7 +10411,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
     try {
       const saved = localStorage.getItem(key);
       if (!saved) return defaults;
-      const order = JSON.parse(saved);
+      const order = JSON.parse(saved).map(migrateGenre);
       return order.map(g => defaults.find(d => d.genre === g)).filter(Boolean);
     } catch { return defaults; }
   };
@@ -10098,7 +10596,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "space-evenly",
-      padding: "10px 0",
+      padding: "60px 0 10px",
       paddingLeft: side === "left" ? 20 : 0,
       paddingRight: side === "right" ? 20 : 0,
       background: "rgba(8,4,2,0.72)",
@@ -10928,6 +11426,343 @@ function NewUserOnboarding({ userName, onImportGoodreads, onAddManually, onDismi
   );
 }
 
+function RedetectGenresModal({ onClose, th }) {
+  const [phase, setPhase] = React.useState("idle"); // idle | scanning | results | applying | done | error
+  const [results, setResults] = React.useState([]);
+  const [errorMsg, setErrorMsg] = React.useState("");
+
+  const runScan = () => {
+    setPhase("scanning");
+    try {
+      const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+      const userRules = JSON.parse(localStorage.getItem("sk_author_genres") || "{}");
+      const changes = [];
+      books.forEach(b => {
+        if (b.isbn && overrides[b.isbn]) return;
+        const detected = detectGenreFromTitle(b.title || "") || getAuthorGenre(b.author || "", userRules, {}) || null;
+        if (detected && detected !== b.genre) {
+          changes.push({ title: b.title, author: b.author, from: b.genre || "Unknown", to: detected });
+        }
+      });
+      setResults(changes);
+      setPhase("results");
+    } catch(e) {
+      setErrorMsg(e.message);
+      setPhase("error");
+    }
+  };
+
+  const applyAll = () => {
+    setPhase("applying");
+    try {
+      const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+      const userRules = JSON.parse(localStorage.getItem("sk_author_genres") || "{}");
+      books.forEach(b => {
+        if (b.isbn && overrides[b.isbn]) return;
+        const detected = detectGenreFromTitle(b.title || "") || getAuthorGenre(b.author || "", userRules, {}) || null;
+        if (detected && detected !== b.genre) b.genre = detected;
+      });
+      localStorage.setItem("sk_user_books", JSON.stringify(books));
+      setPhase("done");
+    } catch(e) {
+      setErrorMsg(e.message);
+      setPhase("error");
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 11000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: th.bg, borderRadius: 14, padding: "28px 24px", width: 460, maxWidth: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.5)", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 20, color: th.text }}>🔍 Re-detect Genres</h2>
+
+        {phase === "idle" && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, margin: "0 0 20px" }}>This will scan your entire library and find books that are in the wrong genre based on their title and author. Books you manually moved will be skipped.</p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={runScan} style={{ flex: 1, padding: "10px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>Start Scan</button>
+              <button onClick={onClose} style={{ padding: "10px 18px", background: "none", border: `1px solid ${th.border}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, color: th.text }}>Cancel</button>
+            </div>
+          </>
+        )}
+
+        {phase === "scanning" && (
+          <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, fontStyle: "italic" }}>Scanning your library…</p>
+        )}
+
+        {phase === "results" && results.length === 0 && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 14, color: th.text, margin: "0 0 20px" }}>✅ All books are already in the correct genre — nothing to change!</p>
+            <button onClick={onClose} style={{ width: "100%", padding: "10px", background: th.bgMuted, color: th.text, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14 }}>Close</button>
+          </>
+        )}
+
+        {phase === "results" && results.length > 0 && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, margin: "0 0 12px" }}>Found <strong>{results.length}</strong> book{results.length !== 1 ? "s" : ""} in the wrong genre:</p>
+            <div style={{ maxHeight: 300, overflowY: "auto", border: `1px solid ${th.border}`, borderRadius: 8, marginBottom: 16 }}>
+              {results.map((r, i) => (
+                <div key={i} style={{ padding: "10px 14px", borderBottom: i < results.length - 1 ? `1px solid ${th.border}` : "none" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: th.text, marginBottom: 2 }}>{r.title}</div>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: th.textSoft, fontStyle: "italic", marginBottom: 4 }}>{r.author}</div>
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 12 }}>
+                    <span style={{ background: "#C0392B22", color: "#C0392B", padding: "2px 7px", borderRadius: 4 }}>{r.from}</span>
+                    <span style={{ margin: "0 6px", color: th.textSoft }}>→</span>
+                    <span style={{ background: "#27AE6022", color: "#27AE60", padding: "2px 7px", borderRadius: 4 }}>{r.to}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={applyAll} style={{ flex: 1, padding: "10px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>✅ Apply All {results.length} Changes</button>
+              <button onClick={onClose} style={{ padding: "10px 18px", background: "none", border: `1px solid ${th.border}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, color: th.text }}>Cancel</button>
+            </div>
+          </>
+        )}
+
+        {phase === "applying" && (
+          <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, fontStyle: "italic" }}>Applying changes…</p>
+        )}
+
+        {phase === "done" && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 14, color: th.text, margin: "0 0 20px" }}>✅ Done! {results.length} book{results.length !== 1 ? "s" : ""} moved to the correct genre. Reload to see the changes.</p>
+            <button onClick={() => window.location.reload()} style={{ width: "100%", padding: "10px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>Reload Now</button>
+          </>
+        )}
+
+        {phase === "error" && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#B05040" }}>❌ Error: {errorMsg}</p>
+            <button onClick={onClose} style={{ width: "100%", padding: "10px", background: th.bgMuted, color: th.text, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14 }}>Close</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FetchDescriptionsModal({ onClose, th }) {
+  const [phase, setPhase] = React.useState("idle"); // idle | running | done | error
+  const [progress, setProgress] = React.useState({ done: 0, total: 0, fetched: 0, current: "" });
+  const [errorMsg, setErrorMsg] = React.useState("");
+  const stopRef = React.useRef(false);
+
+  const run = async () => {
+    stopRef.current = false;
+    setPhase("running");
+
+    const fetchWithTimeout = async (url, ms = 2000) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ms);
+      try { const r = await fetch(url, { signal: ctrl.signal }); clearTimeout(timer); return r; }
+      catch(e) { clearTimeout(timer); throw e; }
+    };
+    const yield_ = () => new Promise(r => setTimeout(r, 0));
+    const sb = getSupabase();
+    const gKey = localStorage.getItem("sk_google_api_key") || "";
+
+    try {
+      const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const targets = books.map((b, i) => ({ b, i })).filter(({ b }) =>
+        (!b.description || b.description.trim() === "") && !SKIP_DESC_GENRES.includes(b.genre)
+      );
+
+      // Load entire community cache once — avoids one Supabase query per book
+      const cacheByIsbn = new Map();
+      const cacheByTitle = new Map();
+      try {
+        let from = 0;
+        const PAGE = 1000;
+        while (true) {
+          const { data } = await sb.from("community_descriptions").select("isbn,title,author,description").range(from, from + PAGE - 1);
+          if (!data?.length) break;
+          data.forEach(r => {
+            if (r.isbn) cacheByIsbn.set(r.isbn, r.description);
+            if (r.title) cacheByTitle.set(r.title.toLowerCase().trim(), r.description);
+          });
+          if (data.length < PAGE) break;
+          from += PAGE;
+        }
+      } catch { /* ignore — will fall through to API */ }
+
+      const userId = (await sb.auth.getUser()).data.user?.id;
+      let fetched = 0;
+      let done = 0;
+      setProgress({ done: 0, total: targets.length, fetched: 0, current: "" });
+
+      const processBook = async ({ b: book, i: idx }) => {
+        if (stopRef.current) return;
+        const cleaned = cleanTitle(book.title || "");
+        const normAuthor = normalizeAuthor(book.author || "");
+        let desc = "";
+
+        // Step 1: community cache (local Map — instant)
+        if (book.isbn && cacheByIsbn.has(book.isbn)) {
+          desc = cacheByIsbn.get(book.isbn);
+        } else if (cleaned && cacheByTitle.has(cleaned.toLowerCase())) {
+          desc = cacheByTitle.get(cleaned.toLowerCase());
+        }
+
+        // Step 2: OpenLibrary edition by ISBN
+        if (!desc && book.isbn) {
+          try {
+            const res = await fetchWithTimeout(`https://openlibrary.org/isbn/${book.isbn}.json`, 5000);
+            if (res.ok) {
+              const ed = await res.json();
+              const d = ed.description?.value || ed.description || "";
+              if (d && typeof d === "string" && d.length > 20) desc = d;
+              if (!desc && ed.works?.[0]?.key) {
+                try {
+                  const wr = await fetchWithTimeout(`https://openlibrary.org${ed.works[0].key}.json`, 5000);
+                  const wj = await wr.json();
+                  const wd = wj.description?.value || wj.description || wj.first_sentence?.value || "";
+                  if (wd && typeof wd === "string" && wd.length > 20) desc = wd;
+                } catch { /* ignore */ }
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Step 3: OpenLibrary search fallback
+        if (!desc && cleaned) {
+          try {
+            const q = normAuthor ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(normAuthor)}` : `title=${encodeURIComponent(cleaned)}`;
+            const res = await fetchWithTimeout(`https://openlibrary.org/search.json?${q}&limit=1&fields=key`, 5000);
+            const doc = (await res.json()).docs?.[0];
+            if (doc?.key) {
+              const wr = await fetchWithTimeout(`https://openlibrary.org${doc.key}.json`, 5000);
+              const wj = await wr.json();
+              const wd = wj.description?.value || wj.description || wj.first_sentence?.value || "";
+              if (wd && typeof wd === "string" && wd.length > 20) desc = wd;
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Step 4: Google Books (last — 1000/day limit)
+        if (!desc && cleaned) {
+          try {
+            const gq = normAuthor ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(normAuthor)}` : `intitle:${encodeURIComponent(cleaned)}`;
+            const res = await fetchWithTimeout(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKey ? `&key=${gKey}` : ""}`, 5000);
+            const json = await res.json();
+            if (json.error) {
+              // Quota exceeded — stop hitting Google Books for remaining books
+              if (json.error.code === 429 || json.error.status === "RESOURCE_EXHAUSTED" || /quota/i.test(json.error.message || "")) {
+                stopRef.current = true;
+              }
+            } else {
+              const vol = json.items?.[0]?.volumeInfo;
+              if (vol?.description) desc = vol.description;
+            }
+          } catch { /* ignore */ }
+        }
+
+        if (desc) {
+          desc = desc.trim();
+          books[idx].description = desc;
+          fetched++;
+          cacheByIsbn.set(book.isbn, desc);
+          if (cleaned) cacheByTitle.set(cleaned.toLowerCase(), desc);
+          // Save immediately so nothing is lost
+          localStorage.setItem("sk_user_books", JSON.stringify(books));
+          if (book.isbn) {
+            try { await sb.from("community_descriptions").upsert({ isbn: book.isbn, title: cleaned, author: normAuthor, description: desc, uploaded_by: userId }); }
+            catch { /* ignore */ }
+          }
+        }
+
+        done++;
+        setProgress({ done, total: targets.length, fetched, current: book.title });
+      };
+
+      // Process 8 books in parallel
+      const CONCURRENCY = 8;
+      for (let t = 0; t < targets.length; t += CONCURRENCY) {
+        if (stopRef.current) break;
+        const batch = targets.slice(t, t + CONCURRENCY);
+        await Promise.all(batch.map(processBook));
+        await yield_();
+      }
+
+      localStorage.setItem("sk_user_books", JSON.stringify(books));
+      setProgress(p => ({ ...p, done: targets.length }));
+      setPhase("done");
+    } catch(e) {
+      // Save whatever we got before crashing
+      try { localStorage.setItem("sk_user_books", JSON.stringify(JSON.parse(localStorage.getItem("sk_user_books") || "[]"))); } catch { /* ignore */ }
+      setErrorMsg(e.message);
+      setPhase("error");
+    }
+  };
+
+  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 11000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: th.bg, borderRadius: 14, padding: "28px 24px", width: 480, maxWidth: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.5)", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+        <h2 style={{ margin: "0 0 12px", fontSize: 20, color: th.text }}>📖 Fetch Missing Descriptions</h2>
+
+        {phase === "idle" && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, margin: "0 0 8px" }}>
+              Searches for missing book descriptions in this order:
+            </p>
+            <ol style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.8 }}>
+              <li>Community cache (instant — shared by all StoryKeeper users)</li>
+              <li>OpenLibrary (free, unlimited)</li>
+              <li>Google Books (last — 1,000/day limit)</li>
+            </ol>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, margin: "0 0 20px", fontStyle: "italic" }}>
+              Cookbooks, gardening, self help, home & DIY, and health books are skipped — their descriptions aren't useful for a reading library.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={run} style={{ flex: 1, padding: "10px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>Start Fetching</button>
+              <button onClick={onClose} style={{ padding: "10px 18px", background: "none", border: `1px solid ${th.border}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, color: th.text }}>Cancel</button>
+            </div>
+          </>
+        )}
+
+        {phase === "running" && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, margin: "0 0 6px", fontStyle: "italic", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {progress.current || "Starting…"}
+            </p>
+            <div style={{ background: th.bgMuted, borderRadius: 6, height: 10, marginBottom: 8, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${pct}%`, background: th.accent, borderRadius: 6, transition: "width 0.2s" }} />
+            </div>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, margin: "0 0 16px" }}>
+              {progress.done} / {progress.total} checked &nbsp;·&nbsp; <strong style={{ color: th.text }}>{progress.fetched} descriptions found</strong> &nbsp;·&nbsp; {pct}%
+            </p>
+            <button onClick={() => { stopRef.current = true; }} style={{ width: "100%", padding: "9px", background: "none", border: `1px solid ${th.border}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: th.text }}>⏹ Stop</button>
+          </>
+        )}
+
+        {phase === "done" && (
+          <>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 14, color: th.text, margin: "0 0 20px" }}>
+              Done! Found descriptions for <strong>{progress.fetched}</strong> of {progress.total} books checked.
+            </p>
+            <button onClick={() => window.location.reload()} style={{ width: "100%", padding: "10px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>Reload to See Changes</button>
+          </>
+        )}
+
+        {phase === "error" && (
+          <>
+            {progress.fetched > 0 && (
+              <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.text, margin: "0 0 10px" }}>
+                ✅ Saved <strong>{progress.fetched}</strong> descriptions before stopping.
+              </p>
+            )}
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#B05040", margin: "0 0 16px" }}>⚠️ {errorMsg} — run again tomorrow to continue.</p>
+            <button onClick={onClose} style={{ width: "100%", padding: "10px", background: th.bgMuted, color: th.text, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14 }}>Close</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LimitWarningModal({ currentCount, limit, tierName, onUpgrade, onDismiss }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const pct = Math.round((currentCount / limit) * 100);
@@ -11156,7 +11991,7 @@ function PublicProfilePage({ username, supabaseRef, onClose }) {
         fontFamily: '"Palatino Linotype", Palatino, serif',
       }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0", lineHeight: 1 }}>‹</button>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
           <h2 style={{ margin: 0, fontSize: 20, color: th.text, flex: 1, textAlign: "center" }}>Reader Profile</h2>
           <div style={{ width: 32 }} />
         </div>
@@ -11513,9 +12348,11 @@ function BookOfTheMonthPage({ onClose }) {
       <div style={{ maxWidth: 500, margin: "0 auto", padding: "60px 24px 80px" }}>
 
         <button onClick={onClose} style={{
-          background: "none", border: "none", cursor: "pointer", color: "#8B5E3C",
-          fontSize: 22, padding: "0 0 0 0", marginBottom: 20, display: "flex", alignItems: "center", gap: 6,
-          fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700,
+          background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10,
+          cursor: "pointer", color: "#F5ECD7",
+          padding: "8px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 6,
+          fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
         }}>‹ Back to Community</button>
 
         <div style={{ textAlign: "center", marginBottom: 32 }}>
@@ -11613,7 +12450,7 @@ function MyClubsPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookCl
   return (
     <div style={pageStyle}>
       <div style={headerStyle}>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: thm.textSoft, padding: 0 }}>←</button>
+        <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, cursor: "pointer", color: "#F5ECD7", padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>←</button>
         <h2 style={{ margin: 0, fontSize: 20, color: thm.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>My Clubs & Groups</h2>
       </div>
 
@@ -11773,7 +12610,7 @@ function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose,
 
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0" }}>‹</button>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
           <h2 style={{ margin: 0, fontSize: 22, color: th.text, flex: 1 }}>👥 Community</h2>
         </div>
         <p style={{ color: th.textSoft, fontSize: 14, marginBottom: 20, marginLeft: 32 }}>
@@ -12166,7 +13003,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
 
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0" }}>‹</button>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
             <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>👥 Group</h2>
@@ -12446,7 +13283,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
               {activeThread ? (
                 <>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                    <button onClick={() => { setActiveThread(null); setNewThreadReply(""); setThreadMsg(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 18, padding: 0 }}>‹</button>
+                    <button onClick={() => { setActiveThread(null); setNewThreadReply(""); setThreadMsg(""); }} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 18, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
                     <span style={{ fontSize: 13, color: th.textSoft }}>Back to Discussions</span>
                   </div>
                   <div style={cardStyle}>
@@ -12566,7 +13403,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
           <div style={{ background: th.bg, borderRadius: "16px 16px 0 0", padding: 24, width: "100%", maxHeight: "60vh", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ margin: 0, color: th.text }}>Members ({memberCount})</h3>
-              <button onClick={() => setShowMembers(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
+              <button onClick={() => setShowMembers(false)} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, color: "#F5ECD7", cursor: "pointer", padding: "6px 11px", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", boxShadow: "0 2px 8px rgba(0,0,0,0.35)", lineHeight: 1 }}>✕</button>
             </div>
             {members.map(m => (
               <div key={m.username} style={{ padding: "10px 0", borderBottom: `1px solid ${th.border}`, display: "flex", alignItems: "center", gap: 12 }}>
@@ -13006,7 +13843,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0", lineHeight: 1 }}>‹</button>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
             <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>📚 Book Club</h2>
@@ -13536,7 +14373,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
               {activeThreadBC ? (
                 <>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                    <button onClick={() => { setActiveThreadBC(null); setNewThreadReplyBC(""); setThreadMsgBC(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 18, padding: 0 }}>‹</button>
+                    <button onClick={() => { setActiveThreadBC(null); setNewThreadReplyBC(""); setThreadMsgBC(""); }} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 18, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
                     <span style={{ fontSize: 13, color: th.textSoft }}>Back to Discussions</span>
                   </div>
                   <div style={cardStyle}>
@@ -13689,7 +14526,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
           <div onClick={e => e.stopPropagation()} style={{ background: th.bg, borderRadius: "16px 16px 0 0", padding: 24, width: "100%", maxHeight: "60vh", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h3 style={{ margin: 0, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Members ({memberCountBC})</h3>
-              <button onClick={() => setShowMembersBC(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
+              <button onClick={() => setShowMembersBC(false)} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, color: "#F5ECD7", cursor: "pointer", padding: "6px 11px", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", boxShadow: "0 2px 8px rgba(0,0,0,0.35)", lineHeight: 1 }}>✕</button>
             </div>
             {membersBC.length === 0 ? (
               <div style={{ color: th.textSoft, fontSize: 13, fontStyle: "italic", textAlign: "center", padding: 24 }}>No members yet.</div>
@@ -13914,8 +14751,8 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
       }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
           <button onClick={onClose} style={{
-            background: "none", border: "none", cursor: "pointer", color: th.accent,
-            fontSize: 22, padding: "0 10px 0 0", lineHeight: 1, fontFamily: '"Palatino Linotype", Palatino, serif',
+            background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7",
+            fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           }}>‹</button>
           <h2 style={{ margin: 0, fontSize: 20, color: th.text, flex: 1, textAlign: "center" }}>My Profile</h2>
           <div style={{ width: 32 }} />
@@ -14532,7 +15369,7 @@ function AdminDashboard({ authUser, supabaseRef, onClose }) {
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: th.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
       <div style={{ maxWidth: 700, margin: "0 auto", padding: "20px 16px 80px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: th.accent, fontSize: 22, padding: "0 10px 0 0" }}>‹</button>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
           <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>🛡️ Admin — Moderation Dashboard</h2>
         </div>
 
@@ -14710,7 +15547,7 @@ function GlobalSearchBookModal({ book, onClose, onGoToShelf }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 8000, background: "rgba(20,14,8,0.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: th.bg, borderRadius: 14, padding: 24, maxWidth: 480, width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 16px 48px rgba(0,0,0,0.6)", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
-        <button onClick={onClose} style={{ position: "absolute", top: 12, right: 16, background: "none", border: "none", fontSize: 22, cursor: "pointer", color: th.textSoft }}>✕</button>
+        <button onClick={onClose} style={{ position: "absolute", top: 12, right: 16, background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, color: "#F5ECD7", cursor: "pointer", padding: "6px 11px", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", boxShadow: "0 2px 8px rgba(0,0,0,0.35)", lineHeight: 1 }}>✕</button>
         <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
           {book.coverUrl
             ? <img src={book.coverUrl} alt="" style={{ width: 80, height: 120, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
@@ -14737,6 +15574,7 @@ function GlobalSearchBookModal({ book, onClose, onGoToShelf }) {
 export default function App() {
   const [soundOn, setSoundOn] = useState(false);
   const audioRef = useRef(null);
+  const pendingResumeRef = useRef(null);
 
   const startAudio = (ctx) => {
     const FADE_DURATION = 3000;
@@ -14780,6 +15618,11 @@ export default function App() {
   const toggleSound = () => {
     try {
       if (soundOn) {
+        if (pendingResumeRef.current) {
+          document.removeEventListener("touchstart", pendingResumeRef.current);
+          document.removeEventListener("click", pendingResumeRef.current);
+          pendingResumeRef.current = null;
+        }
         if (audioRef.current) {
           try { audioRef.current.rainA.pause(); } catch (_) {}
           try { audioRef.current.rainB.pause(); } catch (_) {}
@@ -14821,8 +15664,13 @@ export default function App() {
       }).catch(() => {
         // Autoplay blocked (Safari mobile) — show as on, resume on first tap
         setSoundOn(true);
+        let resumed = false;
         const resume = () => {
-          // Create fresh audio objects so loadedmetadata fires correctly after tap
+          if (resumed) return;
+          resumed = true;
+          document.removeEventListener("touchstart", resume);
+          document.removeEventListener("click", resume);
+          pendingResumeRef.current = null;
           const freshCtx = {
             rainA: new Audio("/sounds/rain-thunder.mp3"),
             rainB: new Audio("/sounds/rain-thunder.mp3"),
@@ -14832,8 +15680,9 @@ export default function App() {
           startAudio(freshCtx);
           audioRef.current = freshCtx;
         };
-        document.addEventListener("touchstart", resume, { once: true });
-        document.addEventListener("click", resume, { once: true });
+        pendingResumeRef.current = resume;
+        document.addEventListener("touchstart", resume);
+        document.addEventListener("click", resume);
       });
     } else {
       startAudio(ctx);
@@ -14971,12 +15820,7 @@ export default function App() {
       if (!v) return;
       try {
         const parsed = JSON.parse(v);
-        // Strip descriptions from books — they're large and re-enrichable
-        if (k === "sk_user_books" && Array.isArray(parsed)) {
-          payload[k] = parsed.map(({ description: _d, ...rest }) => rest);
-        } else {
-          payload[k] = parsed;
-        }
+        payload[k] = parsed;
       } catch { payload[k] = v; }
     });
     return payload;
@@ -14990,7 +15834,7 @@ export default function App() {
       if (k === "sk_user_books") {
         // Merge cloud books with local books — never overwrite locally-enriched fields
         const local = (() => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch { return []; } })();
-        const cloudBooks = Array.isArray(data[k]) ? data[k] : [];
+        const cloudBooks = (Array.isArray(data[k]) ? data[k] : []).map(b => ({ ...b, genre: migrateGenre(b.genre || "") }));
         const localMap = new Map();
         local.forEach(b => {
           if (b.isbn) localMap.set(b.isbn, b);
@@ -15061,6 +15905,7 @@ export default function App() {
     );
     if (error || !data) return false;
     applyCloudData(data.data);
+    window.dispatchEvent(new CustomEvent("sk-cloud-synced"));
     return true;
   };
 
@@ -15197,8 +16042,12 @@ export default function App() {
               if (!user.user_metadata?.full_name || user.user_metadata.full_name !== data.username) {
                 sb.auth.updateUser({ data: { full_name: data.username } });
               }
+            } else if (user.user_metadata?.full_name) {
+              // Has a username in metadata but not in usernames table — restore it
+              localStorage.setItem("sk_username_set", "1");
+              sb.from("usernames").upsert({ username: user.user_metadata.full_name, user_id: user.id });
             } else if (!localStorage.getItem("sk_username_set")) {
-              // Auto-generate a username from the email prefix so every account always has one
+              // Truly no username anywhere — auto-generate one
               const emailPrefix = (user.email || "reader").split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20) || "reader";
               const tryInsert = async (candidate) => {
                 const { data: existing } = await sb.from("usernames").select("user_id").eq("username", candidate).maybeSingle();
@@ -15318,6 +16167,8 @@ export default function App() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#settings" || localStorage.getItem("sk_current_page") === "settings";
   });
+  const [showRedetect, setShowRedetect] = useState(false);
+  const [showFetchDesc, setShowFetchDesc] = useState(false);
   const [showProfile, setShowProfile] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#profile" || localStorage.getItem("sk_current_page") === "profile";
@@ -15567,6 +16418,7 @@ export default function App() {
             setShowGroup(false); setGroupGenre(null);
             if (groupPrevPage === "community") { setShowCommunity(true); window.location.hash = "#community"; }
             else if (groupPrevPage === "myclubs") { setShowMyClubs(true); }
+            else if (groupPrevPage === "shelf" && genre) { window.location.hash = "#genre=" + encodeURIComponent(genre); }
             else { window.location.hash = ""; }
             setGroupPrevPage(null);
           }}
@@ -15585,6 +16437,7 @@ export default function App() {
             setShowBookClub(false); setBookClubGenre(null);
             if (bookClubPrevPage === "community") { setShowCommunity(true); window.location.hash = "#community"; }
             else if (bookClubPrevPage === "myclubs") { setShowMyClubs(true); }
+            else if (bookClubPrevPage === "shelf" && genre) { window.location.hash = "#genre=" + encodeURIComponent(genre); }
             else { window.location.hash = ""; }
             setBookClubPrevPage(null);
           }}
@@ -15618,8 +16471,8 @@ export default function App() {
         ☰
       </button>
 
-      {/* SYNC NOW BUTTON — top-right, only when signed in */}
-      {authUser && !showSidebar && (
+      {/* SYNC NOW BUTTON — top-right, only on home screen or Settings (never on shelves) */}
+      {authUser && !showSidebar && !genre && (showHome || showSettings) && !globalSearchOpenBook && (
         <button
           onClick={async () => {
             if (syncStatus === "syncing") return;
@@ -15681,7 +16534,7 @@ export default function App() {
             setMediaType(targetMedia);
             localStorage.setItem("sk_media_type", targetMedia);
             setAutoOpenBook(book);
-            const targetGenre = book.genre || "Fiction";
+            const targetGenre = book.genre || "Fiction & Drama";
             setGenre(targetGenre);
             window.location.hash = "#genre=" + encodeURIComponent(targetGenre);
             setShowHome(false);
@@ -15922,8 +16775,8 @@ export default function App() {
           onOpenSettings={() => { setShowSettings(true); window.location.hash = "#settings"; }}
           onOpenStats={() => setShowStats(true)}
           onOpenProfile={() => { setShowProfile(true); window.location.hash = "#profile"; }}
-          onOpenGroup={() => { setGroupGenre(genre); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(genre); }}
-          onOpenBookClub={() => { setBookClubGenre(genre); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(genre); }}
+          onOpenGroup={() => { setGroupPrevPage("shelf"); setGroupGenre(genre); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(genre); }}
+          onOpenBookClub={() => { setBookClubPrevPage("shelf"); setBookClubGenre(genre); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(genre); }}
           autoOpenBook={autoOpenBook}
           onAutoOpenDone={() => setAutoOpenBook(null)}
         />
@@ -16044,6 +16897,9 @@ export default function App() {
       )}
 
       {/* SETTINGS MODAL */}
+      {showRedetect && <RedetectGenresModal onClose={() => setShowRedetect(false)} th={th} />}
+      {showFetchDesc && <FetchDescriptionsModal onClose={() => setShowFetchDesc(false)} th={th} />}
+
       {showSettings && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 9000,
@@ -16059,7 +16915,7 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", marginBottom: 24 }}>
               <button onClick={() => { setShowSettings(false); window.location.hash = ""; }} style={{
                 background: "none", border: "none", cursor: "pointer", color: th.accent,
-                fontSize: 22, padding: "0 10px 0 0", lineHeight: 1, fontFamily: '"Palatino Linotype", Palatino, serif',
+                fontSize: 30, padding: "4px 14px 4px 0", lineHeight: 1, fontFamily: '"Palatino Linotype", Palatino, serif',
               }}>‹</button>
               <h2 style={{ margin: 0, fontSize: 22, color: th.text, flex: 1, textAlign: "center" }}>⚙️ Settings</h2>
               <div style={{ width: 32 }} />
@@ -16215,6 +17071,11 @@ export default function App() {
             {/* Data Management */}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Data Management</div>
+              <button onClick={() => setShowRedetect(true)} style={{
+                width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8,
+                background: th.bgMuted, border: "none", cursor: "pointer", fontSize: 13,
+                fontFamily: '"Palatino Linotype", Palatino, serif', color: th.text,
+              }}>🔍 Re-detect & Fix Genre Assignments</button>
               <button onClick={() => {
                 const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
                 const statuses_e = JSON.parse(localStorage.getItem("sk_statuses_ebooks") || "{}");
