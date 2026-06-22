@@ -3413,15 +3413,15 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
         backgroundPosition: "center",
       }}
     >
-      {/* Back button — hidden when scrolled down */}
+      {/* Back button */}
       <button
         onClick={onClose}
         style={{
-          position: "absolute",
-          top: 56,
-          left: 20,
+          position: "fixed",
+          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          left: "calc(16px + env(safe-area-inset-left, 0px))",
           padding: "8px 18px",
-          borderRadius: "50px",
+          borderRadius: 10,
           border: "1px solid rgba(201,169,110,0.35)",
           cursor: "pointer",
           background: "rgba(58,34,16,0.72)",
@@ -3434,9 +3434,6 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           letterSpacing: "0.5px",
           boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           zIndex: 201,
-          opacity: atTop ? 1 : 0,
-          pointerEvents: atTop ? "auto" : "none",
-          transition: "opacity 0.25s ease",
         }}
       >
         ← Return to Reading Nook
@@ -3721,6 +3718,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
 }
 
 function FavoritesShelf({ onClose }) {
+  const isMobile = window.innerWidth < 768;
   const [selectedBook, setSelectedBook] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -3786,10 +3784,11 @@ function FavoritesShelf({ onClose }) {
     });
   } catch { /* ignore */ }
 
-  // Split into rows of 12
+  // Split into rows — fewer books per row on mobile
+  const booksPerRow = isMobile ? 5 : 12;
   const rows = [];
-  for (let i = 0; i < favoritedBooks.length; i += 12) {
-    rows.push(favoritedBooks.slice(i, i + 12));
+  for (let i = 0; i < favoritedBooks.length; i += booksPerRow) {
+    rows.push(favoritedBooks.slice(i, i + booksPerRow));
   }
 
   const scrollRef = useRef(null);
@@ -3808,15 +3807,15 @@ function FavoritesShelf({ onClose }) {
         backgroundPosition: "center",
       }}
     >
-      {/* Back button — hidden when scrolled down */}
+      {/* Back button */}
       <button
         onClick={onClose}
         style={{
-          position: "absolute",
-          top: 56,
-          left: 20,
+          position: "fixed",
+          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          left: "calc(16px + env(safe-area-inset-left, 0px))",
           padding: "8px 18px",
-          borderRadius: "50px",
+          borderRadius: 10,
           border: "1px solid rgba(201,169,110,0.35)",
           cursor: "pointer",
           background: "rgba(58,34,16,0.72)",
@@ -3829,9 +3828,6 @@ function FavoritesShelf({ onClose }) {
           letterSpacing: "0.5px",
           boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           zIndex: 201,
-          opacity: atTop ? 1 : 0,
-          pointerEvents: atTop ? "auto" : "none",
-          transition: "opacity 0.25s ease",
         }}
       >
         ← Return to Reading Nook
@@ -3870,15 +3866,15 @@ function FavoritesShelf({ onClose }) {
       <div
         ref={scrollRef}
         onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
-        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "60px 40px 30px" }}
+        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: isMobile ? "calc(env(safe-area-inset-top, 0px) + 70px) 8px 80px" : "60px 40px 30px" }}
       >
 
       {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: 30, paddingTop: 10 }}>
+      <div style={{ textAlign: "center", marginBottom: 20, paddingTop: 10 }}>
         <h1 style={{
           fontFamily: '"Palatino Linotype", Palatino, serif',
           color: "#3A2A1A",
-          fontSize: 34,
+          fontSize: isMobile ? 26 : 34,
           letterSpacing: "1.5px",
           marginBottom: 6,
         }}>
@@ -3888,14 +3884,14 @@ function FavoritesShelf({ onClose }) {
           fontFamily: '"Palatino Linotype", Palatino, serif',
           color: "#4B3A2A",
           fontStyle: "italic",
-          fontSize: 15,
+          fontSize: isMobile ? 13 : 15,
         }}>
           Your most beloved books, all in one place
         </p>
       </div>
 
       {/* Bookshelves */}
-      <div style={{ maxWidth: 1050, margin: "0 auto", paddingRight: 160 }}>
+      <div style={{ maxWidth: isMobile ? "100%" : 1050, margin: "0 auto", paddingRight: isMobile ? 0 : 160 }}>
         {favoritedBooks.length === 0 ? (
           <p style={{
             textAlign: "center",
@@ -3909,8 +3905,29 @@ function FavoritesShelf({ onClose }) {
           </p>
         ) : (
           rows.map((row, rowIndex) => {
+            if (isMobile) {
+              // Mobile: all upright, no stacks, plant after every other row
+              const plantBottom = -90;
+              const plantX = "60%";
+              return (
+                <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 3, padding: "0 8px", flexWrap: "nowrap", overflow: "hidden", minHeight: 180 }}>
+                    {row.map((book, i) => (
+                      <BookSpine key={i} book={book} index={rowIndex * booksPerRow + i} rowIndex={rowIndex} onClick={setSelectedBook} />
+                    ))}
+                  </div>
+                  {rowIndex % 2 === 0 && (
+                    <div style={{ position: "absolute", bottom: plantBottom, left: plantX, transform: "translateX(-50%)", zIndex: 15, pointerEvents: "none" }}>
+                      <ShelfPlant plantIndex={rowIndex} />
+                    </div>
+                  )}
+                  <img src="/shelf2.jpg" alt="shelf" style={{ width: "100%", height: 22, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 6px 14px rgba(0,0,0,0.4)", position: "relative", zIndex: 5 }} />
+                  <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", marginBottom: 28 }} />
+                </div>
+              );
+            }
+
             const layout = rowIndex % 3;
-            const plantLeft = SHELF_PLANT_POSITIONS[rowIndex % SHELF_PLANT_POSITIONS.length];
             const third = Math.max(2, Math.floor(row.length / 3));
             const leftBooks  = layout === 2 ? row.slice(0, third)         : (layout === 0 ? row.slice(0, -Math.min(4, row.length)) : []);
             const stackBooks = layout === 2 ? row.slice(third, third * 2) : row.slice(-Math.min(4, row.length));
@@ -3922,7 +3939,6 @@ function FavoritesShelf({ onClose }) {
             const bookW = 62;
             const stackW = 300;
             const padL = 24;
-            const containerW = 890;
             let plantPx;
             if (layout === 0) plantPx = padL + leftBooks.length * bookW + 60;
             else if (layout === 1) plantPx = padL + stackW + 24;
@@ -4902,15 +4918,15 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
       backgroundSize: "cover",
       backgroundPosition: "center",
     }}>
-      {/* Back button — hidden when scrolled down */}
+      {/* Back button */}
       <button
         onClick={onClose}
         style={{
-          position: "absolute",
-          top: 56,
-          left: 20,
+          position: "fixed",
+          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          left: "calc(16px + env(safe-area-inset-left, 0px))",
           padding: "8px 18px",
-          borderRadius: "50px",
+          borderRadius: 10,
           border: "1px solid rgba(201,169,110,0.35)",
           cursor: "pointer",
           background: "rgba(58,34,16,0.72)",
@@ -4923,9 +4939,6 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           letterSpacing: "0.5px",
           boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           zIndex: 201,
-          opacity: atTop ? 1 : 0,
-          pointerEvents: atTop ? "auto" : "none",
-          transition: "opacity 0.25s ease",
         }}
       >
         ← Return to Reading Nook
