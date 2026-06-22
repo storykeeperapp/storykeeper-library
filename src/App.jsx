@@ -16459,7 +16459,7 @@ export default function App() {
         borderRight: `2px solid ${th.accent}`,
         boxShadow: "4px 0 20px rgba(0,0,0,0.2)",
         paddingTop: "calc(env(safe-area-inset-top, 0px) + 60px)",
-        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 20px)",
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 60px)",
         paddingLeft: 0,
         paddingRight: 0,
         transform: showSidebar ? "translateX(0)" : "translateX(-100%)",
@@ -16599,7 +16599,7 @@ export default function App() {
               {smallItem("contact", "✉️ Contact Us",         () => { setShowSidebar(false); window.location.href = "mailto:support@thestorykeeper.co"; })}
               {smallItem("privacy", "🔒 Privacy Policy",     () => { setShowSidebar(false); setShowPrivacy(true); })}
               {smallItem("terms",   "📄 Terms of Service",   () => { setShowSidebar(false); setShowTerms(true); })}
-              <div style={{ height: 16 }} />
+              <div style={{ height: 40 }} />
             </>
           );
         })()}
