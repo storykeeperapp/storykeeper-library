@@ -1,9 +1,166 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { BarcodeDetector as BarcodeDetectorPolyfill } from "barcode-detector/ponyfill";
+import { openDB } from "idb";
+import { Capacitor } from "@capacitor/core";
 
 // Module-level background task bus — survives component unmounts
 const skDispatch = (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail }));
+
+// --- Book library storage: IndexedDB-backed, with a synchronous in-memory mirror ---
+// localStorage caps out around 5-10MB/site, which large libraries (5,000+ books) can exceed.
+// IndexedDB has much higher capacity, but its native API is async-only, while the rest of
+// this file assumes synchronous access to the book array (JSON.parse/stringify patterns
+// throughout). _booksCache bridges that gap: it's the live in-memory source of truth,
+// read synchronously via getUserBooksSync(), and persisted to IndexedDB asynchronously
+// (off the critical path) via saveUserBooks().
+let _booksCache = null;
+let _booksDB = null;
+let _booksIdbAvailable = true;
+let _booksSaveQueue = Promise.resolve();
+
+export async function initBooksStorage() {
+  try {
+    _booksDB = await openDB("storykeeper-books", 1, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains("books")) db.createObjectStore("books");
+      },
+    });
+  } catch (e) {
+    console.warn("IndexedDB unavailable — books will use localStorage for this session:", e);
+    _booksIdbAvailable = false;
+  }
+
+  // Deliberately reads RAW localStorage, not the getUserBooksSync() facade —
+  // the in-memory cache is still empty/null at this point in the migration.
+  const readLegacyLocalStorage = () => {
+    try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); }
+    catch { return []; }
+  };
+
+  if (!_booksIdbAvailable) {
+    _booksCache = readLegacyLocalStorage();
+    return;
+  }
+
+  // Once IndexedDB is confirmed to hold good data, the old localStorage copy of the
+  // books array serves no purpose — and large libraries (thousands of books) can eat
+  // most of localStorage's tiny ~5-10MB quota by themselves, starving every OTHER
+  // localStorage-based feature (reading status, favorites, progress, notes, ratings)
+  // of room to write even small updates. Clear it as soon as it's safe to.
+  const clearLegacyLocalStorageBooks = () => {
+    try { localStorage.removeItem("sk_user_books"); } catch { /* ignore */ }
+  };
+
+  const alreadyMigrated = localStorage.getItem("sk_books_migrated_to_idb_v1");
+  if (alreadyMigrated) {
+    try {
+      const stored = await _booksDB.get("books", "library");
+      const legacyBooks = readLegacyLocalStorage();
+      // Self-heal: if IndexedDB is empty/missing but the legacy localStorage copy
+      // still has real data, a previous migration attempt silently failed to persist
+      // (this has happened — e.g. Safari IndexedDB writes not surviving a reload).
+      // Treat this as "not actually migrated" and redo it now, rather than trusting
+      // a stale marker and showing the user an empty library.
+      if ((!stored || stored.length === 0) && legacyBooks.length > 0) {
+        console.warn("IndexedDB books were empty despite a completed migration marker — re-migrating from localStorage.");
+        await _booksDB.put("books", legacyBooks, "library");
+        _booksCache = legacyBooks;
+      } else {
+        _booksCache = stored || [];
+      }
+      clearLegacyLocalStorageBooks();
+    } catch (e) {
+      console.warn("Failed to load books from IndexedDB — falling back to localStorage:", e);
+      _booksIdbAvailable = false;
+      _booksCache = readLegacyLocalStorage();
+    }
+    return;
+  }
+
+  // One-time migration: copy whatever's in localStorage into IndexedDB.
+  // Verify the write actually round-trips before trusting it — Safari's IndexedDB
+  // has known reliability quirks where a write can resolve without throwing yet
+  // not actually persist. Only mark complete once confirmed, so a silent failure
+  // just retries next load instead of permanently showing an empty library.
+  const legacyBooks = readLegacyLocalStorage();
+  try {
+    await _booksDB.put("books", legacyBooks, "library");
+    const verify = await _booksDB.get("books", "library");
+    if (!verify || verify.length !== legacyBooks.length) {
+      throw new Error("IndexedDB write did not verify — read-back did not match what was written");
+    }
+    localStorage.setItem("sk_books_migrated_to_idb_v1", "1");
+    _booksCache = legacyBooks;
+    clearLegacyLocalStorageBooks();
+  } catch (e) {
+    console.warn("IndexedDB migration failed — staying on localStorage this session:", e);
+    _booksIdbAvailable = false;
+    _booksCache = legacyBooks;
+  }
+}
+
+function getUserBooksSync() {
+  return _booksCache || [];
+}
+
+// Triggering a download via a hidden <a download> link works on desktop, but
+// in an iOS standalone PWA (added to home screen) there's no browser download
+// manager to catch it — the click is silently swallowed, no error, no file,
+// nothing visible happens. The reliable fix on iOS is the native Web Share
+// API, which opens the share sheet (Save to Files, AirDrop, etc.) instead.
+// Falls back to the old anchor-click approach wherever Web Share isn't
+// available (desktop browsers, where the anchor approach already works fine).
+async function downloadOrShareFile(blob, filename, mimeType) {
+  const file = new File([blob], filename, { type: mimeType });
+  if (navigator.share) {
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (e) {
+      if (e?.name === "AbortError") return; // user cancelled the share sheet
+      // fall through to the anchor-click fallback on any other failure
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Some localStorage keys have turned up holding the literal string
+// "undefined" instead of valid JSON (or being absent) — almost certainly from
+// some past `localStorage.setItem(key, JSON.stringify(x))` call where x was
+// undefined, which JSON.stringify turns into the bare word undefined, and
+// setItem then coerces to the 4-character string "undefined". That value
+// then gets carried forward forever by cloud sync to every device. A plain
+// JSON.parse on it throws, which (e.g. in the backup-download handler) used
+// to crash before the handler could do anything else. Always parse through
+// this instead of JSON.parse directly for any key that's seen this.
+function safeParseLS(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw || raw === "undefined") return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function saveUserBooks(updatedArray) {
+  _booksCache = updatedArray;
+  window.dispatchEvent(new CustomEvent("sk-books-changed"));
+  if (!_booksIdbAvailable || !_booksDB) return;
+  _booksSaveQueue = _booksSaveQueue.then(async () => {
+    try {
+      await _booksDB.put("books", updatedArray, "library");
+    } catch (e) {
+      console.warn("Failed to persist books to IndexedDB:", e);
+      window.dispatchEvent(new CustomEvent("sk-idb-write-failed"));
+    }
+  });
+}
 
 // Genre name migrations — old name → new name
 const GENRE_MIGRATIONS = {
@@ -13,7 +170,29 @@ const GENRE_MIGRATIONS = {
 };
 const migrateGenre = (g) => GENRE_MIGRATIONS[g] || g;
 
-// One-time migration: permanently rewrite old genre names in sk_user_books
+// Sets a manual genre override and stamps when it happened, so cross-device
+// sync can do real last-write-wins reconciliation instead of one device's
+// override permanently winning regardless of which one is actually more
+// recent or correct (the cause of the same book showing different genres on
+// different devices indefinitely — see applyCloudData's sk_genre_overrides
+// merge for the other half of this fix).
+function setGenreOverride(isbn, genreValue) {
+  if (!isbn) return;
+  try {
+    const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+    overrides[isbn] = genreValue;
+    localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
+    const ts = JSON.parse(localStorage.getItem("sk_genre_overrides_ts") || "{}");
+    ts[isbn] = Date.now();
+    localStorage.setItem("sk_genre_overrides_ts", JSON.stringify(ts));
+  } catch { /* ignore */ }
+}
+
+// One-time migration: permanently rewrite old genre names in sk_user_books.
+// This must run on the RAW legacy localStorage value, not through the IndexedDB
+// facade — it runs at module load, before initBooksStorage() has populated the
+// in-memory cache, and its whole job is to fix up the legacy data that
+// initBooksStorage() will read moments later when copying into IndexedDB.
 (function migrateUserBookGenres() {
   if (localStorage.getItem("sk_genre_migrated_v2")) return;
   try {
@@ -85,8 +264,66 @@ const SK_THEMES = {
 
 const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
-const SKIP_DESC_GENRES = ["Cookbooks", "Crafting", "Self Help", "Gardening & Landscaping", "Gardening", "Landscaping", "Health & Wellness", "Health & Wellness", "Health", "Wellness", "DIY", "Home & DIY", "Sewing & Crafts"];
+const SKIP_DESC_GENRES = ["Cookbooks", "Self Help", "Gardening & Landscaping", "Gardening", "Landscaping", "Health & Wellness", "Health", "Wellness", "DIY", "Home & DIY", "Sewing & Crafts"];
+
+// Module-level community cache writer — usable from any component without prop drilling
+function writeToCommunityCache(isbn, title, author, description, coverUrl, genre) {
+  if (!isbn && !description) return;
+  const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+  const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+  if (!url || !key) return;
+  const safeCover = coverUrl && !coverUrl.includes("covers.openlibrary.org/b/isbn/") ? coverUrl : null;
+  fetch(`${url}/rest/v1/book_cache`, {
+    method: "POST",
+    headers: { "apikey": key, "Authorization": `Bearer ${key}`, "Content-Type": "application/json", "Prefer": "return=minimal,resolution=merge-duplicates" },
+    body: JSON.stringify({ isbn: isbn || null, title: title || null, author: author || null, description: description || null, cover_url: safeCover || null, genre: genre || null, source: "community" }),
+  }).catch(() => {});
+}
 const needsDesc = (b) => !b.description && !SKIP_DESC_GENRES.includes(b.genre);
+
+// Compress sync payloads with gzip before upload, and transparently decompress on
+// download. Large libraries push the synced JSON blob into the multi-MB range —
+// gzip typically cuts that by 70-85% (repetitive book-field JSON compresses well),
+// which is what actually fixes sync timeouts rather than just raising the timeout
+// further. Falls back to the uncompressed CompressionStream-less path on browsers
+// that lack it (very old Safari), and reads legacy uncompressed rows transparently.
+// Converts bytes<->string in fixed-size chunks rather than one character at a
+// time — a per-character loop (or spreading the whole array into
+// String.fromCharCode at once) holds multiple full-size copies of the data in
+// memory simultaneously and is a major spike on memory-constrained devices
+// (confirmed: iOS Safari was crashing specifically during sync on a ~5,300-book
+// library, which this conversion runs against in full on every sync).
+const BASE64_CHUNK_SIZE = 8192;
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += BASE64_CHUNK_SIZE) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + BASE64_CHUNK_SIZE));
+  }
+  return btoa(binary);
+}
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function gzipJsonToBase64(obj) {
+  const json = JSON.stringify(obj);
+  if (typeof CompressionStream === "undefined") return { __gz: false, payload: obj };
+  const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+  const buf = await new Response(stream).arrayBuffer();
+  return { __gz: true, payload: bytesToBase64(new Uint8Array(buf)) };
+}
+
+async function gunzipBase64ToJson(wrapped) {
+  if (!wrapped || typeof wrapped !== "object" || wrapped.__gz === undefined) return wrapped; // legacy uncompressed row
+  if (!wrapped.__gz) return wrapped.payload;
+  const bytes = base64ToBytes(wrapped.payload);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const json = await new Response(stream).text();
+  return JSON.parse(json);
+}
 let _supabaseInstance = null;
 function getSupabase() {
   if (!_supabaseInstance) {
@@ -94,6 +331,108 @@ function getSupabase() {
     _supabaseInstance = createClient(SUPABASE_URL, key);
   }
   return _supabaseInstance;
+}
+
+// Reads the session directly from localStorage, bypassing the supabase-js client
+// entirely — used as a fallback when the SDK's own getSession()/refreshSession()
+// hangs (a known supabase-js v2 issue: its cross-tab Web Locks API coordination can
+// get stuck waiting on a lock another tab/device abandoned without releasing,
+// especially likely here since this account is regularly signed in on multiple
+// devices at once).
+function readSessionFromLocalStorageDirectly() {
+  try {
+    const key = Object.keys(localStorage).find(k => k.startsWith("sb-") && k.endsWith("-auth-token"));
+    if (!key) return null;
+    const session = JSON.parse(localStorage.getItem(key));
+    return session?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+// Recurring symptom across this app: authenticated requests work right after a
+// fresh sign-in, then start silently failing/hanging later — pointing at the
+// SDK's background auto-refresh not reliably keeping the access token current,
+// rather than any one API call being broken. Rather than reacting to a 401
+// after the fact, proactively refresh whenever the token is already expired or
+// within 2 minutes of expiring, and use every caller through this one place.
+// If the SDK call itself hangs (see readSessionFromLocalStorageDirectly above),
+// time out after 4s and fall back to a direct localStorage read rather than
+// waiting forever.
+async function getFreshAccessToken(sb) {
+  const getSessionWithTimeout = Promise.race([
+    sb.auth.getSession(),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("getSession timed out")), 4000)),
+  ]);
+  let session;
+  try {
+    const { data } = await getSessionWithTimeout;
+    session = data?.session;
+  } catch {
+    const fallbackToken = readSessionFromLocalStorageDirectly();
+    if (fallbackToken) return fallbackToken;
+    return null;
+  }
+  if (!session) return null;
+  const expiresInMs = (session.expires_at || 0) * 1000 - Date.now();
+  if (expiresInMs < 2 * 60 * 1000) {
+    try {
+      const refreshWithTimeout = Promise.race([
+        sb.auth.refreshSession(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("refreshSession timed out")), 4000)),
+      ]);
+      const { data: refreshed, error } = await refreshWithTimeout;
+      if (!error && refreshed?.session) session = refreshed.session;
+    } catch { /* keep using the still-valid-for-now session token below */ }
+  }
+  return session?.access_token || null;
+}
+
+// Generic, timeout-protected REST GET — a drop-in replacement for
+// `sb.from(table).select(...)...` call chains that can hang via the
+// getSession()/lock issue above. `query` is the raw query-string portion (e.g.
+// "select=genre,joined_at&user_id=eq.123&order=joined_at.desc"). Returns
+// { data, error } shaped like supabase-js so call sites barely need to change.
+async function restSelect(sb, table, query, timeoutMs = 15000) {
+  try {
+    const token = await getFreshAccessToken(sb);
+    if (!token) return { data: null, error: new Error("No auth session") };
+    const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+    const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+    const res = await Promise.race([
+      fetch(`${url}/rest/v1/${table}?${query}`, { headers: { apikey: key, Authorization: `Bearer ${token}` } }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("restSelect timed out")), timeoutMs)),
+    ]);
+    if (!res.ok) return { data: null, error: new Error(`Request failed: ${res.status}`) };
+    return { data: await res.json(), error: null };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Same idea as restSelect, but for the `{count:"exact",head:true}` pattern (e.g.
+// member counts) — PostgREST returns the count in the Content-Range header, with
+// no body, when given `Prefer: count=exact` on a HEAD request.
+async function restCount(sb, table, query, timeoutMs = 15000) {
+  try {
+    const token = await getFreshAccessToken(sb);
+    if (!token) return { count: 0, error: new Error("No auth session") };
+    const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+    const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+    const res = await Promise.race([
+      fetch(`${url}/rest/v1/${table}?${query}`, {
+        method: "HEAD",
+        headers: { apikey: key, Authorization: `Bearer ${token}`, Prefer: "count=exact" },
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("restCount timed out")), timeoutMs)),
+    ]);
+    if (!res.ok) return { count: 0, error: new Error(`Request failed: ${res.status}`) };
+    const range = res.headers.get("content-range"); // e.g. "*/42"
+    const count = range ? parseInt(range.split("/")[1], 10) || 0 : 0;
+    return { count, error: null };
+  } catch (err) {
+    return { count: 0, error: err };
+  }
 }
 
 function KnotScrollTooltip({ text, left, top }) {
@@ -222,19 +561,38 @@ const _searchCache = new Map();
 async function fetchBookSearch(q) {
   const key = q.toLowerCase().trim();
   if (_searchCache.has(key)) return _searchCache.get(key);
+
+  const mapItem = (item) => ({
+    title: item.volumeInfo?.title || "Unknown",
+    author: (item.volumeInfo?.authors || []).join(", "),
+    isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
+    cover: item.volumeInfo?.imageLinks?.thumbnail || null,
+    coverUrl: item.volumeInfo?.imageLinks?.thumbnail || null,
+    description: item.volumeInfo?.description || "",
+    genre: item.volumeInfo?.categories?.[0] || "",
+  });
+
+  // The /api/* serverless routes only exist on the deployed website — the native
+  // app's WebView origin (capacitor://localhost) has no such route, so skip
+  // straight to the direct fallback there instead of a guaranteed-failing request.
+  const isNative = Capacitor.isNativePlatform();
+  if (!isNative) {
+    try {
+      const res = await fetch(`/api/books-search?q=${encodeURIComponent(q)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const results = (data.items || []).map(mapItem);
+        if (results.length > 0) { _searchCache.set(key, results); return results; }
+      }
+    } catch { /* fall through to direct fetch */ }
+  }
+
+  // Fallback: query Google Books directly from the browser
   try {
-    const res = await fetch(`/api/books-search?q=${encodeURIComponent(q)}`);
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=20&langRestrict=en`);
     if (!res.ok) return [];
     const data = await res.json();
-    const results = (data.items || []).map(item => ({
-      title: item.volumeInfo?.title || "Unknown",
-      author: (item.volumeInfo?.authors || []).join(", "),
-      isbn: item.volumeInfo?.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || "",
-      cover: item.volumeInfo?.imageLinks?.thumbnail || null,
-      coverUrl: item.volumeInfo?.imageLinks?.thumbnail || null,
-      description: item.volumeInfo?.description || "",
-      genre: item.volumeInfo?.categories?.[0] || "",
-    }));
+    const results = (data.items || []).map(mapItem);
     if (results.length > 0) _searchCache.set(key, results);
     return results;
   } catch { return []; }
@@ -265,6 +623,36 @@ const genreOptions = (currentGenre) => {
 
 // Built-in author → genre defaults. User-set rules (sk_author_genres) always take precedence.
 const AUTHOR_GENRE_DEFAULTS = {
+  // Classics
+  "william shakespeare": "Classics",
+  "charles dickens": "Classics",
+  "leo tolstoy": "Classics",
+  "fyodor dostoevsky": "Classics",
+  "homer": "Classics",
+  "charlotte bronte": "Classics",
+  "charlotte brontë": "Classics",
+  "emily bronte": "Classics",
+  "emily brontë": "Classics",
+  "herman melville": "Classics",
+  "nathaniel hawthorne": "Classics",
+  "oscar wilde": "Classics",
+  "victor hugo": "Classics",
+  "mark twain": "Classics",
+  "franz kafka": "Classics",
+  "james joyce": "Classics",
+  "virginia woolf": "Classics",
+  "john steinbeck": "Classics",
+  "ernest hemingway": "Classics",
+  "miguel de cervantes": "Classics",
+  "alexandre dumas": "Classics",
+  "anton chekhov": "Classics",
+  "henry james": "Classics",
+  "thomas hardy": "Classics",
+  "george eliot": "Classics",
+  "nikolai gogol": "Classics",
+  "jonathan swift": "Classics",
+  "daniel defoe": "Classics",
+  "jules verne": "Classics",
   // Horror
   "stephen king": "Horror",
   "r.l. stine": "Horror",
@@ -779,6 +1167,11 @@ const AUTHOR_GENRE_DEFAULTS = {
   "brené brown": "Nonfiction",
   "brene brown": "Nonfiction",
   "james clear": "Nonfiction",
+  "freida mcfadden": "Mystery & Thriller",
+  "lisa jewell": "Mystery & Thriller",
+  "mary kubica": "Mystery & Thriller",
+  "ruth ware": "Mystery & Thriller",
+  "karin slaughter": "Mystery & Thriller",
   "blake pierce": "Mystery & Thriller",
   "cagney, j. j.": "Mystery & Thriller",
   "cagney, j.j.": "Mystery & Thriller",
@@ -937,9 +1330,27 @@ const AUTHOR_GENRE_DEFAULTS = {
 };
 
 function getAuthorGenre(author, userRules = {}, communityMap = {}) {
-  const key = (author || "").toLowerCase().trim();
+  // normalizeAuthor flips "Last, First" -> "First Last" so lookups match our
+  // "first last" keyed tables regardless of which order the source data used.
+  const key = normalizeAuthor((author || "").trim()).toLowerCase().trim();
   if (!key) return null;
   return userRules[key] || communityMap[key] || AUTHOR_GENRE_DEFAULTS[key] || null;
+}
+
+// True if two author strings refer to the same person regardless of whether
+// either is in "First Last" or "Last, First" order.
+function authorsMatch(a, b) {
+  if (!a || !b) return a === b;
+  const norm = (s) => normalizeAuthor(s.trim()).toLowerCase().trim();
+  return norm(a) === norm(b);
+}
+
+// A single slow/hanging lookup (rate limiting, network hiccup, etc.) shouldn't be able to
+// stall an entire batch of parallel enrichment requests — cap each request's wait.
+function fetchWithTimeout(url, ms = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // Map Open Library / Google Books subjects to our genres
@@ -1738,7 +2149,8 @@ async function compressAndUploadCover(file, isbn, sb) {
   });
 }
 
-function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType, onBookEdited, onDelete }) {
+function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatuses, progress, setProgress, mediaType, onBookEdited, onDelete, allBooks = [] }) {
+  const isbn = book.isbn || book.title;
   const ebookProgressMode = localStorage.getItem("sk_ebook_progress_mode") || "page";
   const audiobookProgressMode = localStorage.getItem("sk_audiobook_progress_mode") || "chapter";
   const progressMode = mediaType === "audiobooks" ? audiobookProgressMode : ebookProgressMode;
@@ -1782,7 +2194,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const isThriller = ["Mystery & Thriller", "Cozy Mystery"].includes(book.genre);
   const popupRef = useRef(null);
   const popupPollRef = useRef(null);
-  const [editFields, setEditFields] = useState({ title: book.title, author: book.author || "", description: book.description || "", genre: book.genre || "Fiction & Drama", coverUrl: book.coverUrl || "", mediaType: book.mediaType || "ebook" });
+  const [editFields, setEditFields] = useState({ title: book.title, author: book.author || "", description: book.description || "", genre: book.genre || "Fiction & Drama", coverUrl: book.coverUrl || "", isbn: book.isbn || "", asin: book.asin || "", mediaType: book.mediaType || "ebook" });
   const [coverUploading, setCoverUploading] = useState(false);
   const [coverUploadError, setCoverUploadError] = useState(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState(null); // null | "saving" | "saved"
@@ -1794,12 +2206,20 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
       try {
-        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-        const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+        const all = getUserBooksSync();
+        const idx = (typeof book._libIdx === "number" && all[book._libIdx] &&
+          ((book.isbn && all[book._libIdx].isbn === book.isbn) || all[book._libIdx].title === book.title))
+          ? book._libIdx
+          : all.findIndex(b => b.title === book.title && (authorsMatch(b.author, book.author) || !book.author));
         if (idx !== -1) {
           all[idx] = { ...all[idx], ...editFields };
-          localStorage.setItem("sk_user_books", JSON.stringify(all));
+          saveUserBooks(all);
           if (onBookEdited) onBookEdited({ ...all[idx] });
+          // Write to community cache if we have any shareable data
+          const saved = all[idx];
+          if (saved.isbn || saved.description || saved.coverUrl) {
+            writeToCommunityCache(saved.isbn, saved.title, saved.author, saved.description, saved.coverUrl, saved.genre);
+          }
         }
       } catch { /* ignore */ }
       setAutoSaveStatus("saved");
@@ -1816,7 +2236,6 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const timerKey = `sk_active_timer_${mediaType}`;
   const sessionsKey = `sk_sessions_${mediaType}`;
   const pagesKey = `sk_pages_${mediaType}`;
-  const isbn = book.isbn || book.title;
 
   const [activeTimer, setActiveTimer] = useState(() => {
     try { return JSON.parse(localStorage.getItem(timerKey)) || null; } catch { return null; }
@@ -1840,6 +2259,24 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     }, 1000);
     return () => clearInterval(tick);
   }, [isTimerActive, activeTimer]);
+
+  // Show "back from reading?" nudge when user returns from Kindle/Audible
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const raw = sessionStorage.getItem("sk_reading_away");
+        if (!raw) return;
+        const { isbn: awayIsbn, time } = JSON.parse(raw);
+        if (awayIsbn !== isbn) return;
+        if (Date.now() - time < 5000) return; // ignore accidental quick returns
+        sessionStorage.removeItem("sk_reading_away");
+        setShowProgressPrompt(true);
+      } catch {}
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [isbn]);
 
   const formatTime = (secs) => {
     const h = Math.floor(secs / 3600);
@@ -1922,8 +2359,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
   const isUserBook = (() => {
     try {
-      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-      return all.some(b => b.title === book.title && b.author === book.author);
+      const all = getUserBooksSync();
+      return all.some(b => b.title === book.title && authorsMatch(b.author, book.author));
     } catch { return false; }
   })();
 
@@ -1945,21 +2382,17 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const handleGenreChange = (newGenre) => {
     setSelectedGenre(newGenre);
     // Always save to overrides — this is the most reliable store and works for all book types
-    try {
-      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
-      overrides[isbn] = newGenre;
-      localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
-    } catch { /* ignore */ }
+    setGenreOverride(isbn, newGenre);
     // Also update sk_user_books directly if it's a user book
     try {
-      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const all = getUserBooksSync();
       const idx = all.findIndex(b =>
         (book.isbn && b.isbn === book.isbn) ||
         b.title?.trim() === book.title?.trim()
       );
       if (idx !== -1) {
         all[idx].genre = newGenre;
-        localStorage.setItem("sk_user_books", JSON.stringify(all));
+        saveUserBooks(all);
       }
     } catch { /* ignore */ }
     // If this book was in Fiction and is being moved, offer to save author rule
@@ -1973,12 +2406,18 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
   const handleSaveEdit = () => {
     try {
-      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-      const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+      const all = getUserBooksSync();
+      const idx = (typeof book._libIdx === "number" && all[book._libIdx] &&
+        ((book.isbn && all[book._libIdx].isbn === book.isbn) || all[book._libIdx].title === book.title))
+        ? book._libIdx
+        : all.findIndex(b => b.title === book.title && (authorsMatch(b.author, book.author) || !book.author));
       if (idx !== -1) {
         all[idx] = { ...all[idx], ...editFields };
-        localStorage.setItem("sk_user_books", JSON.stringify(all));
+        saveUserBooks(all);
         if (onBookEdited) onBookEdited({ ...all[idx] });
+        // Share any manually-entered data with the community cache
+        const saved = all[idx];
+        writeToCommunityCache(saved.isbn, saved.title, saved.author, saved.description, saved.coverUrl, saved.genre);
       }
     } catch { /* ignore */ }
     setEditing(false);
@@ -2004,6 +2443,26 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
         return { ...prev, [isbn]: { ...existing, endDate: new Date().toISOString() } };
       });
     }
+    // Keep the TBR shelf in sync with "want to read" status: add when marked
+    // want-to-read, remove once you start or finish it (no longer "to be read").
+    try {
+      const tbr = JSON.parse(localStorage.getItem("sk_tbr_books") || "[]");
+      const matches = (b) => (book.isbn && b.isbn === book.isbn) || (!book.isbn && b.title === book.title);
+      if (s === "want-to-read") {
+        if (!tbr.some(matches)) {
+          const coverVal = book.coverUrl || book.cover || null;
+          tbr.push({ title: book.title, author: book.author, isbn: book.isbn || "", cover: coverVal, coverUrl: coverVal, addedAt: Date.now(), ...(book.platform ? { platform: book.platform } : {}), ...(book.asin ? { asin: book.asin } : {}), ...(book.readUrl ? { readUrl: book.readUrl } : {}), ...(book.storeId ? { storeId: book.storeId } : {}) });
+          localStorage.setItem("sk_tbr_books", JSON.stringify(tbr));
+          window.dispatchEvent(new CustomEvent("sk-tbr-changed"));
+        }
+      } else if (s === "reading" || s === "finished") {
+        const filtered = tbr.filter(b => !matches(b));
+        if (filtered.length !== tbr.length) {
+          localStorage.setItem("sk_tbr_books", JSON.stringify(filtered));
+          window.dispatchEvent(new CustomEvent("sk-tbr-changed"));
+        }
+      }
+    } catch { /* ignore */ }
   };
 
   const handleFav = () => {
@@ -2049,8 +2508,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
       }
 
       if (vol) {
-        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-        const idx = all.findIndex(b => b.title === book.title && (b.author === book.author || !book.author));
+        const all = getUserBooksSync();
+        const idx = all.findIndex(b => b.title === book.title && (authorsMatch(b.author, book.author) || !book.author));
         if (idx !== -1) {
           if (!all[idx].author && vol.authors?.length) all[idx].author = vol.authors.join(", ");
           if (vol.imageLinks?.thumbnail) all[idx].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://").replace("&zoom=1", "&zoom=2");
@@ -2059,7 +2518,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             const id = vol.industryIdentifiers.find(i => i.type === "ISBN_13") || vol.industryIdentifiers[0];
             if (id) all[idx].isbn = id.identifier;
           }
-          localStorage.setItem("sk_user_books", JSON.stringify(all));
+          saveUserBooks(all);
           setFetchMsg("✅ Updated! Reopen this book to see the changes.");
         }
       } else {
@@ -2175,6 +2634,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             {[
               { label: "Title", field: "title" },
               { label: "Author", field: "author" },
+              { label: "ISBN", field: "isbn" },
+              { label: "Kindle ASIN (for opening in the Kindle app)", field: "asin" },
             ].map(({ label, field }) => (
               <div key={field} style={{ marginBottom: 12 }}>
                 <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, display: "block", marginBottom: 4 }}>{label}</label>
@@ -2299,7 +2760,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   // Check if any other format of this book (ebook/audiobook) has a cover
                   if (book.isbn) {
                     try {
-                      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                      const all = getUserBooksSync();
                       const match = all.find(b => b.isbn === book.isbn && b.coverUrl);
                       if (match?.coverUrl) return match.coverUrl;
                     } catch { /* ignore */ }
@@ -2386,86 +2847,193 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 let desc = book.description || "";
                 if (!desc && book.isbn) {
                   try {
-                    const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                    const all = getUserBooksSync();
                     const found = all.find(b => b.isbn === book.isbn);
                     if (found?.description) desc = found.description;
                   } catch { /* ignore */ }
                 }
                 const junk = ["LibraryThing", "catalogs your", "easily, quickly and for free"];
-                return desc && !junk.some(j => desc.includes(j)) ? desc : "";
+                return desc && !junk.some(j => desc.includes(j)) ? desc : "No description available yet.";
               })()}
             </p>
 
             {/* Read / Listen button */}
             {(() => {
-              const PLATFORM_URLS = {
-                kindle:    book.readUrl || (book.asin ? `https://read.amazon.com/?asin=${book.asin}` : book.isbn ? `https://read.amazon.com/reader?asin=${book.isbn}` : "https://read.amazon.com"),
-                audible:   book.readUrl || (book.asin ? `https://www.audible.com/pd/${book.asin}` : book.isbn ? `https://www.audible.com/pd/${book.isbn}` : "https://www.audible.com/library/titles"),
-                chirp:     book.readUrl || "https://www.chirpbooks.com/library",
-                apple:     book.storeId ? `https://books.apple.com/us/book/id${book.storeId}` : book.readUrl || "https://books.apple.com/library",
-                kobo:      book.readUrl || "https://www.kobo.com/ww/en/account/books",
-                libby:     book.readUrl || "https://libbyapp.com/shelf",
-                hoopla:    book.readUrl || "https://www.hoopladigital.com/my/borrowed",
-                goodreads: null,
+              const getGoodreadsUrl = (b) => {
+                if (b.id && b.id.startsWith('goodreads-')) {
+                  const goodreadsId = b.id.split('-')[1];
+                  return `https://www.goodreads.com/book/show/${goodreadsId}`;
+                }
+                return null;
               };
-              const url = book.platform ? PLATFORM_URLS[book.platform] : null;
-              if (!url) return null;
+              const getPlatformUrl = (b) => {
+                const PLATFORM_URLS = {
+                  kindle:    b.readUrl || (b.asin ? `https://read.amazon.com/?asin=${b.asin}` : b.isbn ? `https://read.amazon.com/reader?asin=${b.isbn}` : "https://read.amazon.com"),
+                  audible:   b.readUrl || (b.asin ? `https://www.audible.com/pd/${b.asin}` : b.isbn ? `https://www.audible.com/pd/${b.isbn}` : "https://www.audible.com/library/titles"),
+                  chirp:     b.readUrl || "https://www.chirpbooks.com/library",
+                  apple:     b.storeId ? `https://books.apple.com/us/book/id${b.storeId}` : b.readUrl || "https://books.apple.com/library",
+                  kobo:      b.readUrl || "https://www.kobo.com/us/en/library/books",
+                  nook:      b.readUrl || "https://nook.barnesandnoble.com/my_library",
+                  libby:     b.readUrl || "https://libbyapp.com/shelf",
+                  hoopla:    b.readUrl || "https://www.hoopladigital.com/my/borrowed",
+                  goodreads: getGoodreadsUrl(b),
+                };
+                return b.platform ? PLATFORM_URLS[b.platform] : null;
+              };
+
+              // Find all books with the same ISBN to show all available platforms
+              const matchingBooks = allBooks && allBooks.length > 0
+                ? allBooks.filter(b => b && b.isbn === book.isbn && b.platform && getPlatformUrl(b))
+                : [book];
+
+              // Get unique platforms
+              const platformUrls = [];
+              const seenPlatforms = new Set();
+              for (const b of (matchingBooks.length > 0 ? matchingBooks : [book])) {
+                if (b.platform && !seenPlatforms.has(b.platform)) {
+                  const url = getPlatformUrl(b);
+                  if (url) {
+                    platformUrls.push({ platform: b.platform, url, book: b });
+                    seenPlatforms.add(b.platform);
+                  }
+                }
+              }
+
+              if (platformUrls.length === 0) return null;
               const isAudio = mediaType === "audiobooks";
-              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel" };
-              const name = platformNames[book.platform] || book.platform;
-              const openInPopup = () => {
+              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel", goodreads: "Goodreads" };
+
+              const createOpenHandler = (platform, url, platformBook) => {
+                return () => {
+                  if (!statuses[isbn] || statuses[isbn] === "want-to-read") handleStatus("reading");
+                  setPromptPercent(null);
+                  setShowProgressPrompt(false);
+
+                  const isMobileDevice = window.innerWidth < 768 || navigator.maxTouchPoints > 1;
+                  if (isMobileDevice) {
+                    if (platform === "kindle" && platformBook.asin) {
+                      window.location.href = `https://read.amazon.com/?asin=${platformBook.asin}`;
+                      return;
+                    }
+                    window.location.href = url;
+                    return;
+                  }
+
+                  if (popupPollRef.current) clearInterval(popupPollRef.current);
+                  const openedAt = Date.now();
+                  const popup = window.open(url, "sk_reader", "width=1200,height=800,noopener");
+                  popupRef.current = popup;
+                  const platformDisplayName = platformNames[platform] || platform;
+                  popupPollRef.current = setInterval(() => {
+                    if (!popupRef.current || popupRef.current.closed) {
+                      clearInterval(popupPollRef.current);
+                      popupRef.current = null;
+                      const minutes = Math.max(1, Math.round((Date.now() - openedAt) / 60000));
+                      const session = {
+                        isbn,
+                        title: book.title,
+                        date: new Date().toISOString(),
+                        minutes,
+                        pages: 0,
+                        chapters: 0,
+                        platform: platformDisplayName,
+                      };
+                      const allSessions = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
+                      allSessions.unshift(session);
+                      localStorage.setItem(sessionsKey, JSON.stringify(allSessions));
+                      const ltMinKey = `sk_lifetime_minutes_${mediaType}`;
+                      localStorage.setItem(ltMinKey, String(parseInt(localStorage.getItem(ltMinKey) || "0") + minutes));
+                      setShowProgressPrompt(true);
+                    }
+                  }, 800);
+                };
+              };
+              const btnStyle = {
+                display: "inline-block",
+                padding: "8px 16px",
+                background: modalTheme.accent,
+                color: modalTheme.bg,
+                border: "none",
+                borderRadius: 8,
+                fontFamily: '"Palatino Linotype", Palatino, serif',
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: "pointer",
+                boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+                textDecoration: "none",
+                textAlign: "center",
+              };
+              const isMobile = window.innerWidth < 768 || navigator.maxTouchPoints > 1;
+              const markReading = () => {
                 if (!statuses[isbn] || statuses[isbn] === "want-to-read") handleStatus("reading");
                 setPromptPercent(null);
                 setShowProgressPrompt(false);
-                if (popupPollRef.current) clearInterval(popupPollRef.current);
-                const openedAt = Date.now();
-                const popup = window.open(url, "sk_reader", "width=1200,height=800,noopener");
-                popupRef.current = popup;
-                popupPollRef.current = setInterval(() => {
-                  if (!popupRef.current || popupRef.current.closed) {
-                    clearInterval(popupPollRef.current);
-                    popupRef.current = null;
-                    // Auto-log session from popup open→close time
-                    const minutes = Math.max(1, Math.round((Date.now() - openedAt) / 60000));
-                    const session = {
-                      isbn,
-                      title: book.title,
-                      date: new Date().toISOString(),
-                      minutes,
-                      pages: 0,
-                      chapters: 0,
-                      platform: name,
-                    };
-                    const allSessions = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
-                    allSessions.unshift(session);
-                    localStorage.setItem(sessionsKey, JSON.stringify(allSessions));
-                    // Increment lifetime minute counter
-                    const ltMinKey = `sk_lifetime_minutes_${mediaType}`;
-                    localStorage.setItem(ltMinKey, String(parseInt(localStorage.getItem(ltMinKey) || "0") + minutes));
-                    setShowProgressPrompt(true);
-                  }
-                }, 800);
+                sessionStorage.setItem("sk_reading_away", JSON.stringify({ title: book.title, isbn, time: Date.now() }));
               };
+
+              // On mobile, Kindle gets two options: open the app, or open web reader
+              const hasKindleOption = platformUrls.some(p => p.platform === "kindle");
+              if (isMobile && hasKindleOption) {
+                const kindleOption = platformUrls.find(p => p.platform === "kindle");
+                const isNative = Capacitor.isNativePlatform();
+                const openKindle = (e) => {
+                  e.preventDefault();
+                  markReading();
+                  if (isNative) {
+                    window.open('kindle://', '_system');
+                  } else {
+                    window.location.href = 'kindle://';
+                  }
+                };
+                return (
+                  <div style={{ display: "flex", gap: 8, margin: "10px 0 12px", flexWrap: "wrap" }}>
+                    <a
+                      href={kindleOption.url}
+                      onClick={openKindle}
+                      style={{ ...btnStyle, flex: 1 }}
+                    >
+                      📱 Open in Kindle
+                    </a>
+                    {kindleOption.book.asin && (
+                      <a
+                        href={`https://read.amazon.com/?asin=${kindleOption.book.asin}`}
+                        onClick={markReading}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ ...btnStyle, flex: 1, background: "transparent", color: modalTheme.accent, border: `1px solid ${modalTheme.accent}`, boxShadow: "none" }}
+                      >
+                        🌐 Web Reader →
+                      </a>
+                    )}
+                    {platformUrls.length > 1 && (
+                      <div style={{ width: "100%" }}>
+                        {platformUrls.filter(p => p.platform !== "kindle").map((p, i) => (
+                          <button
+                            key={i}
+                            onClick={createOpenHandler(p.platform, p.url, p.book)}
+                            style={{ ...btnStyle, marginTop: 8, width: "100%", background: "transparent", color: modalTheme.accent, border: `1px solid ${modalTheme.accent}`, boxShadow: "none" }}
+                          >
+                            {platformNames[p.platform] || p.platform}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
               return (
-                <button
-                  onClick={openInPopup}
-                  style={{
-                    display: "inline-block",
-                    margin: "10px 0 12px",
-                    padding: "8px 20px",
-                    background: modalTheme.accent,
-                    color: modalTheme.bg,
-                    border: "none",
-                    borderRadius: 8,
-                    fontFamily: '"Palatino Linotype", Palatino, serif',
-                    fontSize: 14,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-                  }}
-                >
-                  {isAudio ? "🎧" : "📖"} {isAudio ? "Listen" : "Read"} on {name} →
-                </button>
+                <div style={{ display: "flex", gap: 8, margin: "10px 0 12px", flexWrap: "wrap" }}>
+                  {platformUrls.map((p, i) => (
+                    <button
+                      key={i}
+                      onClick={createOpenHandler(p.platform, p.url, p.book)}
+                      style={{ ...btnStyle, flex: platformUrls.length === 1 ? "1" : "auto" }}
+                    >
+                      {`${isAudio ? "🎧" : "📖"} ${isAudio ? "Listen" : "Read"} on ${platformNames[p.platform] || p.platform}`}
+                    </button>
+                  ))}
+                </div>
               );
             })()}
 
@@ -2490,10 +3058,12 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   ) : (
                     <>
                       <input
-                        type="number" min={0}
-                        value={promptPercent ?? (book._currentPage || "")}
+                        key={`pp-${isbn}`}
+                        type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                        defaultValue={promptPercent ?? (book._currentPage || "")}
                         placeholder={mediaType === "audiobooks" ? "Chapter #" : "Page #"}
-                        onChange={e => setPromptPercent(Math.max(0, Number(e.target.value) || 0))}
+                        onBlur={e => { const v = e.target.value.replace(/\D/g, ""); setPromptPercent(v === "" ? null : Math.max(0, parseInt(v))); }}
+                        onChange={e => { const v = e.target.value.replace(/\D/g, ""); setPromptPercent(v === "" ? null : Math.max(0, parseInt(v))); }}
                         style={{ width: 90, padding: "6px 10px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 14, background: modalTheme.bgDeep, color: modalTheme.text }}
                       />
                       <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: modalTheme.textSoft }}>
@@ -2512,9 +3082,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                         const pageNum = promptPercent ?? (book._currentPage || 0);
                         const total = mediaType === "audiobooks" ? (book._totalChapters || 0) : (book._totalPages || 0);
                         pct = total > 0 ? Math.min(100, Math.round((pageNum / total) * 100)) : (pageNum > 0 ? 50 : 0);
-                        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                        const all = getUserBooksSync();
                         const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-                        if (idx !== -1) { all[idx]._currentPage = pageNum; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+                        if (idx !== -1) { all[idx]._currentPage = pageNum; saveUserBooks(all); }
                         // Update lifetime page/chapter counter and patch the auto-logged session
                         if (pageNum > 0) {
                           if (mediaType === "ebooks") {
@@ -2606,16 +3176,14 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                       rules[book.author.toLowerCase().trim()] = selectedGenre;
                       localStorage.setItem("sk_author_genres", JSON.stringify(rules));
                       // Apply rule to all existing books by this author
-                      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-                      const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
+                      const all = getUserBooksSync();
                       all.forEach(b => {
                         if (b.author?.toLowerCase().trim() === book.author.toLowerCase().trim()) {
                           b.genre = selectedGenre;
-                          if (b.isbn) overrides[b.isbn] = selectedGenre;
+                          if (b.isbn) setGenreOverride(b.isbn, selectedGenre);
                         }
                       });
-                      localStorage.setItem("sk_user_books", JSON.stringify(all));
-                      localStorage.setItem("sk_genre_overrides", JSON.stringify(overrides));
+                      saveUserBooks(all);
                       if (authUser) syncAuthorGenreVotes(authUser, rules);
                     } catch { /* ignore */ }
                     setShowAuthorRulePrompt(false);
@@ -2709,16 +3277,17 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                       {mediaType === "audiobooks" ? "Current Chapter:" : "Current Page:"}
                     </label>
                     <input
-                      type="number" min={0}
-                      value={book._currentPage || ""}
+                      key={`cur-${isbn}`}
+                      type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                      defaultValue={book._currentPage || ""}
                       placeholder={mediaType === "audiobooks" ? "Ch. #" : "Pg. #"}
-                      onChange={e => {
-                        const val = Math.max(0, Number(e.target.value) || 0);
+                      onBlur={e => {
+                        const val = Math.max(0, parseInt(e.target.value.replace(/\D/g, "")) || 0);
                         const total = mediaType === "audiobooks" ? (book._totalChapters || 0) : (book._totalPages || 0);
                         const pct = total > 0 ? Math.min(100, Math.round((val / total) * 100)) : 0;
-                        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                        const all = getUserBooksSync();
                         const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-                        if (idx !== -1) { all[idx]._currentPage = val; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
+                        if (idx !== -1) { all[idx]._currentPage = val; saveUserBooks(all); }
                         if (pct > 0) setProgress(prev => ({ ...prev, [isbn]: pct }));
                         if (pct >= 100) handleStatus("finished");
                         else if (val > 0 && (!statuses[isbn] || statuses[isbn] === "want-to-read")) handleStatus("reading");
@@ -2727,19 +3296,23 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                     />
                     {mediaType === "audiobooks" ? (
                       <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textSoft }}>
-                        of <input type="number" min={0} value={book._totalChapters || ""} placeholder="Total" onChange={e => {
-                          const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-                          const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-                          if (idx !== -1) { all[idx]._totalChapters = Number(e.target.value) || 0; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
-                        }} style={{ width: 55, padding: "4px 6px", borderRadius: 6, border: "1px solid #C9A96E", fontFamily: "Georgia, serif", fontSize: 12, background: modalTheme.bgDeep, color: modalTheme.text }} /> ch.
+                        of <input key={`tc-${isbn}`} type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                          defaultValue={book._totalChapters || ""} placeholder="Total" onBlur={e => {
+                            const val = parseInt(e.target.value.replace(/\D/g, "")) || 0;
+                            const all = getUserBooksSync();
+                            const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+                            if (idx !== -1) { all[idx]._totalChapters = val; saveUserBooks(all); }
+                          }} style={{ width: 55, padding: "4px 6px", borderRadius: 6, border: "1px solid #C9A96E", fontFamily: "Georgia, serif", fontSize: 12, background: modalTheme.bgDeep, color: modalTheme.text }} /> ch.
                       </span>
                     ) : (
                       <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textSoft }}>
-                        of <input type="number" min={0} value={book._totalPages || ""} placeholder="Total" onChange={e => {
-                          const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-                          const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-                          if (idx !== -1) { all[idx]._totalPages = Number(e.target.value) || 0; localStorage.setItem("sk_user_books", JSON.stringify(all)); }
-                        }} style={{ width: 55, padding: "4px 6px", borderRadius: 6, border: "1px solid #C9A96E", fontFamily: "Georgia, serif", fontSize: 12, background: modalTheme.bgDeep, color: modalTheme.text }} /> pg.
+                        of <input key={`tp-${isbn}`} type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                          defaultValue={book._totalPages || ""} placeholder="Total" onBlur={e => {
+                            const val = parseInt(e.target.value.replace(/\D/g, "")) || 0;
+                            const all = getUserBooksSync();
+                            const idx = all.findIndex(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+                            if (idx !== -1) { all[idx]._totalPages = val; saveUserBooks(all); }
+                          }} style={{ width: 55, padding: "4px 6px", borderRadius: 6, border: "1px solid #C9A96E", fontFamily: "Georgia, serif", fontSize: 12, background: modalTheme.bgDeep, color: modalTheme.text }} /> pg.
                       </span>
                     )}
                     {prog > 0 && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.accent, fontStyle: "italic" }}>{prog}%</span>}
@@ -2807,22 +3380,25 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 {mediaType === "audiobooks" ? (
                   <>
                     <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap" }}>Chapter reached:</label>
-                    <input type="number" min={0} value={currentPage} onChange={e => savePage(e.target.value)} placeholder="e.g. 12"
+                    <input key={`cp-${isbn}`} type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                      defaultValue={currentPage} onBlur={e => savePage(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 12"
                       style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }} />
                   </>
                 ) : (
                   <>
                     <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap" }}>Page reached:</label>
-                    <input type="number" min={0} value={currentPage} onChange={e => savePage(e.target.value)} placeholder="e.g. 142"
+                    <input key={`cp-${isbn}`} type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                      defaultValue={currentPage} onBlur={e => savePage(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 142"
                       style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }} />
                     <label style={{ fontFamily: "Georgia, serif", fontSize: 12, color: modalTheme.textMid, whiteSpace: "nowrap", marginLeft: 6 }}>Chapter:</label>
-                    <input type="number" min={0} value={currentChapter} onChange={e => {
-                      const val = e.target.value;
-                      setCurrentChapter(val);
-                      const all = (() => { try { return JSON.parse(localStorage.getItem("sk_chapters_ebooks") || "{}"); } catch { return {}; } })();
-                      all[isbn] = val;
-                      localStorage.setItem("sk_chapters_ebooks", JSON.stringify(all));
-                    }} placeholder="e.g. 5"
+                    <input key={`ch-${isbn}`} type="text" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
+                      defaultValue={currentChapter} onBlur={e => {
+                        const val = e.target.value.replace(/\D/g, "");
+                        setCurrentChapter(val);
+                        const all = (() => { try { return JSON.parse(localStorage.getItem("sk_chapters_ebooks") || "{}"); } catch { return {}; } })();
+                        all[isbn] = val;
+                        localStorage.setItem("sk_chapters_ebooks", JSON.stringify(all));
+                      }} placeholder="e.g. 5"
                       style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #8B5E3C", fontFamily: "Georgia, serif", fontSize: 13, background: modalTheme.bgDeep, color: modalTheme.text }} />
                   </>
                 )}
@@ -2874,11 +3450,11 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                           }
                         }
                         if (newCover) {
-                          const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                          const all = getUserBooksSync();
                           const idx = all.findIndex(b => (book.isbn && b.isbn === book.isbn) || b.title?.trim() === book.title?.trim());
                           if (idx !== -1) {
                             all[idx].coverUrl = newCover;
-                            localStorage.setItem("sk_user_books", JSON.stringify(all));
+                            saveUserBooks(all);
                             // Also update genre overrides store so shelf stays correct
                             if (onBookEdited) onBookEdited({ ...all[idx] });
                             setFetchMsg("✅ Cover refreshed! Reopen to see the new cover.");
@@ -2941,8 +3517,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
               </span>
             </div>
 
-            {/* Rating, Spice & Notes — excluded for non-fiction reference genres */}
-            {!["Cookbooks", "Self Help", "Gardening & Landscaping", "Home & DIY", "Health & Wellness", "Sewing & Crafts"].includes(book.genre) && (
+            {/* Rating, Spice & Notes — excluded for non-fiction reference genres (same list as description fetching) */}
+            {!SKIP_DESC_GENRES.includes(book.genre) && (
             <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 10, padding: "14px 16px", marginBottom: 14 }}>
 
               {/* Star Rating */}
@@ -2993,8 +3569,18 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 );
                 if (isDrama) return ratingRow("💧","Cry Factor:",cryFactor,setCryFactor,hoverCry,setHoverCry,"sk_cry_factor",["Dry Eye","Misty","Full Cry","Ugly Cry","Destroyed"],"#4A6B8B");
                 if (isHorror) return ratingRow("💀","Scare Factor:",skullFactor,setSkullFactor,hoverSkull,setHoverSkull,"sk_skull_factor",["Spooked","Creepy","Frightening","Terrifying","Nightmare Fuel"],"#5A2A2A");
-                if (isFantasy) return ratingRow("🌍","World Building:",worldBuilding,setWorldBuilding,hoverWorld,setHoverWorld,"sk_world_building",["Surface","Layered","Rich","Immersive","Universe"],"#2A5A3A");
-                if (isDarkRomance) return ratingRow("🖤","Dark Factor:",darkFactor,setDarkFactor,hoverDark,setHoverDark,"sk_dark_factor",["Soft","Moody","Intense","Twisted","Unhinged"],"#3A2A4A");
+                if (isFantasy) return (
+                  <>
+                    {ratingRow("🌍","World Building:",worldBuilding,setWorldBuilding,hoverWorld,setHoverWorld,"sk_world_building",["Surface","Layered","Rich","Immersive","Universe"],"#2A5A3A")}
+                    {activeGenre === "Fantasy & Romantasy" && ratingRow("🌶️","Spice Level:",spice,setSpice,hoverSpice,setHoverSpice,"sk_spice",["Mild","Warm","Medium","Hot","🔥 Fiery"],modalTheme.accent)}
+                  </>
+                );
+                if (isDarkRomance) return (
+                  <>
+                    {ratingRow("🖤","Dark Factor:",darkFactor,setDarkFactor,hoverDark,setHoverDark,"sk_dark_factor",["Soft","Moody","Intense","Twisted","Unhinged"],"#3A2A4A")}
+                    {ratingRow("🌶️","Spice Level:",spice,setSpice,hoverSpice,setHoverSpice,"sk_spice",["Mild","Warm","Medium","Hot","🔥 Fiery"],modalTheme.accent)}
+                  </>
+                );
                 if (isRomance) return ratingRow("🌶️","Spice Level:",spice,setSpice,hoverSpice,setHoverSpice,"sk_spice",["Mild","Warm","Medium","Hot","🔥 Fiery"],modalTheme.accent);
                 if (isThriller) return (
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -3297,12 +3883,14 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
       .filter(b => !hiddenBooks.has(b.isbn || b.title));
     const userBooks = (() => {
       try {
-        const all = JSON.parse(localStorage.getItem("sk_user_books")) || [];
-        return all.filter(b => {
-          const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
-          const effectiveGenre = migrateGenre(genreOverrides[b.isbn || b.title] || b.genre || "");
-          return effectiveGenre === genre && bookMedia === mediaType;
-        });
+        const all = getUserBooksSync() || [];
+        return all
+          .map((b, idx) => ({ ...b, _libIdx: idx }))
+          .filter(b => {
+            const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
+            const effectiveGenre = migrateGenre(genreOverrides[b.isbn || b.title] || b.genre || "");
+            return effectiveGenre === genre && bookMedia === mediaType;
+          });
       } catch { return []; }
     })();
     return [...allBooks, ...overriddenToHere, ...userBooks];
@@ -3346,17 +3934,24 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
 
   const handleDelete = (book) => {
     const bookKey = book.isbn || book.title;
-    // Check if it's a user-imported book
-    const userBooksAll = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-    if (isUser) {
-      const updated = userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title));
-      localStorage.setItem("sk_user_books", JSON.stringify(updated));
+    const userBooksAll = getUserBooksSync();
+    // Prefer deleting the exact instance by its absolute index, so duplicate
+    // titles/ISBNs don't all get removed together
+    if (typeof book._libIdx === "number" && userBooksAll[book._libIdx] &&
+        ((book.isbn && userBooksAll[book._libIdx].isbn === book.isbn) || userBooksAll[book._libIdx].title === book.title)) {
+      const updated = userBooksAll.filter((_, idx) => idx !== book._libIdx);
+      saveUserBooks(updated);
     } else {
-      // Built-in book: add to hidden set
-      const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
-      if (!hidden.includes(bookKey)) hidden.push(bookKey);
-      localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+      if (isUser) {
+        const updated = userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title));
+        saveUserBooks(updated);
+      } else {
+        // Built-in book: add to hidden set
+        const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
+        if (!hidden.includes(bookKey)) hidden.push(bookKey);
+        localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      }
     }
     setRefreshKey(k => k + 1);
   };
@@ -3388,14 +3983,15 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
   useEffect(() => { localStorage.setItem(statusKey,   JSON.stringify(statuses));  }, [statuses, statusKey]);
   useEffect(() => { localStorage.setItem(progressKey, JSON.stringify(progress));  }, [progress, progressKey]);
 
-  // Split books into rows of 12
+  // Split books into rows of 12, then always keep 6 extra vacant shelves available beyond
+  // whatever's filled — as books fill existing shelves, new empty ones get added automatically
   const rows = [];
   const chunkSize = mediaType === "audiobooks" ? 16 : 12;
-  const minRows = 3;
+  const vacantShelvesAlwaysAvailable = 6;
   for (let i = 0; i < books.length; i += chunkSize) {
     rows.push(books.slice(i, i + chunkSize));
   }
-  while (rows.length < minRows) rows.push([]);
+  for (let i = 0; i < vacantShelvesAlwaysAvailable; i++) rows.push([]);
 
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
@@ -3408,7 +4004,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
         zIndex: 550,
         backgroundColor: "#F8F1E4",
         backgroundImage:
-          'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+          'url("/parchment.jpg")',
         backgroundSize: "cover",
         backgroundPosition: "center",
       }}
@@ -3418,7 +4014,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
         onClick={onClose}
         style={{
           position: "fixed",
-          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          top: "calc(20px + env(safe-area-inset-top, 44px))",
           left: "calc(16px + env(safe-area-inset-left, 0px))",
           padding: "8px 18px",
           borderRadius: 10,
@@ -3451,7 +4047,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           borderRadius: "50%",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
+          background: '#F8F1E4 url("/parchment.jpg") center/cover fixed',
           color: "#3A2A1A",
           fontSize: 20,
           boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
@@ -3576,7 +4172,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
             return (
               <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
                 {/* Top row of CDs */}
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "0 16px", flexWrap: "nowrap", overflow: "hidden", minHeight: 100 }}>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "0 16px", flexWrap: "nowrap", overflow: "visible", minHeight: 100 }}>
                   {renderAudioRow(row.slice(0, 8), 0, rowIndex * 2)}
                 </div>
                 {/* Shelf between rows */}
@@ -3584,7 +4180,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
                 <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), transparent)", width: 920 }} />
 
                 {/* Bottom row of CDs */}
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "0 16px", flexWrap: "nowrap", overflow: "hidden", minHeight: 100 }}>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "0 16px", flexWrap: "nowrap", overflow: "visible", minHeight: 100 }}>
                   {renderAudioRow(row.slice(8, 16), 8, rowIndex * 2 + 1)}
                 </div>
 
@@ -3629,7 +4225,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
 
           return (
             <div key={rowIndex} style={{ marginBottom: 0, position: "relative", overflow: "visible" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "flex-start", gap: 4, padding: "0 12px", flexWrap: "nowrap", overflow: "hidden", minHeight: 230 }}>
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "flex-start", gap: 4, padding: "0 12px", flexWrap: "nowrap", overflow: "visible", minHeight: 230 }}>
                 {layout === 0 && <>
                   {renderUpright(leftBooks, UPRIGHT_COUNT, 0)}
                   <div style={{ marginLeft: "auto", marginRight: 60 }}>
@@ -3668,7 +4264,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
         })}
 
         {books.length === 0 && (() => {
-          const totalUserBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]").length; } catch { return 0; } })();
+          const totalUserBooks = (() => { try { return getUserBooksSync().length; } catch { return 0; } })();
           const totalLibrary = Object.values(library).flat().filter(b => b.type === mediaType).length;
           const hasAnyBooks = totalUserBooks > 0 || totalLibrary > 0;
           return hasAnyBooks ? (
@@ -3711,6 +4307,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           onBookEdited={() => {
             setRefreshKey(k => k + 1);
           }}
+          allBooks={books}
         />
       )}
     </div>
@@ -3719,20 +4316,29 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
 
 function FavoritesShelf({ onClose }) {
   const isMobile = window.innerWidth < 768;
+  const canFitFourBooks = window.innerWidth >= 420;
   const [selectedBook, setSelectedBook] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [filterQuery, setFilterQuery] = useState("");
+  const scrollRef = useRef(null);
+  const [atTop, setAtTop] = useState(true);
 
   const handleDelete = (book) => {
     const bookKey = book.isbn || book.title;
-    const userBooksAll = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-    if (isUser) {
-      const updated = userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title));
-      localStorage.setItem("sk_user_books", JSON.stringify(updated));
+    const userBooksAll = getUserBooksSync();
+    if (typeof book._libIdx === "number" && userBooksAll[book._libIdx] &&
+        ((book.isbn && userBooksAll[book._libIdx].isbn === book.isbn) || userBooksAll[book._libIdx].title === book.title)) {
+      saveUserBooks(userBooksAll.filter((_, idx) => idx !== book._libIdx));
     } else {
-      const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
-      if (!hidden.includes(bookKey)) hidden.push(bookKey);
-      localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+      if (isUser) {
+        const updated = userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title));
+        saveUserBooks(updated);
+      } else {
+        const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
+        if (!hidden.includes(bookKey)) hidden.push(bookKey);
+        localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      }
     }
     setRefreshKey(k => k + 1);
   };
@@ -3773,16 +4379,24 @@ function FavoritesShelf({ onClose }) {
     });
   });
 
-  // User-imported books
+  // User-imported books — keep each instance distinct even if titles/ISBNs duplicate
+  const builtInFavKeys = new Set(favoritedBooks.map(b => b.isbn || b.title));
   try {
-    const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    userBooks.forEach((book) => {
+    const userBooks = getUserBooksSync();
+    userBooks.forEach((book, idx) => {
       const key = book.isbn || book.title;
-      if (favorites[key] && !favoritedBooks.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title)) {
-        favoritedBooks.push(book);
+      if (favorites[key] && !builtInFavKeys.has(key)) {
+        favoritedBooks.push({ ...book, _libIdx: idx });
       }
     });
   } catch { /* ignore */ }
+
+  const filteredFavoritedBooks = filterQuery.trim()
+    ? favoritedBooks.filter(b =>
+        b.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+        (b.author || "").toLowerCase().includes(filterQuery.toLowerCase())
+      )
+    : favoritedBooks;
 
 
   return (
@@ -3795,7 +4409,7 @@ function FavoritesShelf({ onClose }) {
         flexDirection: "column",
         backgroundColor: "#F8F1E4",
         backgroundImage:
-          'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+          'url("/parchment.jpg")',
         backgroundSize: "cover",
         backgroundPosition: "center",
       }}
@@ -3808,29 +4422,89 @@ function FavoritesShelf({ onClose }) {
         background: "linear-gradient(to bottom, rgba(248,241,228,0.98) 0%, rgba(248,241,228,0.92) 100%)",
         borderBottom: "1px solid rgba(139,94,60,0.3)",
         zIndex: 201,
-        display: "flex", alignItems: "center", gap: 10,
+        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
       }}>
         <button onClick={onClose} style={{
           background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10,
           padding: "7px 16px", color: "#F5ECD7", cursor: "pointer",
           fontFamily: "Georgia, serif", fontSize: 15, flexShrink: 0,
           boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-        }}>← Return to Reading Nook</button>
-        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, color: "#3A2010", fontWeight: 700 }}>♥ My Favorites</div>
+        }}>← Back</button>
+        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, color: "#3A2010", fontWeight: 700, flexShrink: 0 }}>♥ My Favorites</div>
+        {favoritedBooks.length > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(255,255,255,0.7)", border: "1px solid #C4A882",
+            borderRadius: 20, padding: "5px 14px", flex: "1 1 180px", maxWidth: 320,
+          }}>
+            <span style={{ fontSize: 13, opacity: 0.5, color: "#5a3a1a" }}>🔍</span>
+            <input
+              type="text"
+              value={filterQuery}
+              onChange={e => setFilterQuery(e.target.value)}
+              placeholder="Filter by title or author…"
+              style={{
+                flex: 1, background: "transparent", border: "none", outline: "none",
+                fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13,
+                color: "#3A2A1A", fontStyle: filterQuery ? "normal" : "italic", minWidth: 0,
+              }}
+            />
+            {filterQuery && (
+              <button onMouseDown={() => setFilterQuery("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#8B5E3C", fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* Back to top button */}
+      <button
+        onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+        style={{
+          position: "absolute",
+          bottom: 28,
+          right: 28,
+          width: 48,
+          height: 48,
+          borderRadius: "50%",
+          border: "1px solid #8B5E3C",
+          cursor: "pointer",
+          background: '#F8F1E4 url("/parchment.jpg") center/cover fixed',
+          color: "#3A2A1A",
+          fontSize: 20,
+          boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
+          zIndex: 201,
+          opacity: atTop ? 0 : 1,
+          pointerEvents: atTop ? "none" : "auto",
+          transition: "opacity 0.25s ease",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        title="Back to top"
+      >
+        ↑
+      </button>
+
       {/* Scrollable content */}
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}>
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
+        style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}
+      >
 
 
       {favoritedBooks.length === 0 ? (
         <p style={{ textAlign: "center", fontFamily: '"Palatino Linotype", Palatino, serif', fontStyle: "italic", color: "#6B4E32", fontSize: 16, marginTop: 40 }}>
           You haven&apos;t added any favorites yet. Click the ♡ on any book to add it here.
         </p>
+      ) : filteredFavoritedBooks.length === 0 ? (
+        <p style={{ textAlign: "center", fontFamily: '"Palatino Linotype", Palatino, serif', fontStyle: "italic", color: "#6B4E32", fontSize: 16, marginTop: 40 }}>
+          No favorites match &quot;{filterQuery}&quot;.
+        </p>
       ) : (() => {
-        const perRowBooks = isMobile ? 5 : 12;
+        const perRowBooks = isMobile ? (canFitFourBooks ? 4 : 3) : 12;
         const shelfRows = [];
-        for (let i = 0; i < favoritedBooks.length; i += perRowBooks) shelfRows.push(favoritedBooks.slice(i, i + perRowBooks));
+        for (let i = 0; i < filteredFavoritedBooks.length; i += perRowBooks) shelfRows.push(filteredFavoritedBooks.slice(i, i + perRowBooks));
         const bookGap = isMobile ? 3 : 4;
         const rowMinH = isMobile ? 230 : 280;
         const spineW = isMobile ? 44 : 56;
@@ -3840,7 +4514,7 @@ function FavoritesShelf({ onClose }) {
           const layout = rowIndex % 3;
           const plantSrc = "/" + PLANT_IMAGES[rowIndex % PLANT_IMAGES.length];
           const plantEl = (
-            <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: "translateY(112px)", position: "relative", zIndex: 10 }}>
+            <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: `translateY(${isMobile ? 152 : 112}px)`, position: "relative", zIndex: 10 }}>
               <img src={plantSrc} alt="plant" style={{ width: plantW, height: "auto", display: "block" }} />
             </div>
           );
@@ -3851,7 +4525,8 @@ function FavoritesShelf({ onClose }) {
           });
 
           const plantGap = 6;
-          const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: "center", width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
+          const edgeJustify = layout === 0 ? "flex-start" : layout === 2 ? "flex-end" : "center";
+          const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: edgeJustify, width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
           let rowContent;
           if (layout === 0) {
             rowContent = <div style={rowBase}>{plantEl}<div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div></div>;
@@ -3887,6 +4562,7 @@ function FavoritesShelf({ onClose }) {
           setProgress={setProgress}
           mediaType={selectedBook.type}
           onDelete={handleDelete}
+          allBooks={filteredFavoritedBooks}
         />
       )}
     </div>
@@ -3906,8 +4582,13 @@ function BarcodeScannerModal({ onDetected, onClose }) {
     const Detector = ("BarcodeDetector" in window) ? window.BarcodeDetector : BarcodeDetectorPolyfill;
     detectorRef.current = new Detector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
 
+    // If the camera permission prompt / getUserMedia never settles (seen on some
+    // early native-app launches), don't leave the modal stuck on a blank camera view.
+    const startTimeout = setTimeout(() => setStatus(s => s === "starting" ? "error" : s), 10000);
+
     navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
       .then(stream => {
+        clearTimeout(startTimeout);
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -3916,7 +4597,7 @@ function BarcodeScannerModal({ onDetected, onClose }) {
           scanLoop();
         }
       })
-      .catch(() => setStatus("error"));
+      .catch(() => { clearTimeout(startTimeout); setStatus("error"); });
 
     async function scanLoop() {
       if (!scanningRef.current) return;
@@ -3938,6 +4619,7 @@ function BarcodeScannerModal({ onDetected, onClose }) {
     }
 
     return () => {
+      clearTimeout(startTimeout);
       scanningRef.current = false;
       streamRef.current?.getTracks().forEach(t => t.stop());
     };
@@ -3967,8 +4649,8 @@ function BarcodeScannerModal({ onDetected, onClose }) {
         {status === "error" && (
           <div style={{ background: "#fff8ee", borderRadius: 12, padding: 20, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 14, color: "#5C3A1E" }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>📵</div>
-            <strong>Camera access denied.</strong>
-            <div style={{ marginTop: 8, color: "#8B5E3C" }}>Allow camera access in your browser settings and try again.</div>
+            <strong>Couldn't start the camera.</strong>
+            <div style={{ marginTop: 8, color: "#8B5E3C" }}>Make sure camera access is allowed in Settings, then close this and try again.</div>
           </div>
         )}
 
@@ -3995,20 +4677,21 @@ function BarcodeScannerModal({ onDetected, onClose }) {
   );
 }
 
-function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
+function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [allResults, setAllResults] = useState([]);
   const [visibleCount, setVisibleCount] = useState(15);
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(initialSelected || null);
   const [mediaType, setMediaType] = useState("ebooks");
-  const [genre, setGenre] = useState("");
+  const [genre, setGenre] = useState(initialSelected?.genre || "");
   const [status, setStatus] = useState("unread");
   const [msg, setMsg] = useState("");
   const [added, setAdded] = useState(false);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [scannedIsbn, setScannedIsbn] = useState("");
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
   const activeQuery = useRef("");
@@ -4022,7 +4705,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
     activeQuery.current = q;
     setSearching(true);
     const lower = q.toLowerCase();
-    const localBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const localBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
     const localMatches = localBooks.filter(b =>
       (b.title || "").toLowerCase().includes(lower) || (b.author || "").toLowerCase().includes(lower)
     ).map(b => ({
@@ -4053,14 +4736,19 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
     }
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!selected) return;
-    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
     const addingMediaType = mediaType === "audiobooks" ? "audiobook" : mediaType === "physical" ? "physical" : "ebook";
+    const normMediaType = (b) => {
+      const m = b.mediaType || (b.type === "audiobooks" ? "audiobook" : b.type === "physical" ? "physical" : "ebook");
+      return m;
+    };
+    const selectedTitleKey = cleanTitle(selected.title || "").toLowerCase().trim();
     const existingCopy = userBooks.find(b => {
-      const sameBook = (b.isbn && b.isbn === selected.isbn) || b.title === selected.title;
+      const sameBook = (b.isbn && selected.isbn && b.isbn === selected.isbn) || cleanTitle(b.title || "").toLowerCase().trim() === selectedTitleKey;
       if (!sameBook) return false;
-      return (b.mediaType || b.type) === addingMediaType;
+      return normMediaType(b) === addingMediaType;
     });
     if (existingCopy) {
       if (addingMediaType === "physical") {
@@ -4075,20 +4763,48 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
       setMsg(`You've reached your ${limit.toLocaleString()}-book limit. Upgrade to add more.`);
       return;
     }
+
+    // Check community cache and fill in any missing fields before saving
+    let enriched = { ...selected };
+    if (!enriched.description || !enriched.coverUrl || !enriched.isbn) {
+      try {
+        const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+        const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+        let res;
+        if (enriched.isbn) {
+          res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(enriched.isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        } else {
+          const t = encodeURIComponent((enriched.title || "").toLowerCase());
+          res = await fetch(`${url}/rest/v1/book_cache?title=ilike.*${t}*&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        }
+        const rows = await res.json();
+        const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+        if (cached) {
+          if (!enriched.isbn && cached.isbn) enriched.isbn = cached.isbn;
+          if (!enriched.description && cached.description) enriched.description = cached.description;
+          if (!enriched.coverUrl && cached.cover_url && !cached.cover_url.includes("covers.openlibrary.org/b/isbn/")) enriched.coverUrl = cached.cover_url;
+          if (!enriched.author && cached.author) enriched.author = cached.author;
+          if ((!enriched.genre || enriched.genre === "Fiction & Drama") && cached.genre) enriched.genre = cached.genre;
+        }
+      } catch { /* cache unavailable — proceed with what we have */ }
+    }
+
     const isAudio = mediaType === "audiobooks";
     userBooks.push({
-      ...selected,
+      ...enriched,
       type: mediaType,
       mediaType: isAudio ? "audiobook" : mediaType === "physical" ? "physical" : "ebook",
-      genre: genre || selected.genre || "Fiction & Drama",
+      genre: genre || enriched.genre || "Fiction & Drama",
       status,
       addedAt: Date.now(),
     });
-    localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+    saveUserBooks(userBooks);
     window.dispatchEvent(new CustomEvent("sk-books-changed"));
+    // Share this book's data with the community cache
+    writeToCommunityCache(enriched.isbn, enriched.title, enriched.author, enriched.description, enriched.coverUrl, genre || enriched.genre);
     setAdded(true);
-    setMsg(`"${selected.title}" added to your library!`);
-    // Warn at 90% of limit (reuse tier/limit already declared above)
+    setMsg(`"${enriched.title}" added to your library!`);
+    // Warn at 90% of limit
     if (limit !== Infinity && userBooks.length >= Math.floor(limit * 0.9)) {
       setTimeout(() => setShowLimitWarning(true), 1000);
     } else {
@@ -4124,6 +4840,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
                   onChange={e => {
                     const val = e.target.value;
                     setQuery(val);
+                    setScannedIsbn("");
                     clearTimeout(debounceRef.current);
                     debounceRef.current = setTimeout(() => search(val), 500);
                   }}
@@ -4131,7 +4848,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
                   style={{ flex: 1, minWidth: 0, width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${thm.border}`, background: thm.bgMuted, fontFamily: "Georgia, serif", fontSize: 16, color: thm.text, outline: "none", boxSizing: "border-box" }}
                 />
                 {query
-                  ? <button onClick={() => { setQuery(""); setResults([]); }} style={{ background: "none", border: "none", color: thm.textSoft, fontSize: 18, cursor: "pointer" }}>✕</button>
+                  ? <button onClick={() => { setQuery(""); setResults([]); setScannedIsbn(""); }} style={{ background: "none", border: "none", color: thm.textSoft, fontSize: 18, cursor: "pointer" }}>✕</button>
                   : <button onClick={() => setShowScanner(true)} title="Scan barcode" style={{ background: thm.bgMuted, border: `1px solid ${thm.border}`, borderRadius: 8, padding: "0 12px", color: thm.accent, fontSize: 20, cursor: "pointer", flexShrink: 0 }}>📷</button>
                 }
               </div>
@@ -4141,6 +4858,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
                   onDetected={async (isbn) => {
                     setShowScanner(false);
                     setQuery(isbn);
+                    setScannedIsbn(isbn);
                     setSearching(true);
                     try {
                       const results = await fetchBookSearch(isbn);
@@ -4182,10 +4900,12 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
               {/* Manual entry if no results */}
               {query.length > 1 && results.length === 0 && !searching && (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic", marginBottom: 10, textAlign: "center" }}>Can't find it? Add it manually:</div>
-                  <button onClick={() => setSelected({ title: query, author: "", coverUrl: null, isbn: "", genre: "" })}
+                  <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic", marginBottom: 10, textAlign: "center" }}>
+                    {scannedIsbn ? "Couldn't find that ISBN online. You can still add it manually:" : "Can't find it? Add it manually:"}
+                  </div>
+                  <button onClick={() => setSelected({ title: scannedIsbn ? "" : query, author: "", coverUrl: null, isbn: scannedIsbn, genre: "" })}
                     style={{ width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${thm.accent}`, background: "transparent", color: thm.accent, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
-                    + Add "{query}" manually
+                    {scannedIsbn ? `+ Add manually (ISBN ${scannedIsbn})` : `+ Add "${query}" manually`}
                   </button>
                 </div>
               )}
@@ -4261,7 +4981,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
         const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
         const wLimit = TIER_BOOK_LIMITS[wTier] ?? 250;
         const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
-        const wBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+        const wBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
         return <LimitWarningModal
           currentCount={wBooks.length}
           limit={wLimit}
@@ -4276,6 +4996,8 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription }) {
 
 function TBRShelf({ onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const isMobile = window.innerWidth < 768;
+  const canFitFourBooks = window.innerWidth >= 420;
   const [tbrBooks, setTbrBooks] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; }
   });
@@ -4293,23 +5015,91 @@ function TBRShelf({ onClose, onOpenSubscription }) {
   const [moveTarget, setMoveTarget] = useState(null); // { book, index }
   const [moveMediaType, setMoveMediaType] = useState("ebooks");
   const [moveGenre, setMoveGenre] = useState("");
+  const [tbrActionTarget, setTbrActionTarget] = useState(null); // { book, index } — shown when tapping a spine
   const coverUploadRef = useRef(null);
   const scrollRef = useRef(null);
   const tbrDebounceRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
+
+  useEffect(() => {
+    const refresh = () => {
+      try { setTbrBooks(JSON.parse(localStorage.getItem("sk_tbr_books") || "[]")); } catch {}
+    };
+    window.addEventListener("sk-tbr-changed", refresh);
+    return () => window.removeEventListener("sk-tbr-changed", refresh);
+  }, []);
 
   const saveTbr = (books) => {
     setTbrBooks(books);
     localStorage.setItem("sk_tbr_books", JSON.stringify(books));
   };
 
-  const addBook = (book) => {
+  // Some TBR books (e.g. added via the "want to read" auto-sync) never got
+  // enriched with a description. Fetch it on demand when the tap modal opens.
+  useEffect(() => {
+    if (!tbrActionTarget || tbrActionTarget.book.description) return;
+    const { book, index } = tbrActionTarget;
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+        const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+        let res;
+        if (book.isbn) {
+          res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(book.isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        } else {
+          const t = encodeURIComponent((book.title || "").toLowerCase());
+          res = await fetch(`${url}/rest/v1/book_cache?title=ilike.*${t}*&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        }
+        const rows = await res.json();
+        const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+        if (cancelled || !cached?.description) return;
+        const enrichedBook = { ...book, description: cached.description, coverUrl: book.coverUrl || cached.cover_url || null };
+        setTbrActionTarget(prev => (prev && prev.index === index ? { ...prev, book: enrichedBook } : prev));
+        setTbrBooks(prev => {
+          if (!prev[index]) return prev;
+          const next = [...prev];
+          next[index] = { ...next[index], description: cached.description, coverUrl: next[index].coverUrl || cached.cover_url || null };
+          localStorage.setItem("sk_tbr_books", JSON.stringify(next));
+          return next;
+        });
+      } catch { /* proceed without a description */ }
+    })();
+    return () => { cancelled = true; };
+  }, [tbrActionTarget?.index]);
+
+  const addBook = async (book) => {
     const already = tbrBooks.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
     if (already) { setMsg("Already on your TBR!"); setTimeout(() => setMsg(""), 2000); return; }
-    const updated = [...tbrBooks, { ...book, addedAt: Date.now() }];
+    // Fill in missing fields from community cache
+    let enriched = { ...book };
+    if (!enriched.description || !enriched.coverUrl || !enriched.isbn) {
+      try {
+        const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+        const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+        let res;
+        if (enriched.isbn) {
+          res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(enriched.isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        } else {
+          const t = encodeURIComponent((enriched.title || "").toLowerCase());
+          res = await fetch(`${url}/rest/v1/book_cache?title=ilike.*${t}*&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        }
+        const rows = await res.json();
+        const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+        if (cached) {
+          if (!enriched.isbn && cached.isbn) enriched.isbn = cached.isbn;
+          if (!enriched.description && cached.description) enriched.description = cached.description;
+          if (!enriched.coverUrl && cached.cover_url && !cached.cover_url.includes("covers.openlibrary.org/b/isbn/")) enriched.coverUrl = cached.cover_url;
+          if (!enriched.author && cached.author) enriched.author = cached.author;
+          if ((!enriched.genre || enriched.genre === "Fiction & Drama") && cached.genre) enriched.genre = cached.genre;
+        }
+      } catch { /* proceed with what we have */ }
+    }
+    writeToCommunityCache(enriched.isbn, enriched.title, enriched.author, enriched.description, enriched.coverUrl, enriched.genre);
+    const updated = [...tbrBooks, { ...enriched, addedAt: Date.now() }];
     saveTbr(updated);
     setSearchQuery(""); setSearchResults([]); setShowSearch(false);
-    setMsg(`"${book.title}" added to TBR!`); setTimeout(() => setMsg(""), 2500);
+    setMsg(`"${enriched.title}" added to TBR!`); setTimeout(() => setMsg(""), 2500);
   };
 
   const removeBook = (index) => {
@@ -4317,11 +5107,17 @@ function TBRShelf({ onClose, onOpenSubscription }) {
     saveTbr(updated);
   };
 
-  const confirmMoveToLibrary = (platformId) => {
+  const confirmMoveToLibrary = async (platformId) => {
     const { book, index } = moveTarget;
     const isAudio = moveMediaType === "audiobooks";
-    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
-    const already = userBooks.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+    const userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
+    const moveTitleKey = cleanTitle(book.title || "").toLowerCase().trim();
+    const already = userBooks.some(b => {
+      const sameBook = (b.isbn && book.isbn && b.isbn === book.isbn) || cleanTitle(b.title || "").toLowerCase().trim() === moveTitleKey;
+      if (!sameBook) return false;
+      const bType = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
+      return bType === moveMediaType;
+    });
     if (!already) {
       const tier = localStorage.getItem("sk_user_tier") || "reluctant";
       const limit = TIER_BOOK_LIMITS[tier] ?? 250;
@@ -4330,17 +5126,42 @@ function TBRShelf({ onClose, onOpenSubscription }) {
         setTimeout(() => setMsg(""), 3000);
         return;
       }
+      // Fill in missing fields from community cache before saving
+      let enriched = { ...book };
+      if (!enriched.description || !enriched.coverUrl || !enriched.isbn) {
+        try {
+          const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+          const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+          let res;
+          if (enriched.isbn) {
+            res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(enriched.isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          } else {
+            const t = encodeURIComponent((enriched.title || "").toLowerCase());
+            res = await fetch(`${url}/rest/v1/book_cache?title=ilike.*${t}*&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          }
+          const rows = await res.json();
+          const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+          if (cached) {
+            if (!enriched.isbn && cached.isbn) enriched.isbn = cached.isbn;
+            if (!enriched.description && cached.description) enriched.description = cached.description;
+            if (!enriched.coverUrl && cached.cover_url && !cached.cover_url.includes("covers.openlibrary.org/b/isbn/")) enriched.coverUrl = cached.cover_url;
+            if (!enriched.author && cached.author) enriched.author = cached.author;
+            if ((!enriched.genre || enriched.genre === "Fiction & Drama") && cached.genre) enriched.genre = cached.genre;
+          }
+        } catch { /* proceed with what we have */ }
+      }
       userBooks.push({
-        ...book,
+        ...enriched,
         type: moveMediaType,
         mediaType: isAudio ? "audiobook" : moveMediaType === "physical" ? "physical" : "ebook",
         platform: platformId,
-        genre: moveGenre || book.genre || "Fiction & Drama",
+        genre: moveGenre || enriched.genre || "Fiction & Drama",
         status: "unread",
         addedAt: Date.now(),
       });
-      localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+      saveUserBooks(userBooks);
       window.dispatchEvent(new CustomEvent("sk-books-changed"));
+      writeToCommunityCache(enriched.isbn, enriched.title, enriched.author, enriched.description, enriched.coverUrl, moveGenre || enriched.genre);
       // Warn at 90% of limit
       const tier2 = localStorage.getItem("sk_user_tier") || "reluctant";
       const limit2 = TIER_BOOK_LIMITS[tier2] ?? 250;
@@ -4357,21 +5178,15 @@ function TBRShelf({ onClose, onOpenSubscription }) {
     if (!q.trim()) { setSearchResults([]); return; }
     setSearching(true);
 
-    // Search local library first for instant results
     const lower = q.toLowerCase();
     const localHits = [];
-    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
     [...Object.values(library).flat(), ...userBooks].forEach(b => {
       if ((b.title?.toLowerCase().includes(lower) || b.author?.toLowerCase().includes(lower)) &&
           !localHits.some(h => h.title === b.title)) localHits.push(b);
     });
-    if (localHits.length >= 5) {
-      setSearchResults(localHits.slice(0, 10));
-      setSearching(false);
-      return;
-    }
 
-    // Fetch from Google Books (cached)
+    // Always fetch from Google Books in parallel so new books appear too
     const gResults = await fetchBookSearch(q);
     const seen = new Set(localHits.map(b => b.title.toLowerCase()));
     const merged = [...localHits];
@@ -4403,16 +5218,20 @@ function TBRShelf({ onClose, onOpenSubscription }) {
     reader.readAsDataURL(file);
   };
 
-  // Rows of 4 for display
+  // Same row-chunking as the genre shelves (MobileBookShelf) — always keep 6 extra
+  // vacant shelves available beyond whatever's filled, with or without books.
+  const tbrPerRowBooks = isMobile ? (canFitFourBooks ? 4 : 3) : 7;
   const rows = [];
-  for (let i = 0; i < tbrBooks.length; i += 4) rows.push(tbrBooks.slice(i, i + 4));
+  for (let i = 0; i < tbrBooks.length; i += tbrPerRowBooks) rows.push(tbrBooks.slice(i, i + tbrPerRowBooks));
+  for (let i = 0; i < 6; i++) rows.push([]);
 
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 600,
       backgroundColor: "#F8F1E4",
-      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundImage: 'url("/parchment.jpg")',
       backgroundSize: "cover", backgroundPosition: "center",
+      overflow: "hidden",
     }}>
       <button onClick={onClose} style={{
         position: "fixed", top: 16, left: 16,
@@ -4435,7 +5254,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
       }}>↑</button>
 
       <div ref={scrollRef} onScroll={e => setAtTop(e.currentTarget.scrollTop < 40)}
-        style={{ height: "100%", overflowY: "auto", paddingTop: 70, paddingBottom: 60 }}>
+        style={{ height: "100%", overflowY: "auto", overflowX: "hidden", paddingTop: 70, paddingBottom: 60 }}>
 
         <h1 style={{
           textAlign: "center", fontFamily: '"Baskerville", "Book Antiqua", Georgia, serif',
@@ -4470,7 +5289,8 @@ function TBRShelf({ onClose, onOpenSubscription }) {
               value={searchQuery}
               onChange={e => { const v = e.target.value; setSearchQuery(v); clearTimeout(tbrDebounceRef.current); tbrDebounceRef.current = setTimeout(() => searchBooks(v), 300); }}
               placeholder="Search by title or author..."
-              style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 14, fontFamily: "Georgia, serif", outline: "none" }}
+              type="text" autoComplete="off" autoCorrect="off" autoCapitalize="words" spellCheck={false}
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", borderRadius: 8, border: "1px solid #C4A882", background: "#fff", color: "#3A2010", fontSize: 14, fontFamily: "Georgia, serif", outline: "none" }}
             />
             {searching && <div style={{ textAlign: "center", padding: 12, color: "#8B5E3C", fontSize: 13 }}>Searching...</div>}
             {searchResults.map((book, i) => (
@@ -4507,9 +5327,11 @@ function TBRShelf({ onClose, onOpenSubscription }) {
               }
             </div>
             <input value={manualTitle} onChange={e => setManualTitle(e.target.value)} placeholder="Book title *"
-              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 13, fontFamily: "Georgia, serif", outline: "none", marginBottom: 8 }} />
+              type="text" autoComplete="off" autoCorrect="off" autoCapitalize="words" spellCheck={false}
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "#fff", color: "#3A2010", fontSize: 13, fontFamily: "Georgia, serif", outline: "none", marginBottom: 8 }} />
             <input value={manualAuthor} onChange={e => setManualAuthor(e.target.value)} placeholder="Author"
-              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "rgba(255,255,255,0.9)", fontSize: 13, fontFamily: "Georgia, serif", outline: "none", marginBottom: 12 }} />
+              type="text" autoComplete="off" autoCorrect="off" autoCapitalize="words" spellCheck={false}
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "#fff", color: "#3A2010", fontSize: 13, fontFamily: "Georgia, serif", outline: "none", marginBottom: 12 }} />
             <button onClick={() => {
               if (!manualTitle.trim()) { setMsg("Please enter a title."); setTimeout(() => setMsg(""), 2000); return; }
               addBook({ title: manualTitle.trim(), author: manualAuthor.trim(), cover: uploadCover || null });
@@ -4520,52 +5342,58 @@ function TBRShelf({ onClose, onOpenSubscription }) {
           </div>
         )}
 
-        {/* TBR books grid */}
-        {tbrBooks.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "40px 20px", color: "#6B4C2A", fontFamily: "Georgia, serif", fontSize: 14, fontStyle: "italic" }}>
+        {/* TBR books grid — same shelf/plant treatment and parameters as every other shelf */}
+        {tbrBooks.length === 0 && (
+          <div style={{ textAlign: "center", padding: "20px 20px 0", color: "#6B4C2A", fontFamily: "Georgia, serif", fontSize: 14, fontStyle: "italic" }}>
             Your TBR shelf is empty. Search for books or add them manually above!
           </div>
-        ) : (
-          rows.map((row, ri) => (
-            <div key={ri} style={{ marginBottom: 40, paddingInline: 12 }}>
-              {/* Shelf row */}
-              <div style={{ display: "flex", gap: 10, justifyContent: "flex-start", flexWrap: "wrap" }}>
-                {row.map((book, bi) => {
-                  const idx = ri * 4 + bi;
-                  return (
-                    <div key={idx} style={{ width: "calc(25% - 8px)", minWidth: 70, maxWidth: 100, position: "relative" }}>
-                      <div style={{ position: "relative", paddingBottom: 8 }}>
-                        {book.cover
-                          ? <img src={book.cover} alt={book.title} style={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", borderRadius: 4, boxShadow: "2px 3px 8px rgba(0,0,0,0.25)", display: "block" }} />
-                          : <div style={{ width: "100%", aspectRatio: "2/3", background: "linear-gradient(135deg, #8B5E3C, #C4A882)", borderRadius: 4, boxShadow: "2px 3px 8px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", padding: 6, boxSizing: "border-box" }}>
-                              <span style={{ fontSize: 10, color: "#fff", textAlign: "center", fontFamily: "Georgia, serif", lineHeight: 1.3 }}>{book.title}</span>
-                            </div>
-                        }
-                        {/* Action buttons */}
-                        <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-                          <button onClick={() => { setMoveTarget({ book, index: idx }); setMoveMediaType("ebooks"); setMoveGenre(""); }} title="Move to library"
-                            style={{ flex: 1, padding: "4px 0", borderRadius: 4, background: "#8B5E3C", border: "none", color: "#fff", fontSize: 9, cursor: "pointer", fontFamily: "Georgia, serif" }}>
-                            + Library
-                          </button>
-                          <button onClick={() => removeBook(idx)} title="Remove"
-                            style={{ width: 24, padding: "4px 0", borderRadius: 4, background: "rgba(0,0,0,0.15)", border: "none", color: "#3A2A1A", fontSize: 11, cursor: "pointer" }}>
-                            ×
-                          </button>
-                        </div>
-                        <div style={{ fontSize: 9, color: "#3A2A1A", textAlign: "center", marginTop: 4, fontFamily: "Georgia, serif", lineHeight: 1.2, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                          {book.title}
-                        </div>
-                        {book.author && <div style={{ fontSize: 8, color: "#6B4C2A", textAlign: "center", marginTop: 2, fontFamily: "Georgia, serif" }}>{book.author}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Shelf plank */}
-              <div style={{ height: 14, background: "linear-gradient(to bottom, #8B5E3C, #6B4326)", borderRadius: "0 0 4px 4px", boxShadow: "0 4px 8px rgba(0,0,0,0.3)", marginTop: 2 }} />
-            </div>
-          ))
         )}
+        {(() => {
+          const bookGap = isMobile ? 3 : 4;
+          const rowMinH = isMobile ? 230 : 300;
+          const plantW = isMobile ? 220 : 280;
+
+          return rows.map((row, rowIndex) => {
+            const layout = rowIndex % 3;
+            const plantSrc = "/" + PLANT_IMAGES[rowIndex % PLANT_IMAGES.length];
+
+            const plantEl = (
+              <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: "translateY(152px)", position: "relative", zIndex: 10 }}>
+                <img src={plantSrc} alt="plant" style={{ width: plantW, height: "auto", display: "block" }} />
+              </div>
+            );
+            const spineW = isMobile ? 44 : 56;
+            const bookEls = row.map((book, bi) => {
+              const idx = rowIndex * tbrPerRowBooks + bi;
+              const isEdge = bi === 0 || bi === row.length - 1;
+              const w = isEdge ? Math.round(spineW * 0.72) : spineW;
+              return <BookSpine key={idx} book={book} index={idx} rowIndex={rowIndex} onClick={() => setTbrActionTarget({ book, index: idx })} spineWidth={w} />;
+            });
+
+            const plantGap = 6;
+            const edgeJustify = layout === 0 ? "flex-start" : layout === 2 ? "flex-end" : "center";
+            const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: edgeJustify, width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
+            let rowContent;
+            if (layout === 0) {
+              rowContent = <div style={rowBase}>{plantEl}<div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div></div>;
+            } else if (layout === 1) {
+              const half = Math.floor(bookEls.length / 2);
+              rowContent = <div style={rowBase}><div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls.slice(0, half)}</div>{plantEl}<div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls.slice(half)}</div></div>;
+            } else {
+              rowContent = <div style={rowBase}><div style={{ display: "flex", alignItems: "flex-end", gap: bookGap, flexShrink: 0 }}>{bookEls}</div>{plantEl}</div>;
+            }
+
+            return (
+              <div key={rowIndex} style={{ position: "relative" }}>
+                {rowContent}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <img src="/shelf2.jpg" alt="shelf" style={{ width: "92%", height: 22, objectFit: "cover", objectPosition: "center center", display: "block", boxShadow: "0 4px 10px rgba(0,0,0,0.5)", position: "relative", zIndex: 5 }} />
+                </div>
+                <div style={{ height: 6, background: "linear-gradient(to bottom, rgba(0,0,0,0.2), transparent)", marginBottom: 8 }} />
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {/* Barcode scanner */}
@@ -4581,6 +5409,89 @@ function TBRShelf({ onClose, onOpenSubscription }) {
           }}
           onClose={() => setShowScanner(false)}
         />
+      )}
+
+      {/* Tap-a-spine action panel: book details + Move to Library / Remove from TBR */}
+      {tbrActionTarget && (
+        <div onClick={() => setTbrActionTarget(null)} style={{
+          position: "fixed", inset: 0, zIndex: 8000, background: "rgba(20,14,8,0.72)",
+          display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "20px 20px", overflowY: "auto",
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            maxWidth: 700, width: "100%", background: "#F8F1E4", border: "1px solid #8B5E3C", borderRadius: 12,
+            padding: "30px 20px", position: "relative", boxSizing: "border-box", marginTop: "auto", marginBottom: "auto",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+          }}>
+            <button onClick={() => setTbrActionTarget(null)} aria-label="Close" style={{
+              position: "absolute", top: 14, right: 16, background: "none", border: "none", fontSize: 22,
+              cursor: "pointer", color: "#6B4C2A", lineHeight: 1, padding: "2px 6px",
+            }}>✕</button>
+            {tbrActionTarget.book.coverUrl && (
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+                <img src={tbrActionTarget.book.coverUrl} alt="" style={{ width: 140, height: 210, objectFit: "cover", borderRadius: 6, boxShadow: "3px 4px 14px rgba(0,0,0,0.35)", border: "1px solid #C9A96E" }} />
+              </div>
+            )}
+            <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#3A2A1A", textAlign: "center" }}>{tbrActionTarget.book.title}</h3>
+            {tbrActionTarget.book.author && <p style={{ margin: "0 0 12px", fontSize: 12, color: "#6B4C2A", textAlign: "center", fontStyle: "italic" }}>{tbrActionTarget.book.author}</p>}
+            <p style={{ margin: "0 0 18px", fontSize: 13, color: "#5A3F26", lineHeight: 1.6, fontFamily: "Georgia, serif" }}>
+              {(() => {
+                const desc = tbrActionTarget.book.description || "";
+                const junk = ["LibraryThing", "catalogs your", "easily, quickly and for free"];
+                return desc && !junk.some(j => desc.includes(j)) ? desc : "No description available yet.";
+              })()}
+            </p>
+            {(() => {
+              const b = tbrActionTarget.book;
+              if (!b.platform) return null;
+              const PLATFORM_URLS = {
+                kindle:  b.readUrl || (b.asin ? `https://read.amazon.com/?asin=${b.asin}` : "https://read.amazon.com"),
+                audible: b.readUrl || (b.asin ? `https://www.audible.com/pd/${b.asin}` : "https://www.audible.com/library/titles"),
+                chirp:   b.readUrl || "https://www.chirpbooks.com/library",
+                apple:   b.storeId ? `https://books.apple.com/us/book/id${b.storeId}` : b.readUrl || "https://books.apple.com/library",
+                kobo:    b.readUrl || "https://www.kobo.com/us/en/library/books",
+                nook:    b.readUrl || "https://nook.barnesandnoble.com/my_library",
+                libby:   b.readUrl || "https://libbyapp.com/shelf",
+                hoopla:  b.readUrl || "https://www.hoopladigital.com/my/borrowed",
+              };
+              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel", goodreads: "Goodreads" };
+              const url = PLATFORM_URLS[b.platform] || b.readUrl;
+              const name = platformNames[b.platform] || b.platform;
+              if (!url) return null;
+              const isMobileDevice = window.innerWidth < 768 || navigator.maxTouchPoints > 1;
+              const openReadUrl = (e) => {
+                if (!isMobileDevice) return;
+                // Same Universal Link / App Link reasoning as the main "Read on X" button:
+                // location.href navigation lets the OS hand off to the native app if one is
+                // installed, target="_blank" does not — so avoid it on mobile.
+                e.preventDefault();
+                window.location.href = url;
+              };
+              return (
+                <a href={url} onClick={openReadUrl} target={isMobileDevice ? undefined : "_blank"} rel="noopener noreferrer" style={{
+                  display: "block", width: "100%", padding: "11px", borderRadius: 8, marginBottom: 8, boxSizing: "border-box",
+                  background: "#4A7C59", border: "none", color: "#fff", textDecoration: "none",
+                  textAlign: "center", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                }}>📖 Read in {name}</a>
+              );
+            })()}
+            <button onClick={() => { setMoveTarget({ book: tbrActionTarget.book, index: tbrActionTarget.index }); setMoveMediaType("ebooks"); setMoveGenre(""); setTbrActionTarget(null); }} style={{
+              width: "100%", padding: "11px", borderRadius: 8, marginBottom: 8,
+              background: "#8B5E3C", border: "none", color: "#fff",
+              cursor: "pointer", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+            }}>+ Add to Library</button>
+            <button onClick={() => { removeBook(tbrActionTarget.index); setTbrActionTarget(null); }} style={{
+              width: "100%", padding: "11px", borderRadius: 8, marginBottom: 8,
+              background: "rgba(139,42,42,0.1)", border: "1px solid #B05040", color: "#8B2A2A",
+              cursor: "pointer", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+            }}>✕ Remove from TBR</button>
+            <button onClick={() => setTbrActionTarget(null)} style={{
+              width: "100%", padding: "9px", borderRadius: 8,
+              background: "none", border: "1px solid #C4A882", color: "#6B4C2A",
+              cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+            }}>Cancel</button>
+          </div>
+        </div>
       )}
 
       {/* Move to Library modal */}
@@ -4666,7 +5577,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
         const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
         const wLimit = TIER_BOOK_LIMITS[wTier] ?? 250;
         const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
-        const wBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+        const wBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
         return <LimitWarningModal
           currentCount={wBooks.length}
           limit={wLimit}
@@ -4683,7 +5594,9 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
   const [mediaType, setMediaType] = useState(initialMediaType || "ebooks");
   const [calMonth, setCalMonth] = useState(new Date());
   const [selectedTallyMonth, setSelectedTallyMonth] = useState(null); // { yr, mi }
+  const [selectedTallyYear, setSelectedTallyYear] = useState(null); // yr (string)
   const [calendarBook, setCalendarBook] = useState(null);
+  const [calRefresh, setCalRefresh] = useState(0); // bumped to force a re-read of dates from localStorage
   const [calFavorites, setCalFavorites] = useState(() => { try { return JSON.parse(localStorage.getItem(`sk_favorites_${initialMediaType}`) || "{}"); } catch { return {}; } });
   const [calStatuses, setCalStatuses] = useState(() => { try { return JSON.parse(localStorage.getItem(`sk_statuses_${initialMediaType}`) || "{}"); } catch { return {}; } });
   const [calProgress, setCalProgress] = useState(() => { try { return JSON.parse(localStorage.getItem(`sk_progress_${initialMediaType}`) || "{}"); } catch { return {}; } });
@@ -4704,8 +5617,10 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
   const totalChaptersEbooksAllTime = parseInt(localStorage.getItem("sk_lifetime_chapters_ebooks") || "0");
   const formatMins = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 
-  // Flatten all books
-  const allBooks = Object.values(library).flat();
+  // Flatten all books — built-in library + user-imported, filtered to the current media type
+  const effectiveType = (b) => b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
+  const allBooks = [...Object.values(library).flat(), ...(() => { try { return getUserBooksSync(); } catch { return []; } })()]
+    .filter((b) => effectiveType(b) === mediaType);
 
   const finishedBooks = allBooks.filter((b) => statuses[b.isbn] === "finished");
   const readingBooks = allBooks.filter((b) => statuses[b.isbn] === "reading");
@@ -4741,6 +5656,49 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
       const end = d.endDate ? new Date(d.endDate) : new Date();
       return start <= dayEnd && end >= dayStart;
     });
+  };
+
+  // Clears a book's start/end dates so it stops spanning days on the calendar —
+  // does not change its status (still "reading"/"finished") or remove the book itself.
+  // Clearing a book's calendar dates or deleting its reading session means it no
+  // longer has any active-reading evidence — drop its "reading" status too so the
+  // book modal doesn't keep showing it as currently being read.
+  const resetReadingStatusIfActive = (isbn) => {
+    if (!isbn) return;
+    try {
+      const key = `sk_statuses_${mediaType}`;
+      const all = JSON.parse(localStorage.getItem(key) || "{}");
+      if (all[isbn] === "reading") {
+        delete all[isbn];
+        localStorage.setItem(key, JSON.stringify(all));
+      }
+    } catch { /* ignore */ }
+  };
+
+  const clearFromCalendar = (isbn) => {
+    if (!isbn) return;
+    try {
+      const key = `sk_dates_${mediaType}`;
+      const all = JSON.parse(localStorage.getItem(key) || "{}");
+      delete all[isbn];
+      localStorage.setItem(key, JSON.stringify(all));
+      resetReadingStatusIfActive(isbn);
+      setCalRefresh(k => k + 1);
+    } catch { /* ignore */ }
+  };
+
+  // Removes one logged reading/listening session by its index in the full
+  // (unsliced) sessions array — sessions are unshifted on save, so index 0 is
+  // most recent and matches the index shown in the "30 most recent" slice.
+  const deleteSession = (index) => {
+    try {
+      const key = `sk_sessions_${mediaType}`;
+      const all = JSON.parse(localStorage.getItem(key) || "[]");
+      const [removed] = all.splice(index, 1);
+      localStorage.setItem(key, JSON.stringify(all));
+      if (removed?.isbn) resetReadingStatusIfActive(removed.isbn);
+      setCalRefresh(k => k + 1);
+    } catch { /* ignore */ }
   };
 
   const isToday = (day) =>
@@ -4790,7 +5748,7 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
       inset: 0,
       zIndex: 700,
       backgroundColor: "#F8F1E4",
-      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundImage: 'url("/parchment.jpg")',
       backgroundSize: "cover",
       backgroundPosition: "center",
     }}>
@@ -4799,7 +5757,7 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
         onClick={onClose}
         style={{
           position: "fixed",
-          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          top: "calc(20px + env(safe-area-inset-top, 44px))",
           left: "calc(16px + env(safe-area-inset-left, 0px))",
           padding: "8px 18px",
           borderRadius: 10,
@@ -4832,7 +5790,7 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           borderRadius: "50%",
           border: "1px solid #8B5E3C",
           cursor: "pointer",
-          background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover fixed',
+          background: '#F8F1E4 url("/parchment.jpg") center/cover fixed',
           color: "#3A2A1A",
           fontSize: 20,
           boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
@@ -4853,7 +5811,7 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
       <div
         ref={scrollRef}
         onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
-        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "80px 40px 30px" }}
+        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: `calc(80px + env(safe-area-inset-top, 44px)) 40px 30px` }}
       >
       <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 20 }}>
         {/* Header */}
@@ -4951,9 +5909,12 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
             >›</button>
           </div>
 
-          {/* Day headers + grid — horizontally scrollable so tiles stay a useful size */}
-          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <div style={{ minWidth: 490 }}>
+          {/* Day headers + grid — horizontally scrollable so tiles stay a useful size.
+              Right padding keeps the last (Saturday) column's remove button clear of
+              the scroll edge, where touches were getting captured as a scroll/swipe
+              instead of a tap. */}
+          <div style={{ paddingLeft: 8, paddingRight: 8 }}>
+            <div style={{ width: "100%" }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
             {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
               <div key={d} style={{ textAlign: "center", fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontWeight: 700, padding: "4px 0" }}>{d}</div>
@@ -4978,38 +5939,50 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
                 }}>
                   {/* Day number — overlaid on cover for single book */}
                   <div style={{
-                    position: single && books[0]?.coverUrl ? "absolute" : "relative",
-                    top: 4, left: 6, zIndex: 2,
+                    position: "absolute",
+                    top: 3, left: 5, zIndex: 2,
                     fontSize: 11, color: single && books[0]?.coverUrl ? "#fff" : "#6B4E32",
                     fontFamily: "Georgia, serif",
                     fontWeight: 700,
                     textShadow: single && books[0]?.coverUrl ? "0 1px 3px rgba(0,0,0,0.8)" : "none",
-                    marginBottom: single ? 0 : 4,
                   }}>{day}</div>
 
                   {/* Single book: full-size cover */}
                   {single && (
-                    <img
-                      src={books[0].coverUrl || (books[0].isbn ? `https://covers.openlibrary.org/b/isbn/${books[0].isbn}-M.jpg` : "")}
-                      alt={books[0].title}
-                      title={books[0].title}
-                      onClick={() => setCalendarBook(books[0])}
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: 5, cursor: "pointer" }}
-                    />
+                    <>
+                      <img
+                        src={books[0].coverUrl || (books[0].isbn ? `https://covers.openlibrary.org/b/isbn/${books[0].isbn}-M.jpg` : "")}
+                        alt={books[0].title}
+                        title={books[0].title}
+                        onClick={() => setCalendarBook(books[0])}
+                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: 5, cursor: "pointer" }}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); clearFromCalendar(books[0].isbn); }}
+                        title="Remove from calendar"
+                        style={{ position: "absolute", top: 2, right: 2, zIndex: 3, width: 22, height: 22, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.65)", color: "#fff", fontSize: 11, lineHeight: 1, padding: 0, cursor: "pointer", touchAction: "manipulation" }}
+                      >✕</button>
+                    </>
                   )}
 
                   {/* Multiple books: small thumbnails */}
                   {!single && books.length > 0 && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
                       {books.map((b) => (
-                        <img
-                          key={b.isbn || b.title}
-                          src={b.coverUrl || (b.isbn ? `https://covers.openlibrary.org/b/isbn/${b.isbn}-M.jpg` : "")}
-                          alt={b.title}
-                          title={b.title}
-                          onClick={() => setCalendarBook(b)}
-                          style={{ width: 30, height: 42, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", boxShadow: "1px 1px 4px rgba(0,0,0,0.2)", cursor: "pointer" }}
-                        />
+                        <div key={b.isbn || b.title} style={{ position: "relative" }}>
+                          <img
+                            src={b.coverUrl || (b.isbn ? `https://covers.openlibrary.org/b/isbn/${b.isbn}-M.jpg` : "")}
+                            alt={b.title}
+                            title={b.title}
+                            onClick={() => setCalendarBook(b)}
+                            style={{ width: 30, height: 42, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", boxShadow: "1px 1px 4px rgba(0,0,0,0.2)", cursor: "pointer" }}
+                          />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); clearFromCalendar(b.isbn); }}
+                            title="Remove from calendar"
+                            style={{ position: "absolute", top: -4, right: -4, zIndex: 3, width: 20, height: 20, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.65)", color: "#fff", fontSize: 10, lineHeight: 1, padding: 0, cursor: "pointer", touchAction: "manipulation" }}
+                          >✕</button>
+                        </div>
                       ))}
                     </div>
                   )}
@@ -5025,9 +5998,8 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
 
         {/* Section — Monthly & Yearly Tally */}
         {(() => {
-          const allBooks = Object.values(library).flat();
-          const datesData = JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`) || "{}");
-          const statusData = JSON.parse(localStorage.getItem(`sk_statuses_${mediaType}`) || "{}");
+          const datesData = dates;
+          const statusData = statuses;
 
           // Build monthly counts grouped by year
           const monthlyCounts = {};
@@ -5052,13 +6024,59 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
               ) : years.map((yr) => {
                 const counts = monthlyCounts[yr];
                 const yearTotal = counts.reduce((a, b) => a + b, 0);
+                const isYearSelected = selectedTallyYear === yr;
                 return (
                   <div key={yr} style={{ marginBottom: 30 }}>
                     {/* Year total box */}
-                    <div style={{ ...cardStyle, display: "inline-flex", flexDirection: "column", alignItems: "center", marginBottom: 16, minWidth: 160 }}>
+                    <div
+                      onClick={() => { setSelectedTallyYear(isYearSelected ? null : yr); setSelectedTallyMonth(null); }}
+                      style={{
+                        ...cardStyle, display: "inline-flex", flexDirection: "column", alignItems: "center", marginBottom: 16, minWidth: 160,
+                        cursor: "pointer",
+                        border: isYearSelected ? "2px solid #8B5E3C" : "1px solid #D8C3A5",
+                        background: isYearSelected ? "rgba(139,94,60,0.12)" : "rgba(255,255,255,0.7)",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
                       <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 28, fontWeight: 700, color: "#3A2A1A" }}>{yearTotal}</div>
                       <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32" }}>{mediaType === "audiobooks" ? `🎧 Books Listened To in ${yr}` : mediaType === "physical" ? `📚 Books Read in ${yr}` : `📱 Books Read in ${yr}`}</div>
                     </div>
+
+                    {/* Expanded book list for selected year (all months) */}
+                    {isYearSelected && (() => {
+                      const yearBooks = allBooks.filter((b) => {
+                        if (statusData[b.isbn] !== "finished" || !datesData[b.isbn]?.endDate) return false;
+                        const d = new Date(datesData[b.isbn].endDate);
+                        return d.getFullYear().toString() === yr;
+                      }).sort((a, b) => new Date(datesData[b.isbn].endDate) - new Date(datesData[a.isbn].endDate));
+                      return (
+                        <div style={{ marginBottom: 16, padding: "16px", background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8 }}>
+                          <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: "#3A2A1A", marginBottom: 12 }}>
+                            ✅ Finished in {yr}
+                          </div>
+                          {yearBooks.map((b) => {
+                            const d = datesData[b.isbn] || {};
+                            const took = d.startDate && d.endDate
+                              ? Math.max(0, Math.round((new Date(d.endDate) - new Date(d.startDate)) / (1000*60*60*24)))
+                              : null;
+                            return (
+                              <div key={b.isbn} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.6)", borderRadius: 6, border: "1px solid #D8C3A5" }}>
+                                <img
+                                  src={`https://covers.openlibrary.org/b/isbn/${b.isbn}-S.jpg`}
+                                  alt={b.title}
+                                  style={{ width: 36, height: 50, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", flexShrink: 0 }}
+                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, color: "#3A2A1A", fontSize: 13 }}>{b.title}</div>
+                                  <div style={{ fontFamily: "Georgia, serif", fontStyle: "italic", color: "#6B4E32", fontSize: 11 }}>{b.author}</div>
+                                  {took !== null && <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", marginTop: 2 }}>📅 {took} days to read</div>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
 
                     {/* Monthly boxes */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
@@ -5139,13 +6157,13 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           <div style={{ marginBottom: 40 }}>
             {sectionTitle(mediaType === "audiobooks" ? "🎧 Listening Sessions" : "📖 Reading Sessions")}
             <div style={{ border: "1px solid #D8C3A5", borderRadius: 10, overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px", gap: 0, background: "#3A2A1A", padding: "8px 14px" }}>
-                {["Date", "Book", "Time", mediaType === "audiobooks" ? "Chapter" : "Page"].map(h => (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px 28px", gap: 0, background: "#3A2A1A", padding: "8px 14px" }}>
+                {["Date", "Book", "Time", mediaType === "audiobooks" ? "Chapter" : "Page", ""].map(h => (
                   <div key={h} style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: "#F8F1E4" }}>{h}</div>
                 ))}
               </div>
               {sessions.slice(0, 30).map((s, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px", gap: 0, padding: "8px 14px", background: i % 2 === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.3)", borderTop: "1px solid #E8D9C5" }}>
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px 28px", gap: 0, padding: "8px 14px", background: i % 2 === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.3)", borderTop: "1px solid #E8D9C5", alignItems: "center" }}>
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32" }}>{new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#3A2A1A" }}>
@@ -5157,6 +6175,11 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
                       ? (s.chapters > 0 ? `ch. ${s.chapters}` : "—")
                       : (s.pages > 0 ? `p. ${s.pages}` : "—")}
                   </div>
+                  <button
+                    onClick={() => deleteSession(i)}
+                    title="Delete this session"
+                    style={{ width: 20, height: 20, borderRadius: "50%", border: "none", background: "rgba(139,42,42,0.15)", color: "#8B2A2A", fontSize: 11, lineHeight: 1, padding: 0, cursor: "pointer" }}
+                  >✕</button>
                 </div>
               ))}
               {sessions.length > 30 && (
@@ -5233,19 +6256,20 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           progress={calProgress} setProgress={(v) => { setCalProgress(v); localStorage.setItem(`sk_progress_${mediaType}`, JSON.stringify(v)); }}
           mediaType={mediaType}
           onBookEdited={(updated) => {
-            const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+            const userBooks = getUserBooksSync();
             const idx = userBooks.findIndex(b => (b.isbn && b.isbn === calendarBook.isbn) || b.title === calendarBook.title);
-            if (idx >= 0) { userBooks[idx] = { ...userBooks[idx], ...updated }; localStorage.setItem("sk_user_books", JSON.stringify(userBooks)); }
+            if (idx >= 0) { userBooks[idx] = { ...userBooks[idx], ...updated }; saveUserBooks(userBooks); }
             setCalendarBook(prev => ({ ...prev, ...updated }));
           }}
           onDelete={() => setCalendarBook(null)}
+          allBooks={allBooks}
         />
       )}
     </div>
   );
 }
 
-const COMING_SOON_PLATFORMS = new Set(["kobo", "nook", "googleplay", "scribd", "librofm", "hoopla", "graphicaudio"]);
+const COMING_SOON_PLATFORMS = new Set(["scribd", "librofm", "hoopla", "graphicaudio", "libby"]);
 
 const EBOOK_PLATFORMS = [
   { id: "kindle",     name: "Kindle",           emoji: "📱", desc: "Amazon's ebook library",         url: "https://read.amazon.com" },
@@ -5330,7 +6354,7 @@ function BookmarkletCopyButton({ code, label, isScript }) {
 }
 
 function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA }) {
-  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel"];
+  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel", "googleplay", "nook"];
   const showCSV = csvPlatforms.includes(platform.id);
   const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
 
@@ -5343,6 +6367,615 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
   const [csvEnrichProgress, setCsvEnrichProgress] = useState(null);
   const [csvDragOver, setCsvDragOver] = useState(false);
   const csvFileRef = useRef(null);
+
+  // Native in-app browser import state
+  const [nativeImporting, setNativeImporting] = useState(false);
+  const [nativeImportStatus, setNativeImportStatus] = useState("");
+  const nativeImportListenersRef = useRef([]);
+  const nativeImportPollRef = useRef(null);
+
+  const isNativeApp = Capacitor.isNativePlatform();
+
+  const handleNativeImport = async (plt) => {
+    setNativeImporting(true);
+    setNativeImportStatus("Opening " + plt.name + "…");
+    try {
+      const { InAppBrowser } = await import('@capgo/capacitor-inappbrowser');
+
+      // Remove any existing listeners
+      for (const l of nativeImportListenersRef.current) { try { l.remove(); } catch {} }
+      nativeImportListenersRef.current = [];
+      if (nativeImportPollRef.current) { clearInterval(nativeImportPollRef.current); nativeImportPollRef.current = null; }
+
+      // Helper: inject a visible status banner into the in-app browser page
+      const bannerScript = `
+(function() {
+  if (document.getElementById('sk-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'sk-banner';
+  b.style = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#2A6A2A;color:#fff;font-family:sans-serif;font-size:15px;font-weight:bold;padding:14px 16px 12px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
+  b.textContent = 'StoryKeeper: Starting import…';
+  document.body.appendChild(b);
+  window._skSetStatus = function(msg) { b.textContent = msg; };
+  window._skSetError = function(msg) { b.style.background='#8B2020'; b.textContent = '⚠️ ' + msg; };
+  window._skSetDone = function(n) { b.style.background='#1A4A8A'; b.textContent = '✓ ' + n + ' books found — sending to StoryKeeper…'; };
+})();`;
+
+      const nativeScripts = {
+        kindle: bannerScript + `
+(async function() {
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Fetching your Kindle library…');
+  const books = [];
+  let token = '0';
+  try {
+    while (token !== null) {
+      const url = 'https://read.amazon.com/kindle-library/search?query=&libraryType=BOOKS&sortType=recency&querySize=50&paginationToken=' + token;
+      const resp = await fetch(url, { credentials: 'include' });
+      const data = await resp.json();
+      (data.itemsList || []).forEach(b => {
+        books.push({ title: b.title || '', author: (b.authors || []).join(', '), coverUrl: b.productUrl || '', readUrl: b.webReaderUrl || '', asin: b.asin || '' });
+      });
+      window._skSetStatus && window._skSetStatus('StoryKeeper: Fetched ' + books.length + ' books…');
+      token = data.paginationToken || null;
+      await new Promise(r => setTimeout(r, 400));
+    }
+    window._skSetDone && window._skSetDone(books.length);
+    await new Promise(r => setTimeout(r, 800));
+    window.mobileApp && window.mobileApp.postMessage({ type: 'books', platform: 'kindle', data: books });
+  } catch(e) {
+    window._skRunning = false;
+    window._skSetError && window._skSetError(e.message);
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: e.message });
+  }
+})();`,
+        audible: bannerScript + `
+(async function() {
+  // Audible's library uses real page-by-page navigation (a real <a href="?page=N">,
+  // not a SPA button), so a single script execution can't click through every page —
+  // navigation destroys the running script's context. Instead this scans ONE page
+  // and reports back whether there's a next page; the outer app re-injects this
+  // same script fresh after each real page load, accumulating results itself.
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Scanning this page…');
+  try {
+    await new Promise(r => setTimeout(r, 1500));
+    const books = [];
+    document.querySelectorAll('[id^="adbl-library-content-row"]').forEach(row => {
+      const asin = row.id.replace('adbl-library-content-row-', '');
+      if (!asin) return;
+      const img = row.querySelector('img[alt]');
+      const title = img ? (img.getAttribute('alt') || '').trim() : '';
+      if (!title) return;
+      let coverUrl = img ? (img.getAttribute('src') || '') : '';
+      if (coverUrl.startsWith('//')) coverUrl = 'https:' + coverUrl;
+      let author = '';
+      const textDivs = [...row.querySelectorAll('.bc-text')];
+      const byIdx = textDivs.findIndex(el => /^by:?$/i.test((el.textContent || '').trim()));
+      if (byIdx !== -1 && textDivs[byIdx + 1]) author = textDivs[byIdx + 1].textContent.trim();
+      books.push({ title, author, coverUrl, asin });
+    });
+    const nextEl = document.querySelector('span.nextButton a.bc-button-text');
+    const nextWrapper = nextEl ? nextEl.closest('.bc-button') : null;
+    const hasNext = !!(nextEl && nextWrapper && !nextWrapper.classList.contains('bc-button-disabled'));
+    const nextHref = hasNext ? nextEl.getAttribute('href') : null;
+    window._skSetStatus && window._skSetStatus('StoryKeeper: Found ' + books.length + ' on this page…');
+    window.mobileApp && window.mobileApp.postMessage({ type: 'audiblePage', data: books, hasNext: hasNext, nextHref: nextHref });
+  } catch(e) {
+    window._skSetError && window._skSetError(e.message);
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: e.message });
+  } finally {
+    window._skRunning = false;
+  }
+})();`,
+        chirp: bannerScript + `
+(async function() {
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Loading Chirp library…');
+  const seen = new Map();
+  function getDescription(card) {
+    const selectors = [
+      '[class*="description"]', '[class*="blurb"]', '[class*="synopsis"]',
+      '[class*="summary"]', '[class*="subtitle"]', 'p'
+    ];
+    for (const s of selectors) {
+      const el = card && card.querySelector(s);
+      if (el && el.innerText && el.innerText.trim().length > 20) {
+        return el.innerText.trim().replace(/\\n/g, ' ');
+      }
+    }
+    return '';
+  }
+  async function collectPage() {
+    await new Promise(r => setTimeout(r, 2500));
+    document.querySelectorAll('img[alt^="Book cover for"]').forEach(img => {
+      const match = img.alt.match(/^Book cover for (.+?) by (.+)$/);
+      if (!match) return;
+      const [, title, author] = match;
+      if (seen.has(title)) return;
+      const card = img.closest('[class*="card"], [class*="item"], [class*="book"], li, article') || img.parentElement?.parentElement;
+      const description = getDescription(card);
+      seen.set(title, { author, coverUrl: img.src || '', description });
+    });
+    window._skSetStatus && window._skSetStatus('StoryKeeper: Found ' + seen.size + ' audiobooks…');
+  }
+  await collectPage();
+  for (let page = 2; page <= 50; page++) {
+    const nextBtn = [...document.querySelectorAll('a, button')].find(el =>
+      el.href?.includes('page=' + page) || el.innerText?.trim() === String(page));
+    if (!nextBtn) break;
+    nextBtn.click();
+    await collectPage();
+  }
+  const books = [...seen.entries()].map(([title, b]) => ({ title, author: b.author, coverUrl: b.coverUrl, description: b.description, mediaType: 'audiobook' }));
+  window._skSetDone && window._skSetDone(books.length);
+  await new Promise(r => setTimeout(r, 1200));
+  window.mobileApp && window.mobileApp.postMessage({ type: 'books', platform: 'chirp', data: books });
+})();`,
+        goodreads: bannerScript + `
+(async function() {
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Checking your Goodreads export…');
+  function findExportLink(doc) {
+    const links = [...doc.querySelectorAll('a[href*="/export/"]')];
+    return links.find(a => /\\.csv(\\?|$)/i.test(a.href)) || null;
+  }
+  function findExportButton(doc) {
+    const candidates = [...doc.querySelectorAll('input[type="submit"], button, a')];
+    return candidates.find(el => /export library/i.test((el.value || el.textContent || '').trim()));
+  }
+  try {
+    let link = findExportLink(document);
+    if (!link) {
+      const btn = findExportButton(document);
+      if (!btn) {
+        window._skRunning = false;
+        window._skSetError && window._skSetError('Could not find Export Library — make sure you are signed in.');
+        window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'Could not find Export Library button.' });
+        return;
+      }
+      window._skSetStatus && window._skSetStatus('StoryKeeper: Requesting your export…');
+      btn.click();
+    }
+    // Large libraries can take Goodreads a genuinely long time to prepare an export —
+    // poll for up to 20 minutes, not 5. Check the live DOM first (catches Goodreads
+    // updating the page in place via JS) before falling back to a fresh fetch+reparse,
+    // since relying on fetch() alone was seen to miss a link that had actually appeared.
+    for (let i = 0; i < 240 && !link; i++) {
+      const mins = Math.round((i * 5) / 60);
+      window._skSetStatus && window._skSetStatus('StoryKeeper: Waiting for Goodreads to prepare your export' + (mins > 0 ? ' (' + mins + ' min so far)…' : '…'));
+      await new Promise(r => setTimeout(r, 5000));
+      link = findExportLink(document);
+      if (!link) {
+        try {
+          const resp = await fetch(location.href, { credentials: 'include' });
+          const html = await resp.text();
+          const parsed = new DOMParser().parseFromString(html, 'text/html');
+          link = findExportLink(parsed);
+        } catch (e) {}
+      }
+    }
+    if (!link) {
+      window._skRunning = false;
+      window._skSetError && window._skSetError('Export is taking longer than usual — try again shortly.');
+      window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'Export timed out.' });
+      return;
+    }
+    window._skSetStatus && window._skSetStatus('StoryKeeper: Downloading your library…');
+    const csvResp = await fetch(link.href, { credentials: 'include' });
+    const csvText = await csvResp.text();
+    if (!csvText || csvText.length < 20) {
+      window._skRunning = false;
+      window._skSetError && window._skSetError('Downloaded file was empty.');
+      window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'Downloaded file was empty.' });
+      return;
+    }
+    window._skSetDone && window._skSetDone((csvText.match(/\\n/g) || []).length);
+    await new Promise(r => setTimeout(r, 800));
+    window.mobileApp && window.mobileApp.postMessage({ type: 'csv', platform: 'goodreads', text: csvText });
+  } catch(e) {
+    window._skRunning = false;
+    window._skSetError && window._skSetError(e.message);
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: e.message });
+  }
+})();`,
+        kobo: bannerScript + `
+(async function() {
+  // Kobo has no bulk export feature — scrape the "My Books" list directly instead.
+  // Each book is an <li class="item-wrapper book"> carrying a data-track-info JSON
+  // attribute with the title already structured, which is far more reliable than
+  // scraping visible text.
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Scanning your Kobo library…');
+  try {
+    const items = [...document.querySelectorAll('li.item-wrapper.book')];
+    const books = [];
+    items.forEach(li => {
+      let title = '';
+      try {
+        const info = JSON.parse(li.getAttribute('data-track-info') || '{}');
+        title = info.title || '';
+      } catch (e) {}
+      if (!title) {
+        const titleLink = li.querySelector('h2.title a, .title a');
+        title = titleLink ? titleLink.textContent.trim() : '';
+      }
+      if (!title) return;
+      const authorLink = li.querySelector('a[href*="/author/"], .author a, .by-author a, .item-info a[href*="/author"]');
+      const author = authorLink ? authorLink.textContent.trim() : '';
+      const img = li.querySelector('img.cover-image, img');
+      let coverUrl = img ? (img.getAttribute('src') || '') : '';
+      if (coverUrl.startsWith('//')) coverUrl = 'https:' + coverUrl;
+      books.push({ title, author, coverUrl });
+    });
+    window._skSetStatus && window._skSetStatus('StoryKeeper: Found ' + books.length + ' books…');
+    if (books.length === 0) {
+      window._skRunning = false;
+      window._skSetError && window._skSetError('No books found. Make sure you are on My Books and signed in.');
+      window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'No books found.' });
+      return;
+    }
+    window._skSetDone && window._skSetDone(books.length);
+    await new Promise(r => setTimeout(r, 800));
+    window.mobileApp && window.mobileApp.postMessage({ type: 'books', platform: 'kobo', data: books });
+  } catch(e) {
+    window._skRunning = false;
+    window._skSetError && window._skSetError(e.message);
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: e.message });
+  }
+})();`,
+        googleplaylive: bannerScript + `
+(async function() {
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Scanning your Google Play Books library…');
+  try {
+    const seen = new Set();
+    const books = [];
+    const scanOnce = () => {
+      document.querySelectorAll('gpb-library-card').forEach(card => {
+        const link = card.querySelector('a.card-link, a.cover-link');
+        if (!link) return;
+        const href = link.getAttribute('href') || '';
+        const idMatch = href.match(/id=([^&]+)/);
+        const id = idMatch ? idMatch[1] : '';
+        const title = (link.getAttribute('title') || '').trim();
+        if (!title) return;
+        const key = id || title;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const img = card.querySelector('img[class*="cover-image"]');
+        let coverUrl = img ? (img.getAttribute('src') || '') : '';
+        if (coverUrl.startsWith('//')) coverUrl = 'https:' + coverUrl;
+        books.push({ title, author: '', coverUrl });
+      });
+    };
+    scanOnce();
+    let lastHeight = 0;
+    let stableCount = 0;
+    for (let i = 0; i < 200; i++) {
+      window.scrollTo(0, document.body.scrollHeight);
+      await new Promise(r => setTimeout(r, 700));
+      scanOnce();
+      window._skSetStatus && window._skSetStatus('StoryKeeper: Found ' + books.length + ' books so far…');
+      const h = document.body.scrollHeight;
+      if (h === lastHeight) { stableCount++; if (stableCount >= 3) break; } else { stableCount = 0; }
+      lastHeight = h;
+    }
+    if (books.length === 0) {
+      window._skRunning = false;
+      window._skSetError && window._skSetError('No books found. Make sure you are signed in and on the My Books page.');
+      window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'No books found.' });
+      return;
+    }
+    window._skSetDone && window._skSetDone(books.length);
+    await new Promise(r => setTimeout(r, 800));
+    window.mobileApp && window.mobileApp.postMessage({ type: 'books', platform: 'googleplaylive', data: books });
+  } catch(e) {
+    window._skRunning = false;
+    window._skSetError && window._skSetError(e.message);
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: e.message });
+  } finally {
+    window._skRunning = false;
+  }
+})();`,
+        bookfunnel: bannerScript + `
+(async function() {
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Scrolling to load all books…');
+  let lastHeight = 0;
+  while (true) {
+    window.scrollTo(0, document.body.scrollHeight);
+    await new Promise(r => setTimeout(r, 1200));
+    if (document.body.scrollHeight === lastHeight) break;
+    lastHeight = document.body.scrollHeight;
+  }
+  window.scrollTo(0, 0);
+  await new Promise(r => setTimeout(r, 800));
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Scanning books…');
+  const books = [];
+  const seen = new Set();
+  const cardSet = new Set();
+  document.querySelectorAll('[class*="book"]').forEach(el => { if ((el.innerText || '').trim().length > 2) cardSet.add(el); });
+  document.querySelectorAll('[class*="book"] img').forEach(img => { const c = img.closest('[class*="book"]'); if (c) cardSet.add(c); });
+  cardSet.forEach(card => {
+    const img = card.querySelector('img');
+    const titleEl = card.querySelector('[class*="title"], [class*="name"], h2, h3, h4, strong');
+    const authorEl = card.querySelector('[class*="author"], [class*="by"]');
+    const lines = (card.innerText || '').trim().split('\\n').map(s => s.trim()).filter(Boolean);
+    const rawTitle = (titleEl?.innerText || lines[0] || '').trim();
+    const title = rawTitle.replace(/^by\\s+/i, '').replace(/^DIRECT\\s*-\\s*/i, '').trim();
+    if (!title || title.length < 2 || seen.has(title)) return;
+    const author = (authorEl?.innerText || lines[1] || '').replace(/^by\\s+/i, '').trim();
+    seen.add(title);
+    books.push({ title, author, coverUrl: img?.src || '' });
+  });
+  if (books.length === 0) {
+    window._skRunning = false;
+    window._skSetError && window._skSetError('No books found on this page.');
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'No books found.' });
+    return;
+  }
+  window._skSetDone && window._skSetDone(books.length);
+  await new Promise(r => setTimeout(r, 1200));
+  window.mobileApp && window.mobileApp.postMessage({ type: 'books', platform: 'bookfunnel', data: books });
+})();`,
+        nook: bannerScript + `
+(async function() {
+  // The landing page (/my_library) only previews 4 books. The full ebook list lives
+  // at /my_library/ebook. Same two-step pattern as Audible: report back and let the
+  // outer app navigate + re-inject, since real navigation kills this script's context.
+  if (window._skRunning) return; window._skRunning = true;
+  window._skSetStatus && window._skSetStatus('StoryKeeper: Scanning your Nook library…');
+  try {
+    await new Promise(r => setTimeout(r, 1500));
+    const scanTiles = () => {
+      const seen = new Set();
+      const books = [];
+      document.querySelectorAll('a.image-link-wrapper[data-product-title]').forEach(a => {
+        const title = (a.getAttribute('data-product-title') || '').trim();
+        if (!title) return;
+        const wrapper = a.closest('span.image, .wrapper') || a.parentElement;
+        const idLink = wrapper ? wrapper.querySelector('a[href*="ean="]') : null;
+        let ean = '';
+        if (idLink) {
+          const m = (idLink.getAttribute('href') || '').match(/ean=(\\d+)/);
+          if (m) ean = m[1];
+        }
+        const key = ean || title;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const img = a.querySelector('img');
+        let coverUrl = img ? (img.getAttribute('src') || '') : '';
+        if (coverUrl.startsWith('//')) coverUrl = 'https:' + coverUrl;
+        // The tile's own href points at a "/sample" preview action, not the real
+        // product page, and B&N's real product URLs need a title-slug prefix we
+        // don't have — a bare EAN-based URL 404s. Leave readUrl blank so the app's
+        // PLATFORM_URLS fallback (the general library URL) is used instead, which
+        // reliably works, rather than linking to a guaranteed-broken per-book page.
+        books.push({ title, author: '', coverUrl, readUrl: '' });
+      });
+      return books;
+    };
+    if (!location.pathname.includes('/ebook')) {
+      const seeAll = [...document.querySelectorAll('a')].find(a =>
+        (a.textContent || '').trim().toLowerCase().includes('see all') &&
+        (a.getAttribute('href') || '').includes('/ebook')
+      );
+      if (!seeAll) {
+        window._skRunning = false;
+        window._skSetError && window._skSetError('Could not find the full ebook library link.');
+        window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: 'Could not find the full ebook library link.' });
+        return;
+      }
+      window.mobileApp && window.mobileApp.postMessage({ type: 'nookPage', data: [], hasNext: true, nextHref: seeAll.getAttribute('href') });
+      return;
+    }
+    // On the full ebook list page — scroll to load everything (in case it's lazy),
+    // accumulating by dedup key so repeated scans don't create duplicates.
+    let lastCount = 0;
+    let stableCount = 0;
+    for (let i = 0; i < 60; i++) {
+      const count = scanTiles().length;
+      window._skSetStatus && window._skSetStatus('StoryKeeper: Found ' + count + ' books so far…');
+      if (count === lastCount) { stableCount++; if (stableCount >= 4) break; } else { stableCount = 0; }
+      lastCount = count;
+      window.scrollTo(0, document.body.scrollHeight);
+      const rows = document.querySelectorAll('a.image-link-wrapper[data-product-title]');
+      const lastRow = rows[rows.length - 1];
+      if (lastRow && lastRow.scrollIntoView) lastRow.scrollIntoView({ block: 'end' });
+      await new Promise(r => setTimeout(r, 1200));
+    }
+    const books = scanTiles();
+    window.mobileApp && window.mobileApp.postMessage({ type: 'nookPage', data: books, hasNext: false });
+  } catch(e) {
+    window._skRunning = false;
+    window._skSetError && window._skSetError(e.message);
+    window.mobileApp && window.mobileApp.postMessage({ type: 'error', msg: e.message });
+  } finally {
+    window._skRunning = false;
+  }
+})();`,
+      };
+
+      const platformUrls = {
+        kindle: 'https://read.amazon.com',
+        audible: 'https://www.audible.com/library/titles',
+        chirp: 'https://www.chirpbooks.com/library',
+        bookfunnel: 'https://my.bookfunnel.com',
+        goodreads: 'https://www.goodreads.com/review/import',
+        kobo: 'https://www.kobo.com/us/en/library/books',
+        googleplaylive: 'https://play.google.com/books',
+        nook: 'https://nook.barnesandnoble.com/my_library',
+      };
+
+      const script = nativeScripts[plt.id];
+      const url = platformUrls[plt.id];
+      if (!script || !url) { setNativeImporting(false); return; }
+
+      // Track current URL via urlChangeEvent (browserPageLoaded has no url property).
+      // Starts as null (not the requested URL) — if the site immediately redirects to
+      // a sign-in page before urlChangeEvent fires, seeding this with the pre-redirect
+      // URL would let tryInject's domain check pass on stale data and inject the
+      // scraper on the sign-in page itself. Treating "no real URL yet" as "not ready"
+      // makes tryInject wait for confirmed navigation info instead.
+      let trackedUrl = null;
+      const urlListener = await InAppBrowser.addListener('urlChangeEvent', (event) => {
+        trackedUrl = event.url || trackedUrl;
+      });
+      nativeImportListenersRef.current.push(urlListener);
+
+      // Audible paginates via real page navigation — books accumulate here across
+      // multiple script injections (one per page load) rather than in-page JS state.
+      let audiblePagesAccum = [];
+
+      const stopPolling = () => {
+        if (nativeImportPollRef.current) { clearInterval(nativeImportPollRef.current); nativeImportPollRef.current = null; }
+      };
+
+      const processBooks = (rawBooks) => {
+        stopPolling();
+        InAppBrowser.closeWebView().catch(() => {});
+        setNativeImporting(false);
+        setNativeImportStatus("");
+        if (rawBooks.length === 0) { alert("No books found. Make sure you're signed in, then try again."); return; }
+        const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
+        let header, rows;
+        if (plt.id === 'kindle') {
+          header = 'title,author,coverUrl,readUrl,asin';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl), esc(b.asin)].join(','));
+        } else if (plt.id === 'audible') {
+          header = 'title,author,coverUrl,asin';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.asin)].join(','));
+        } else if (plt.id === 'chirp') {
+          header = 'title,author,coverUrl,description,mediaType';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.description), esc('audiobook')].join(','));
+        } else {
+          header = 'title,author,coverUrl,readUrl';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl || '')].join(','));
+        }
+        const csvText = [header, ...rows].join('\n');
+        handleCSVFile(new File([csvText], plt.id + '_library.csv', { type: 'text/csv' }));
+      };
+
+      const msgListener = await InAppBrowser.addListener('messageFromWebview', (event) => {
+        // Native bridge sends message body directly as event (not nested under event.detail)
+        const msg = event.type ? event : (event.detail || {});
+        if (!msg.type) return;
+        if (msg.type === 'status') {
+          setNativeImportStatus(msg.msg);
+        } else if (msg.type === 'error') {
+          stopPolling();
+          setNativeImportStatus("⚠️ " + msg.msg);
+          setNativeImporting(false);
+        } else if (msg.type === 'books') {
+          InAppBrowser.close().catch(() => {});
+          processBooks(msg.data || []);
+        } else if (msg.type === 'csv') {
+          // Goodreads' native export is already a real CSV in the app's expected
+          // format — pass it straight to the existing Goodreads CSV parser instead
+          // of round-tripping through the books-array shape the other platforms use.
+          stopPolling();
+          InAppBrowser.close().catch(() => {});
+          InAppBrowser.closeWebView().catch(() => {});
+          setNativeImporting(false);
+          setNativeImportStatus("");
+          if (!msg.text) { alert("No data received. Please try again."); return; }
+          handleCSVFile(new File([msg.text], (msg.platform || plt.id) + '_library.csv', { type: 'text/csv' }));
+        } else if (msg.type === 'audiblePage') {
+          audiblePagesAccum.push(...(msg.data || []));
+          setNativeImportStatus("Found " + audiblePagesAccum.length + " audiobooks so far…");
+          if (msg.hasNext && msg.nextHref) {
+            // Allow tryInject to fire again on the next real page load.
+            injected = false;
+            const nextUrl = new URL(msg.nextHref, 'https://www.audible.com/library/titles').href;
+            InAppBrowser.executeScript({ code: 'window.location.href = ' + JSON.stringify(nextUrl) + ';' }).catch(() => {});
+          } else {
+            const seen = new Set();
+            const deduped = audiblePagesAccum.filter(b => {
+              if (!b.asin || seen.has(b.asin)) return false;
+              seen.add(b.asin);
+              return true;
+            });
+            InAppBrowser.close().catch(() => {});
+            processBooks(deduped);
+          }
+        } else if (msg.type === 'nookPage') {
+          // Nook's landing page has no book data itself — it just points to the real
+          // ebook list. Only that second page's message carries the full deduped list.
+          if (msg.hasNext && msg.nextHref) {
+            injected = false;
+            const nextUrl = new URL(msg.nextHref, 'https://nook.barnesandnoble.com/my_library').href;
+            setNativeImportStatus("Opening your full ebook library…");
+            InAppBrowser.executeScript({ code: 'window.location.href = ' + JSON.stringify(nextUrl) + ';' }).catch(() => {});
+          } else {
+            InAppBrowser.close().catch(() => {});
+            processBooks(msg.data || []);
+          }
+        }
+      });
+      nativeImportListenersRef.current.push(msgListener);
+
+      const targetDomains = { kindle: 'read.amazon.com', audible: 'audible.com', chirp: 'chirpbooks.com', bookfunnel: 'bookfunnel.com', goodreads: 'goodreads.com', kobo: 'kobo.com', googleplaylive: 'play.google.com', nook: 'barnesandnoble.com' };
+      const domain = targetDomains[plt.id];
+      const skipUrls = ['signin', 'login', 'auth', 'ap/signin', 'ap/cvf'];
+      let injecting = false;
+      let injected = false;
+
+      const tryInject = async () => {
+        if (injecting || injected) return;
+        const onLibraryPage = trackedUrl && domain && trackedUrl.includes(domain) && !skipUrls.some(s => trackedUrl.includes(s));
+        if (!onLibraryPage) {
+          setNativeImportStatus("Sign in to " + plt.name + ", then your library will import automatically.");
+          return;
+        }
+        injecting = true;
+        setNativeImportStatus("Library found — scanning…");
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          await InAppBrowser.executeScript({ code: script });
+          injected = true;
+        } catch (err) {
+          setNativeImportStatus("Injection error: " + err.message);
+        } finally {
+          injecting = false;
+        }
+      };
+
+      // browserPageLoaded fires on each page load — use tracked URL for the check
+      const loadedListener = await InAppBrowser.addListener('browserPageLoaded', async () => {
+        await tryInject();
+      });
+      nativeImportListenersRef.current.push(loadedListener);
+
+      const closeListener = await InAppBrowser.addListener('closeEvent', () => {
+        stopPolling();
+        setNativeImporting(false);
+        setNativeImportStatus("");
+      });
+      nativeImportListenersRef.current.push(closeListener);
+
+      // Sign-in flows (e.g. Amazon's Audible sign-in) sometimes complete via a
+      // client-side redirect that doesn't fire a fresh browserPageLoaded event,
+      // leaving the user stuck on "Sign in..." after they've actually signed in.
+      // Poll as a safety net so the script still fires once the tracked URL lands
+      // on the library page, even if no page-load event announced it.
+      nativeImportPollRef.current = setInterval(() => { tryInject(); }, 2000);
+
+      await InAppBrowser.openWebView({
+        url,
+        toolbarType: 'navigation',
+        title: plt.name + ' Library',
+        closeButtonText: 'Done',
+        isPresentAfterPageLoad: true,
+      });
+
+    } catch (err) {
+      console.error('Native import error:', err);
+      setNativeImporting(false);
+      setNativeImportStatus("");
+      alert("Could not open in-app browser: " + err.message);
+    }
+  };
 
   // Bulk paste state
   const [bulkText, setBulkText] = useState("");
@@ -5367,7 +7000,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
     setBulkPending([]);
     setBulkGenres({});
 
-    const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const existingUserBooks = getUserBooksSync();
     const allLibraryBooks = Object.values(library).flat();
     const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.title.toLowerCase().trim()));
 
@@ -5430,11 +7063,20 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
       if (rows.length === 0) { alert("⚠️ No data found in this file. Make sure you're uploading the correct CSV export."); return; }
       const isGoodreads = platform.id === "goodreads";
       const isApple = platform.id === "apple";
+      const importMediaType = mediaType; // capture the prop before the per-row "mediaType" const below shadows it
 
-      // Build duplicate lookup from the user's own books only (not the community catalog)
-      const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-      const existingIsbns = new Set(existingUserBooks.map(b => b.isbn).filter(Boolean));
-      const existingTitles = new Set(existingUserBooks.map(b => b.title.toLowerCase().trim()));
+      // Build duplicate lookup from the user's own books, scoped per media type so an ebook
+      // and audiobook of the same title are never treated as duplicates of each other —
+      // only same-format copies (ebook+ebook or audiobook+audiobook) count as duplicates.
+      const existingUserBooks = getUserBooksSync();
+      const effectiveExistingType = (b) => b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
+      const existingByType = {};
+      existingUserBooks.forEach(b => {
+        const t = effectiveExistingType(b);
+        if (!existingByType[t]) existingByType[t] = { isbns: new Set(), titles: new Set() };
+        if (b.isbn) existingByType[t].isbns.add(b.isbn);
+        existingByType[t].titles.add(cleanTitle(b.title || "").toLowerCase().trim());
+      });
 
       const isAudible = platform.id === "audible";
       const isChirp = platform.id === "chirp";
@@ -5466,6 +7108,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         const chirpIsbnMatch = isChirp ? rawCoverForIsbn.match(/\/(\d{13})(?:\.jpg|$)/) : null;
         const chirpIsbn = chirpIsbnMatch ? chirpIsbnMatch[1] : "";
         const isbn = (row["isbn13"] || row["isbn"] || chirpIsbn || rawAsin || "").replace(/[="]/g, "").replace(/\s/g, "");
+        const asin = rawAsin;
         const storeId = row["storeid"] || "";
         // ALE wraps cover in =HYPERLINK(...; IMAGE("url")) — extract the image URL
         const rawCover = row["cover"] || "";
@@ -5476,12 +7119,38 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         const readUrl = row["readurl"] || row["read_url"] || row["webReaderUrl"] || row["readerurl"] || "";
         if (!title) return null;
 
-        // Duplicate check (against existing library AND within this CSV)
-        const titleKey = title.toLowerCase().trim();
-        const isDuplicate = (isbn && existingIsbns.has(isbn)) ||
-          existingTitles.has(titleKey) || seenInCsv.has(titleKey);
-        if (isDuplicate) return null;
-        seenInCsv.add(titleKey);
+        // Determine this row's effective media type the same way handleConfirmCSV will save it
+        const rawRowMediaType = (isApple || isBookFunnel) ? (row["mediatype"] || "ebook") : null;
+        const rowEffType = rawRowMediaType
+          ? (rawRowMediaType === "audiobook" ? "audiobooks" : "ebooks")
+          : (isAudible || isChirp ? "audiobooks" : importMediaType);
+
+        // Duplicate check — fuzzy title match (strips subtitles/series numbering so formatting
+        // differences between platforms don't slip duplicates through), scoped to this media type
+        const titleKey = cleanTitle(title).toLowerCase().trim();
+        const typeBucket = existingByType[rowEffType] || { isbns: new Set(), titles: new Set() };
+        const csvSeenKey = `${rowEffType}::${titleKey}`;
+        const isDuplicate = (isbn && typeBucket.isbns.has(isbn)) ||
+          typeBucket.titles.has(titleKey) || seenInCsv.has(csvSeenKey);
+        if (isDuplicate) {
+          // Re-importing a Kindle CSV that now carries ASINs — backfill the asin onto the
+          // matching existing book so "Read on Kindle" can deep-link instead of skipping it.
+          if (platform.id === "kindle" && rawAsin) {
+            const current = getUserBooksSync();
+            const idx = current.findIndex(b =>
+              effectiveExistingType(b) === rowEffType &&
+              !b.asin &&
+              ((b.isbn && b.isbn === isbn) || cleanTitle(b.title || "").toLowerCase().trim() === titleKey)
+            );
+            if (idx !== -1) {
+              const patched = [...current];
+              patched[idx] = { ...patched[idx], asin: rawAsin };
+              saveUserBooks(patched);
+            }
+          }
+          return null;
+        }
+        seenInCsv.add(csvSeenKey);
 
         const shelves = isGoodreads ? (row["bookshelves"] || "") : "";
         const exclusiveShelf = isGoodreads ? (row["exclusive shelf"] || "") : "";
@@ -5546,7 +7215,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         }
 
         const mediaType = isAudible ? "audiobook" : isChirp ? "audiobook" : isBookFunnel ? (row["mediatype"] || "ebook") : appleMediaType;
-        return { _csvIdx: idx, title, author, isbn, coverUrl, readUrl, shelfGenre, status, dateRead, dateAdded, description, mediaType, storeId, narrator, series };
+        return { _csvIdx: idx, title, author, isbn, asin, coverUrl, readUrl, shelfGenre, status, dateRead, dateAdded, description, mediaType, storeId, narrator, series };
       }).filter(Boolean);
 
       csvUserEditedRef.current = new Set();
@@ -5562,141 +7231,206 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
       setCsvGenres(genreMap);
 
       if (books.length > 0) {
-        setCsvEnriching(true);
-        setCsvEnrichProgress({ done: 0, total: books.length });
+        const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+        const gKey = localStorage.getItem("sk_google_api_key") || "";
+        const gKeySuffix = gKey ? `&key=${gKey}` : "";
+
+        // Apply author genre map + title keyword detection instantly before any API calls
         const updatedGenres = { ...genreMap };
+        books.forEach(b => {
+          const authorGenre = getAuthorGenre(b.author, authorRules, {});
+          if (authorGenre) updatedGenres[b._csvIdx] = authorGenre;
+          else {
+            const titleGenre = detectGenreFromTitle(b.title);
+            if (titleGenre && titleGenre !== "Fiction & Drama") updatedGenres[b._csvIdx] = titleGenre;
+          }
+        });
+        setCsvGenres({ ...updatedGenres });
+
+        // Books that still need API lookup (no cover, no description, or still default genre)
+        const needsEnrich = books.filter(b =>
+          !b.coverUrl || !b.description || updatedGenres[b._csvIdx] === "Fiction & Drama"
+        );
+
+        if (needsEnrich.length === 0) return; // all resolved locally
+
+        setCsvEnriching(true);
+        setCsvEnrichProgress({ done: 0, total: needsEnrich.length });
         const enrichedBooks = books.map(b => ({ ...b }));
-        for (let i = 0; i < books.length; i++) {
-          const b = books[i];
+        let done = 0;
+
+        const enrichOne = async (b) => {
+          const i = books.indexOf(b);
+          const cleaned = cleanTitle(b.title);
+          const normAuthor = normalizeAuthor(b.author);
+          const needsCover = !enrichedBooks[i].coverUrl;
+          const needsDesc = !enrichedBooks[i].description;
+          const needsGenre = updatedGenres[b._csvIdx] === "Fiction & Drama";
+
+          const applySubjects = (subjects) => {
+            if (!needsGenre || csvUserEditedRef.current.has(b._csvIdx)) return;
+            const genre = detectGenre(subjects, b.title);
+            if (genre && genre !== "Fiction & Drama") updatedGenres[b._csvIdx] = genre;
+          };
+
           try {
-            const cleaned = cleanTitle(b.title);
-            const normAuthor = normalizeAuthor(b.author);
-
-            const applySubjects = (subjects) => {
-              const genre = detectGenre(subjects, b.title);
-              if (genre && !csvUserEditedRef.current.has(b._csvIdx)) {
-                if (updatedGenres[b._csvIdx] === "Fiction & Drama" || !updatedGenres[b._csvIdx] || genre !== "Fiction & Drama")
-                  updatedGenres[b._csvIdx] = genre;
-              }
-            };
-
-            const applyOLWork = async (workKey) => {
-              if (!workKey) return;
-              try {
-                const res = await fetch(`https://openlibrary.org${workKey}.json`);
-                const work = await res.json();
-                if (!enrichedBooks[i].description) {
-                  const d = work.description?.value || work.description || work.first_sentence?.value || "";
-                  if (d && typeof d === "string" && d.length > 20) enrichedBooks[i].description = d;
-                }
-                if (!enrichedBooks[i].coverUrl && work.covers?.length) {
-                  const coverId = work.covers.find(c => c > 0);
-                  if (coverId) enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`;
-                }
-                if (work.subjects?.length) applySubjects(work.subjects);
-                if (!enrichedBooks[i].coverUrl) {
-                  try {
-                    const edRes = await fetch(`https://openlibrary.org${workKey}/editions.json?limit=10`);
-                    const edData = await edRes.json();
-                    for (const ed of (edData.entries || [])) {
-                      if (ed.covers?.length && ed.covers[0] > 0) {
-                        enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${ed.covers[0]}-M.jpg`;
-                        break;
-                      }
-                    }
-                  } catch { /* ignore */ }
-                }
-              } catch { /* ignore */ }
-            };
-
-            const applyOLSearchDoc = async (doc) => {
-              if (!enrichedBooks[i].coverUrl && doc.cover_i)
-                enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`;
-              if (doc.subject?.length) applySubjects(doc.subject);
-              if (doc.key && (!enrichedBooks[i].description || !enrichedBooks[i].coverUrl))
-                await applyOLWork(doc.key);
-            };
-
-            // Step 1: OL edition by ISBN (direct — richest data)
-            if (b.isbn && (!enrichedBooks[i].description || !enrichedBooks[i].coverUrl)) {
-              try {
-                const res = await fetch(`https://openlibrary.org/isbn/${b.isbn}.json`);
-                if (res.ok) {
-                  const ed = await res.json();
-                  if (!enrichedBooks[i].coverUrl && ed.covers?.length && ed.covers[0] > 0)
-                    enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${ed.covers[0]}-M.jpg`;
-                  if (!enrichedBooks[i].description) {
-                    const d = ed.description?.value || ed.description || "";
-                    if (d && typeof d === "string" && d.length > 20) enrichedBooks[i].description = d;
-                  }
-                  const workKey = ed.works?.[0]?.key;
-                  if (workKey) await applyOLWork(workKey);
-                }
-              } catch { /* ignore */ }
-            }
-
-            // Step 2: OL search by ISBN
-            if (b.isbn && (!enrichedBooks[i].description || !enrichedBooks[i].coverUrl)) {
-              try {
-                const res = await fetch(`https://openlibrary.org/search.json?isbn=${encodeURIComponent(b.isbn)}&limit=1&fields=key,title,author_name,isbn,subject,cover_i`);
-                const doc = (await res.json()).docs?.[0];
-                if (doc) await applyOLSearchDoc(doc);
-              } catch { /* ignore */ }
-            }
-
-            // Step 3: OL by title + author if still missing cover or description
-            if (!enrichedBooks[i].coverUrl || !enrichedBooks[i].description) {
-              try {
-                const q = normAuthor
+            // Single OL search — title+author (or ISBN) → subjects + cover_i in one request
+            if (needsCover || needsDesc || needsGenre) {
+              const q = b.isbn
+                ? `isbn=${encodeURIComponent(b.isbn)}`
+                : normAuthor
                   ? `title=${encodeURIComponent(cleaned)}&author=${encodeURIComponent(normAuthor)}`
                   : `q=${encodeURIComponent(cleaned)}`;
-                const res = await fetch(`https://openlibrary.org/search.json?${q}&limit=1&fields=key,title,author_name,isbn,subject,cover_i`);
+              try {
+                const res = await fetchWithTimeout(`https://openlibrary.org/search.json?${q}&limit=1&fields=key,subject,cover_i,first_sentence`);
                 const doc = (await res.json()).docs?.[0];
-                if (doc) await applyOLSearchDoc(doc);
+                if (doc) {
+                  if (needsCover && doc.cover_i) enrichedBooks[i].coverUrl = `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`;
+                  if (doc.subject?.length) applySubjects(doc.subject);
+                  if (needsDesc && doc.first_sentence) {
+                    const s = doc.first_sentence?.value || doc.first_sentence;
+                    if (typeof s === "string" && s.length > 20) enrichedBooks[i].description = s;
+                  }
+                }
               } catch { /* ignore */ }
             }
 
-            // Step 3: Google Books fallback if still no description or genre
+            // Google Books — only if still missing genre or description
             if (!enrichedBooks[i].description || updatedGenres[b._csvIdx] === "Fiction & Drama") {
               try {
-                const gKey = localStorage.getItem("sk_google_api_key") || "";
-                const gKeySuffix = gKey ? `&key=${gKey}` : "";
                 const gq = normAuthor
                   ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(normAuthor)}`
                   : `intitle:${encodeURIComponent(cleaned)}`;
-                const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKeySuffix}`);
+                const res = await fetchWithTimeout(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKeySuffix}`);
                 const json = await res.json();
                 if (!json.error) {
                   const vol = json.items?.[0]?.volumeInfo;
-                  if (vol?.description) enrichedBooks[i].description = vol.description;
-                  if (!enrichedBooks[i].coverUrl && vol?.imageLinks?.thumbnail)
+                  if (vol?.description && !enrichedBooks[i].description) enrichedBooks[i].description = vol.description;
+                  if (needsCover && !enrichedBooks[i].coverUrl && vol?.imageLinks?.thumbnail)
                     enrichedBooks[i].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://");
-                  if (vol?.categories?.length) {
-                    const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
-                    const cachedGenre = getAuthorGenre(b.author, authorRules, {});
-                    const genre = cachedGenre || detectGenre(vol.categories, b.title);
-                    if (genre && genre !== "Fiction & Drama") updatedGenres[b._csvIdx] = genre;
-                  }
+                  if (vol?.categories?.length) applySubjects(vol.categories);
                 }
-              } catch { /* Google unavailable */ }
+              } catch { /* ignore */ }
             }
           } catch { /* leave defaults */ }
-          setCsvEnrichProgress({ done: i + 1, total: books.length });
-          // Merge enrichment updates but preserve any genres the user manually changed
+
+          done++;
+          setCsvEnrichProgress({ done, total: needsEnrich.length });
           setCsvGenres(prev => {
-            const merged = { ...updatedGenres };
-            csvUserEditedRef.current.forEach(idx => {
-              if (prev[idx] !== undefined) merged[idx] = prev[idx];
-            });
+            const merged = { ...prev, ...updatedGenres };
+            csvUserEditedRef.current.forEach(idx => { if (prev[idx] !== undefined) merged[idx] = prev[idx]; });
             return merged;
           });
           setCsvBooks([...enrichedBooks]);
+        };
+
+        // Process in parallel batches of 8
+        const BATCH = 8;
+        for (let i = 0; i < needsEnrich.length; i += BATCH) {
+          await Promise.all(needsEnrich.slice(i, i + BATCH).map(enrichOne));
         }
+
         setCsvEnriching(false);
         setCsvEnrichProgress(null);
       }
     };
     reader.readAsText(file);
+  };
+
+  // Google Takeout exports Play Books as one subfolder per book, each containing an HTML
+  // file with the title/author and a "Volume ID" that matches the Google Books API's volume
+  // ID format — so instead of a fuzzy title search we can fetch each book's cover/description/
+  // genre with a single precise lookup by ID.
+  const handleGooglePlayFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.name.toLowerCase().endsWith(".html"));
+    if (files.length === 0) {
+      alert('⚠️ No book files found. Make sure you selected the "Google Play Books" folder from your Takeout export.');
+      return;
+    }
+
+    const existingUserBooks = getUserBooksSync();
+    const existingTitles = new Set(
+      existingUserBooks
+        .filter(b => !b.type || b.type === "ebooks")
+        .map(b => cleanTitle(b.title || "").toLowerCase().trim())
+    );
+
+    const parsed = [];
+    const seenTitles = new Set();
+    for (const file of files) {
+      const text = await file.text();
+      const doc = new DOMParser().parseFromString(text, "text/html");
+      const title = (doc.querySelector(".header h1")?.textContent || "").trim();
+      if (!title) continue;
+      const authorRaw = (doc.querySelector(".header .author")?.textContent || "").trim();
+      const author = authorRaw.replace(/^by\s*/i, "").replace(/\s+/g, " ").trim();
+      const volumeEntry = Array.from(doc.querySelectorAll(".meta-entry")).find(el => el.textContent.includes("Volume ID"));
+      const volumeId = volumeEntry ? volumeEntry.textContent.replace(/Volume ID/i, "").trim() : "";
+
+      const titleKey = cleanTitle(title).toLowerCase().trim();
+      if (existingTitles.has(titleKey) || seenTitles.has(titleKey)) continue;
+      seenTitles.add(titleKey);
+      parsed.push({ title, author, volumeId });
+    }
+
+    if (parsed.length === 0) {
+      alert(`⚠️ All ${files.length} book${files.length !== 1 ? "s" : ""} from this folder ${files.length !== 1 ? "are" : "is"} already in your library.`);
+      return;
+    }
+
+    const authorRules = (() => { try { return JSON.parse(localStorage.getItem("sk_author_genres") || "{}"); } catch { return {}; } })();
+    const books = parsed.map((b, idx) => {
+      const authorGenre = getAuthorGenre(b.author, authorRules, {});
+      const shelfGenre = authorGenre || detectGenreFromTitle(b.title) || "Fiction & Drama";
+      return { _csvIdx: idx, title: b.title, author: b.author, isbn: "", coverUrl: "", description: "", shelfGenre, status: null, storeId: b.volumeId, mediaType: null };
+    });
+
+    csvUserEditedRef.current = new Set();
+    setCsvBooks(books);
+    setCsvSkipped(files.length - books.length);
+    const genreMap = {};
+    books.forEach(b => { genreMap[b._csvIdx] = b.shelfGenre; });
+    setCsvGenres(genreMap);
+
+    setCsvEnriching(true);
+    setCsvEnrichProgress({ done: 0, total: books.length });
+    const enrichedBooks = books.map(b => ({ ...b }));
+    const updatedGenres = { ...genreMap };
+    const gKey = localStorage.getItem("sk_google_api_key") || "";
+    const gKeySuffix = gKey ? `?key=${gKey}` : "";
+    let done = 0;
+    const enrichOne = async (b) => {
+      const i = books.indexOf(b);
+      if (b.storeId) {
+        try {
+          const res = await fetchWithTimeout(`https://www.googleapis.com/books/v1/volumes/${encodeURIComponent(b.storeId)}${gKeySuffix}`);
+          const json = await res.json();
+          const vol = !json.error ? json.volumeInfo : null;
+          if (vol) {
+            if (vol.imageLinks?.thumbnail) enrichedBooks[i].coverUrl = vol.imageLinks.thumbnail.replace("http://", "https://");
+            if (vol.description) enrichedBooks[i].description = vol.description;
+            if (vol.categories?.length && !csvUserEditedRef.current.has(b._csvIdx)) {
+              const genre = detectGenre(vol.categories, b.title);
+              if (genre && genre !== "Fiction & Drama") updatedGenres[b._csvIdx] = genre;
+            }
+          }
+        } catch { /* keep what we have */ }
+      }
+      done++;
+      setCsvEnrichProgress({ done, total: books.length });
+      setCsvGenres(prev => {
+        const merged = { ...prev, ...updatedGenres };
+        csvUserEditedRef.current.forEach(idx => { if (prev[idx] !== undefined) merged[idx] = prev[idx]; });
+        return merged;
+      });
+      setCsvBooks([...enrichedBooks]);
+    };
+    const BATCH = 8;
+    for (let i = 0; i < books.length; i += BATCH) {
+      await Promise.all(books.slice(i, i + BATCH).map(enrichOne));
+    }
+    setCsvEnriching(false);
+    setCsvEnrichProgress(null);
   };
 
   const handleSearch = async () => {
@@ -5705,11 +7439,30 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
     setSearchError(null);
     setResults([]);
     try {
-      const res = await fetch(
-        `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8&fields=title,author_name,isbn,subject,cover_i,description`
-      );
+      // Goes through our /api/books-search proxy instead of calling
+      // openlibrary.org directly — that proxy already falls back to Google
+      // Books when Open Library's results are empty, which this direct call
+      // didn't have, and was the real cause of "a few books aren't found"
+      // reports (compound title+author queries sometimes get poor/no Open
+      // Library matches). Maps the proxy's {items:[{volumeInfo}]} shape back
+      // into the doc-like shape (title/author_name/isbn/subject) the rest of
+      // this component's rendering and addToPending already expect, adding a
+      // normalized coverUrl since Google-Books-sourced covers are already
+      // full URLs rather than an Open Library numeric cover_i.
+      const res = await fetch(`/api/books-search?q=${encodeURIComponent(query)}`);
       const data = await res.json();
-      setResults(data.docs || []);
+      const docs = (data.items || []).map(item => {
+        const vi = item.volumeInfo || {};
+        return {
+          title: vi.title || "Unknown",
+          author_name: vi.authors || [],
+          isbn: (vi.industryIdentifiers || []).map(id => id.identifier),
+          subject: vi.categories || [],
+          description: vi.description || "",
+          coverUrl: vi.imageLinks?.thumbnail || null,
+        };
+      });
+      setResults(docs);
     } catch {
       setSearchError("Search failed. Please check your connection and try again.");
     } finally {
@@ -5721,10 +7474,10 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
     const title = result.title || "";
     const genre = detectGenre(result.subject || [], title);
     const isbn = result.isbn ? result.isbn[0] : null;
-    const coverUrl = result.cover_i ? `https://covers.openlibrary.org/b/id/${result.cover_i}-S.jpg` : "";
+    const coverUrl = result.coverUrl || (result.cover_i ? `https://covers.openlibrary.org/b/id/${result.cover_i}-S.jpg` : "");
 
     // Duplicate check
-    const existingUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const existingUserBooks = getUserBooksSync();
     const allLibraryBooks = Object.values(library).flat();
     const existingIsbns = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.isbn).filter(Boolean));
     const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.title.toLowerCase().trim()));
@@ -5771,17 +7524,19 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
   const handleConfirmCSV = () => {
     const isGoodreads = platform.id === "goodreads";
     const isApple = platform.id === "apple";
+    const isGooglePlay = platform.id === "googleplay";
     const books = csvBooks.map(b => ({
       title: b.title,
       author: b.author,
       isbn: b.isbn || "",
+      asin: b.asin || "",
       coverUrl: b.coverUrl || "",
       readUrl: b.readUrl || "",
       type: isApple && b.mediaType ? (b.mediaType === "audiobook" ? "audiobooks" : "ebooks") : mediaType,
       genre: csvGenres[b._csvIdx] || "Fiction & Drama",
       platform: platform.id,
       description: b.description || "",
-      storeId: isApple ? (b.storeId || "") : undefined,
+      storeId: (isApple || isGooglePlay) ? (b.storeId || "") : undefined,
       _status: b.status || null,
       _dateRead: isGoodreads ? b.dateRead : null,
       _dateAdded: isGoodreads ? b.dateAdded : null,
@@ -5815,6 +7570,8 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         background: "#F8F1E4",
         color: "#3A2A1A",
         cursor: "pointer",
+        flexShrink: 0,
+        maxWidth: "100%",
       }}
     >
       {genreOptions(value)}
@@ -5823,12 +7580,14 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
 
   const PLATFORM_CONFIG = {
     kindle:     { url: "https://read.amazon.com", step1: 'Go to read.amazon.com (your Kindle Cloud Reader), open the Console (Safari: Cmd+Option+C — Chrome/Edge: F12 or Cmd+Option+J), paste the script below, and press Enter. A CSV will download automatically.' },
-    kobo:       { url: "https://www.kobo.com/ww/en/account/books", step1: 'Go to My Books, click "Export" in the top right to download your library CSV.' },
+    kobo:       { url: "https://www.kobo.com/us/en/library/books", step1: 'Go to My Books and look for an "Export" option to download your library CSV.' },
     goodreads:  { url: "https://www.goodreads.com/review/import", step1: 'Scroll down to "Export Library" and click the export button. A CSV file will download.' },
     apple:      { url: null, step1: 'Run the export script below in Terminal. It reads your Apple Books library directly from your Mac and saves a CSV file to your Desktop.' },
     audible:    { url: "https://www.audible.com/library/titles", step1: 'Open your Audible library, then export using the Chrome extension or the console script below.' },
     chirp:       { url: "https://www.chirpbooks.com/library", step1: 'Open DevTools (F12 or Cmd+Option+J), go to the Console tab, paste the script below, and press Enter. A CSV will download automatically.' },
     bookfunnel:  { url: "https://my.bookfunnel.com", step1: 'Open DevTools (F12 or Cmd+Option+J), go to the Console tab, paste the script below, and press Enter. A CSV will download automatically.' },
+    googleplay:  { url: null, step1: 'Export your library from Google Takeout, then select the "Google Play Books" folder from the download below.' },
+    nook:        { url: "https://nook.barnesandnoble.com/my_library", step1: 'Sign into your Nook Library and note your titles — Barnes & Noble has no bulk export, so add books manually if not using the in-app import above.' },
   };
   const platformConfig = PLATFORM_CONFIG[platform.id] || null;
 
@@ -5895,15 +7654,16 @@ exportChirp();`;
         title: b.title || '',
         author: (b.authors || []).join(', '),
         coverUrl: b.productUrl || '',
-        readUrl: b.webReaderUrl || ''
+        readUrl: b.webReaderUrl || '',
+        asin: b.asin || ''
       });
     });
     console.log('Fetched ' + books.length + ' books so far...');
     token = data.paginationToken || null;
     await new Promise(r => setTimeout(r, 300));
   }
-  const csv = ['title,author,coverUrl,readUrl', ...books.map(b =>
-    '"' + b.title.replace(/"/g, '""') + '","' + b.author.replace(/"/g, '""') + '","' + b.coverUrl + '","' + b.readUrl + '"'
+  const csv = ['title,author,coverUrl,readUrl,asin', ...books.map(b =>
+    '"' + b.title.replace(/"/g, '""') + '","' + b.author.replace(/"/g, '""') + '","' + b.coverUrl + '","' + b.readUrl + '","' + b.asin + '"'
   )].join('\\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
@@ -5912,10 +7672,6 @@ exportChirp();`;
   console.log('Done! ' + books.length + ' books exported.');
 }
 exportKindle();`;
-
-  // Bookmarklet versions (minified for href use)
-  const kindleBookmarklet = `async function(){const b=[];let t='0';while(t!==null){const d=await fetch('https://read.amazon.com/kindle-library/search?query=&libraryType=BOOKS&sortType=recency&querySize=50&paginationToken='+t).then(r=>r.json());(d.itemsList||[]).forEach(x=>b.push({title:x.title||'',author:(x.authors||[]).join(', '),coverUrl:x.productUrl||''}));console.log('Fetched '+b.length+' books...');t=d.paginationToken||null;await new Promise(r=>setTimeout(r,300));}const csv=['title,author,coverUrl',...b.map(x=>'"'+x.title.replace(/"/g,'""')+'","'+x.author.replace(/"/g,'""')+'","'+x.coverUrl+'"')].join('\\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='kindle_library.csv';a.click();console.log('Done! '+b.length+' books.');}`;
-  const chirpBookmarklet = `async function(){const seen=new Map();async function c(){await new Promise(r=>setTimeout(r,2500));document.querySelectorAll('img[alt^="Book cover for"]').forEach(img=>{const m=img.alt.match(/^Book cover for (.+?) by (.+)$/);if(m)seen.set(m[1],m[2]);});console.log('Collected '+seen.size+' books');}await c();for(let p=2;p<=50;p++){const n=[...document.querySelectorAll('a,button')].find(el=>el.href?.includes('page='+p)||el.innerText?.trim()===String(p));if(!n){console.log('Done.');break;}n.click();await c();}const csv=['title,author',...[...seen.entries()].map(([t,a])=>'"'+t.replace(/"/g,'""')+'","'+a.replace(/"/g,'""')+'"')].join('\\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='chirp_library.csv';a.click();}`;
 
   const audibleScript = `async function exportAudible() {
   const books = [];
@@ -6091,7 +7847,7 @@ exportBookFunnel();`;
                 <div style={{ background: "#FFF3CD", border: "1px solid #E6C86E", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-start" }}>
                   <span style={{ fontSize: 18, lineHeight: 1.3 }}>⚠️</span>
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#5C4A00", lineHeight: 1.6 }}>
-                    <strong>Mac required for library export.</strong> The export script runs in Terminal on a Mac. Once you have the CSV file, you can upload it here from any device.
+                    <strong>Mac required for library export.</strong> The export script runs in Terminal on a Mac and needs Full Disk Access (see Step 1). Once you have the CSV file, you can upload it here from any device.
                   </div>
                 </div>
                 <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
@@ -6100,18 +7856,25 @@ exportBookFunnel();`;
                   </div>
                   <ol style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", margin: "0 0 10px 0", paddingLeft: 18, lineHeight: 2 }}>
                     <li>Open <strong>Terminal</strong> on your Mac (search Spotlight for "Terminal")</li>
+                    <li>First time only: open <strong>System Settings → Privacy & Security → Full Disk Access</strong> and turn on Terminal — this lets it read your Books library</li>
                     <li>Click <strong>Copy Script</strong> below, paste it into Terminal, and press <strong>Enter</strong></li>
-                    <li>A file called <strong>apple-books-export.csv</strong> will appear on your Desktop</li>
+                    <li>A file called <strong>apple-books-export.csv</strong> will appear on your Desktop — if you see an error instead, follow the message it gives you</li>
                   </ol>
                   <pre style={{ background: "#2A1A0A", color: "#C9A96E", fontSize: 10, padding: 10, borderRadius: 6, overflowX: "auto", marginBottom: 8, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflowY: "auto" }}>
-{`DB="$HOME/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary/BKLibrary-1-091020131601.sqlite"
+{`DB=$(find "$HOME/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary" -maxdepth 1 -iname "BKLibrary*.sqlite" 2>/dev/null | head -n 1)
 OUT="$HOME/Desktop/apple-books-export.csv"
-sqlite3 -csv "$DB" "SELECT COALESCE(ZTITLE,''),COALESCE(ZAUTHOR,''),COALESCE(REPLACE(ZBOOKDESCRIPTION,CHAR(10),' '),''),COALESCE(ZGENRE,''),CASE WHEN ZISSTOREAUDIOBOOK=1 THEN 'audiobook' ELSE 'ebook' END,COALESCE(ZSTOREID,''),COALESCE(ZREADINGPROGRESS,0) FROM ZBKLIBRARYASSET WHERE ZTITLE IS NOT NULL ORDER BY ZTITLE;" > "$OUT.tmp"
-echo "title,author,description,genre,mediaType,storeId,readingProgress" > "$OUT"
-cat "$OUT.tmp" >> "$OUT" && rm "$OUT.tmp"
-echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
+if [ -z "$DB" ]; then
+  echo "❌ Couldn't find your Apple Books library file. Open the Books app on this Mac at least once, then try again."
+elif ! sqlite3 -csv "$DB" "SELECT COALESCE(ZTITLE,''),COALESCE(ZAUTHOR,''),COALESCE(REPLACE(ZBOOKDESCRIPTION,CHAR(10),' '),''),COALESCE(ZGENRE,''),CASE WHEN ZISSTOREAUDIOBOOK=1 THEN 'audiobook' ELSE 'ebook' END,COALESCE(ZSTOREID,''),COALESCE(ZREADINGPROGRESS,0) FROM ZBKLIBRARYASSET WHERE ZTITLE IS NOT NULL ORDER BY ZTITLE;" > "$OUT.tmp" 2>/dev/null || [ ! -s "$OUT.tmp" ]; then
+  echo "❌ Couldn't read your library — Terminal likely needs Full Disk Access. Open System Settings → Privacy & Security → Full Disk Access, turn on Terminal, quit and reopen Terminal, then run this again."
+  rm -f "$OUT.tmp"
+else
+  echo "title,author,description,genre,mediaType,storeId,readingProgress" > "$OUT"
+  cat "$OUT.tmp" >> "$OUT" && rm "$OUT.tmp"
+  echo "✅ Done! Check your Desktop for apple-books-export.csv"
+fi`}
                   </pre>
-                  <BookmarkletCopyButton code={`DB="$HOME/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary/BKLibrary-1-091020131601.sqlite"\nOUT="$HOME/Desktop/apple-books-export.csv"\nsqlite3 -csv "$DB" "SELECT COALESCE(ZTITLE,''),COALESCE(ZAUTHOR,''),COALESCE(REPLACE(ZBOOKDESCRIPTION,CHAR(10),' '),''),COALESCE(ZGENRE,''),CASE WHEN ZISSTOREAUDIOBOOK=1 THEN 'audiobook' ELSE 'ebook' END,COALESCE(ZSTOREID,''),COALESCE(ZREADINGPROGRESS,0) FROM ZBKLIBRARYASSET WHERE ZTITLE IS NOT NULL ORDER BY ZTITLE;" > "$OUT.tmp"\necho "title,author,description,genre,mediaType,storeId,readingProgress" > "$OUT"\ncat "$OUT.tmp" >> "$OUT" && rm "$OUT.tmp"\necho "✅ Done! Check your Desktop for apple-books-export.csv"`} label="Copy Script" isScript />
+                  <BookmarkletCopyButton code={`DB=$(find "$HOME/Library/Containers/com.apple.iBooksX/Data/Documents/BKLibrary" -maxdepth 1 -iname "BKLibrary*.sqlite" 2>/dev/null | head -n 1)\nOUT="$HOME/Desktop/apple-books-export.csv"\nif [ -z "$DB" ]; then\n  echo "❌ Couldn't find your Apple Books library file. Open the Books app on this Mac at least once, then try again."\nelif ! sqlite3 -csv "$DB" "SELECT COALESCE(ZTITLE,''),COALESCE(ZAUTHOR,''),COALESCE(REPLACE(ZBOOKDESCRIPTION,CHAR(10),' '),''),COALESCE(ZGENRE,''),CASE WHEN ZISSTOREAUDIOBOOK=1 THEN 'audiobook' ELSE 'ebook' END,COALESCE(ZSTOREID,''),COALESCE(ZREADINGPROGRESS,0) FROM ZBKLIBRARYASSET WHERE ZTITLE IS NOT NULL ORDER BY ZTITLE;" > "$OUT.tmp" 2>/dev/null || [ ! -s "$OUT.tmp" ]; then\n  echo "❌ Couldn't read your library — Terminal likely needs Full Disk Access. Open System Settings → Privacy & Security → Full Disk Access, turn on Terminal, quit and reopen Terminal, then run this again."\n  rm -f "$OUT.tmp"\nelse\n  echo "title,author,description,genre,mediaType,storeId,readingProgress" > "$OUT"\n  cat "$OUT.tmp" >> "$OUT" && rm "$OUT.tmp"\n  echo "✅ Done! Check your Desktop for apple-books-export.csv"\nfi`} label="Copy Script" isScript />
                 </div>
 
                 <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14 }}>
@@ -6141,9 +7904,9 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                       </p>
                       <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
                         {csvBooks.map(b => (
-                          <div key={b._csvIdx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                          <div key={b._csvIdx} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", wordBreak: "break-word" }}>{b.title}</div>
                               <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author} {b.mediaType === "audiobook" ? "🎧" : "📖"}</div>
                             </div>
                             {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); }; })}
@@ -6159,28 +7922,187 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
               </>
             )}
 
+            {/* Google Play Books: Takeout folder import */}
+            {platform.id === "googleplay" && (
+              <>
+                {isNativeApp && (
+                  <div style={{ background: "#EAF4EA", border: "1px solid #6BAD6B", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 14, color: "#1A3A1A", marginBottom: 6 }}>
+                      📱 No Desktop Needed
+                    </div>
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2A4A2A", lineHeight: 1.6, marginBottom: 12 }}>
+                      Import directly from your Google Play Books library — no Takeout export required. Sign in, tap "My books" at the top, then tap the button below.
+                    </div>
+                    {nativeImporting ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 18, height: 18, border: "2px solid #6BAD6B", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                        <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#1A3A1A" }}>{nativeImportStatus || "Importing…"}</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleNativeImport({ id: 'googleplaylive', name: 'Google Play Books' })}
+                        style={{ padding: "9px 20px", background: "#2A6A2A", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+                      >
+                        📚 Import from Google Play Books
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
+                    Step 1 — Export from Google Takeout
+                  </div>
+                  <ol style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", margin: "0 0 10px 0", paddingLeft: 18, lineHeight: 2 }}>
+                    <li>Go to <strong>takeout.google.com</strong> (make sure you're signed into the Google account with your Play Books library)</li>
+                    <li>Click <strong>Deselect all</strong>, then find and check <strong>Google Play Books</strong></li>
+                    <li>Continue through the export options and click <strong>Create export</strong> — Google will email you a download link (can take minutes to hours)</li>
+                    <li>Download and unzip the file, then choose the <strong>Google Play Books</strong> folder below</li>
+                  </ol>
+                </div>
+
+                <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
+                    Step 2 — Choose Your Google Play Books Folder
+                  </div>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "inline-block", padding: "7px 18px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, cursor: "pointer" }}>
+                      📁 Choose Folder
+                    </span>
+                    <input
+                      type="file"
+                      webkitdirectory=""
+                      directory=""
+                      multiple
+                      onChange={e => { const files = e.target.files; if (files && files.length) { handleGooglePlayFiles(files); } e.target.value = ""; }}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                  {csvEnriching && csvEnrichProgress && (
+                    <p style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", marginTop: 10 }}>
+                      Fetching covers &amp; descriptions… {csvEnrichProgress.done} / {csvEnrichProgress.total}
+                    </p>
+                  )}
+                  {csvBooks.length > 0 && (
+                    <>
+                      <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", marginTop: 12, marginBottom: 8 }}>
+                        Found {csvBooks.length} book{csvBooks.length !== 1 ? "s" : ""}{csvSkipped > 0 ? ` · ${csvSkipped} duplicate${csvSkipped !== 1 ? "s" : ""} skipped` : ""}.
+                      </p>
+                      <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
+                        {csvBooks.map(b => (
+                          <div key={b._csvIdx} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", wordBreak: "break-word" }}>{b.title}</div>
+                              <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author} 📖</div>
+                            </div>
+                            {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={handleConfirmCSV} style={{ padding: "9px 20px", background: "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>
+                        📥 Import {csvBooks.length} Book{csvBooks.length !== 1 ? "s" : ""}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+
             {/* Bookmarklet platforms: Kindle, Chirp, Audible & BookFunnel */}
             {(platform.id === "kindle" || platform.id === "chirp" || platform.id === "audible" || platform.id === "bookfunnel") && (
               <>
+                {/* Native in-app import — shown only inside Capacitor app */}
+                {isNativeApp && (
+                  <div style={{ background: "#EAF4EA", border: "1px solid #6BAD6B", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 14, color: "#1A3A1A", marginBottom: 6 }}>
+                      📱 Import Directly on Your iPhone
+                    </div>
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2A4A2A", lineHeight: 1.6, marginBottom: 12 }}>
+                      StoryKeeper can open {platform.name} right inside the app, sign in, and pull your entire library automatically — no desktop needed.
+                      {platform.id === "kindle" && " Sign into your Amazon account when prompted, then wait while your books are fetched."}
+                      {platform.id === "audible" && " Sign into Audible when prompted. The scan runs through every page of your library automatically."}
+                      {platform.id === "chirp" && " Sign into Chirp when prompted. Your purchased audiobooks will be collected automatically."}
+                      {platform.id === "bookfunnel" && " Sign into BookFunnel when prompted. Your book collection will be gathered automatically."}
+                    </div>
+                    {nativeImporting ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 18, height: 18, border: "2px solid #6BAD6B", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                        <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#1A3A1A" }}>{nativeImportStatus || "Importing…"}</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleNativeImport(platform)}
+                        style={{ padding: "9px 20px", background: "#2A6A2A", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+                      >
+                        🔄 Import from {platform.name}
+                      </button>
+                    )}
+                    <div style={{ borderTop: "1px solid #B0D8B0", margin: "14px 0 0" }} />
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#4A6A4A", marginTop: 10, fontStyle: "italic" }}>
+                      Or use the manual steps below to export a CSV on a desktop computer.
+                    </div>
+                  </div>
+                )}
+
+                {/* Book preview after native import */}
+                {isNativeApp && csvBooks.length > 0 && (
+                  <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                    <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#3A2A1A", margin: "0 0 10px 0" }}>
+                      Found {csvBooks.length} book{csvBooks.length !== 1 ? "s" : ""}{csvSkipped > 0 ? ` · ${csvSkipped} duplicate${csvSkipped !== 1 ? "s" : ""} skipped` : ""}. Review genres then tap Import.
+                    </p>
+                    {csvEnriching && csvEnrichProgress && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: "#6B4E32", marginBottom: 4 }}>
+                          🔍 Detecting genres… {csvEnrichProgress.done} / {csvEnrichProgress.total}
+                        </div>
+                        <div style={{ background: "#D8C3A5", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                          <div style={{ background: "#8B5E3C", height: "100%", width: `${(csvEnrichProgress.done / csvEnrichProgress.total) * 100}%`, transition: "width 0.3s" }} />
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
+                      {csvBooks.map(b => (
+                        <div key={b._csvIdx} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.title}</div>
+                            <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
+                          </div>
+                          {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={handleConfirmCSV}
+                      disabled={csvEnriching}
+                      style={{ padding: "9px 20px", background: csvEnriching ? "#A08060" : "#3A2A1A", color: "#F8F1E4", border: "none", borderRadius: 6, cursor: csvEnriching ? "not-allowed" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, width: "100%" }}
+                    >
+                      {csvEnriching ? "Detecting genres…" : `📥 Import ${csvBooks.length} Book${csvBooks.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </div>
+                )}
+
+                {!isNativeApp && (
                 <div style={{ background: "#FFF3CD", border: "1px solid #E6C86E", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-start" }}>
                   <span style={{ fontSize: 18, lineHeight: 1.3 }}>⚠️</span>
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#5C4A00", lineHeight: 1.6 }}>
                     <strong>Desktop browser required for library export.</strong> The export step uses browser DevTools or a Chrome extension that are not available on mobile or tablet. To import your {platform.name} library, complete the export on a desktop computer first, save the CSV file, then upload it here from any device.
                   </div>
                 </div>
+                )}
+                {/* Desktop steps: hidden on native (native import button above handles it) */}
+                {!isNativeApp && <>
                 {/* Step 1: Open platform and run script */}
                 <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
                     Step 1 — Open {platform.name}
                   </div>
-                  {isPWA ? (
+                  {(isPWA || Capacitor.isNativePlatform()) ? (
                     <div>
                       <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#4B3A2A", marginBottom: 8, lineHeight: 1.6 }}>
-                        You're in the app — tap <strong>Copy Link</strong> then open it in Safari or Chrome to access {platform.name}.
+                        Tap <strong>Open {platform.name}</strong> to launch it in Safari, run the export script on a desktop computer, save the CSV, then come back here to upload it.
                       </div>
-                      <button onClick={() => { navigator.clipboard.writeText(platformConfig.url).then(() => alert("✅ Link copied! Paste it in Safari or Chrome.")); }}
+                      <button onClick={() => { window.open(platformConfig.url, '_system'); }}
                         style={{ display: "inline-block", padding: "7px 16px", background: "#8B5E3C", color: "#F8F1E4", borderRadius: 6, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, border: "none", cursor: "pointer" }}>
-                        📋 Copy {platform.name} Link
+                        🔗 Open {platform.name} →
                       </button>
                     </div>
                   ) : (
@@ -6256,9 +8178,9 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                       )}
                       <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
                         {csvBooks.map(b => (
-                          <div key={b._csvIdx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                          <div key={b._csvIdx} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", wordBreak: "break-word" }}>{b.title}</div>
                               <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                             </div>
                             {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
@@ -6275,12 +8197,45 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                     </>
                   )}
                 </div>
+                </>}
               </>
             )}
 
             {/* Non-bookmarklet CSV platforms: Kobo, Goodreads */}
-            {(platform.id !== "kindle" && platform.id !== "chirp" && platform.id !== "audible" && platform.id !== "apple" && platform.id !== "bookfunnel") && (
+            {(platform.id !== "kindle" && platform.id !== "chirp" && platform.id !== "audible" && platform.id !== "apple" && platform.id !== "bookfunnel" && platform.id !== "googleplay") && (
               <>
+                {/* Native in-app import for Goodreads, Kobo & Nook — shown only inside Capacitor app */}
+                {(platform.id === "goodreads" || platform.id === "kobo" || platform.id === "nook") && isNativeApp && (
+                  <div style={{ background: "#EAF4EA", border: "1px solid #6BAD6B", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
+                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 14, color: "#1A3A1A", marginBottom: 6 }}>
+                      📱 Import Directly on Your iPhone
+                    </div>
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2A4A2A", lineHeight: 1.6, marginBottom: 12 }}>
+                      StoryKeeper can open {platform.name} right inside the app, request your export, and pull your entire library automatically — no desktop needed.
+                      {platform.id === "goodreads" && " Sign into Goodreads when prompted (and Amazon first, if asked). Exports can take a minute or two to prepare."}
+                      {platform.id === "kobo" && " Sign into Kobo when prompted, then tap the button below."}
+                      {platform.id === "nook" && " Sign into your Nook account when prompted, then tap the button below."}
+                    </div>
+                    {nativeImporting ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 18, height: 18, border: "2px solid #6BAD6B", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                        <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#1A3A1A" }}>{nativeImportStatus || "Importing…"}</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleNativeImport(platform)}
+                        style={{ padding: "9px 20px", background: "#2A6A2A", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
+                      >
+                        🔄 Import from {platform.name}
+                      </button>
+                    )}
+                    <div style={{ borderTop: "1px solid #B0D8B0", margin: "14px 0 0" }} />
+                    <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#4A6A4A", marginTop: 10, fontStyle: "italic" }}>
+                      Or use the manual steps below to export a CSV yourself.
+                    </div>
+                  </div>
+                )}
+
                 {/* Step 1 */}
                 <div style={{ background: "rgba(255,255,255,0.5)", border: "1px solid #D8C3A5", borderRadius: 8, padding: 14, marginBottom: 12 }}>
                   <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 13, color: "#3A2A1A", marginBottom: 6 }}>
@@ -6336,9 +8291,9 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                       )}
                       <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
                         {csvBooks.map(b => (
-                          <div key={b._csvIdx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                          <div key={b._csvIdx} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", wordBreak: "break-word" }}>{b.title}</div>
                               <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                             </div>
                             {genreSelect(csvGenres[b._csvIdx] || "Fiction & Drama", (val) => { csvUserEditedRef.current.add(b._csvIdx); setCsvGenres(prev => ({ ...prev, [b._csvIdx]: val })); })}
@@ -6398,9 +8353,9 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
               </p>
               <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 12, border: "1px solid #D8C3A5", borderRadius: 6 }}>
                 {bulkPending.map(b => (
-                  <div key={b._pendingId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                  <div key={b._pendingId} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                      <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", wordBreak: "break-word" }}>{b.title}</div>
                       <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                     </div>
                     <select value={bulkGenres[b._pendingId] || b.genre} onChange={e => setBulkGenres(prev => ({ ...prev, [b._pendingId]: e.target.value }))} style={{ fontFamily: "Georgia, serif", fontSize: 12, padding: "3px 6px", borderRadius: 4, border: "1px solid #8B5E3C", background: "#F8F1E4", color: "#3A2A1A" }}>
@@ -6471,14 +8426,14 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {results.map((r, i) => {
                     const genre = detectGenre(r.subject || [], r.title || "");
-                    const coverId = r.cover_i;
+                    const coverSrc = r.coverUrl || (r.cover_i ? `https://covers.openlibrary.org/b/id/${r.cover_i}-S.jpg` : null);
                     const alreadyPending = pending.some(b =>
                       b.title === r.title && b.author === (r.author_name || []).join(", ")
                     );
                     return (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px", background: "rgba(255,255,255,0.6)", borderRadius: 6, border: "1px solid #D8C3A5" }}>
-                        {coverId ? (
-                          <img src={`https://covers.openlibrary.org/b/id/${coverId}-S.jpg`} alt={r.title} style={{ width: 36, height: 50, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", flexShrink: 0 }} />
+                        {coverSrc ? (
+                          <img src={coverSrc} alt={r.title} style={{ width: 36, height: 50, objectFit: "cover", borderRadius: 3, border: "1px solid #C9A96E", flexShrink: 0 }} />
                         ) : (
                           <div style={{ width: 36, height: 50, background: "#D8C3A5", borderRadius: 3, flexShrink: 0 }} />
                         )}
@@ -6519,9 +8474,9 @@ echo "✅ Done! Check your Desktop for apple-books-export.csv"`}
                 </p>
                 <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 14 }}>
                   {pending.map(b => (
-                    <div key={b._pendingId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
+                    <div key={b._pendingId} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "6px 8px", borderBottom: "1px solid #D8C3A5" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A" }}>{b.title}</div>
+                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", wordBreak: "break-word" }}>{b.title}</div>
                         <div style={{ fontFamily: "Georgia, serif", fontSize: 11, fontStyle: "italic", color: "#6B4E32" }}>{b.author}</div>
                       </div>
                       {genreSelect(pendingGenres[b._pendingId] || b.genre, (val) => setPendingGenres(prev => ({ ...prev, [b._pendingId]: val })))}
@@ -7068,18 +9023,152 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
   );
 }
 
+function RemoveDuplicatesButton({ th }) {
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const isMobile = useIsMobile();
+
+  const effectiveType = (b) => b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
+  // More filled-in fields = more useful to keep as the survivor
+  const completeness = (b) => [b.isbn, b.description, b.coverUrl, b.author].filter(Boolean).length;
+
+  const handleRemoveDuplicates = () => {
+    setRunning(true);
+    const all = getUserBooksSync();
+    const groups = new Map(); // key -> array of { book, idx }
+    all.forEach((b, idx) => {
+      const titleKey = cleanTitle(b.title || "").toLowerCase().trim();
+      const key = `${effectiveType(b)}::${titleKey}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ book: b, idx });
+    });
+
+    const toRemove = new Set();
+    let mergedCount = 0;
+    groups.forEach(entries => {
+      if (entries.length < 2) return;
+      // Pick the most complete entry as the survivor, merge in any fields the others have that it's missing
+      const sorted = [...entries].sort((a, b) => completeness(b.book) - completeness(a.book));
+      const keeper = sorted[0];
+      const dupes = sorted.slice(1);
+      let changed = false;
+      dupes.forEach(({ book: dupe }) => {
+        if (!keeper.book.isbn && dupe.isbn) { keeper.book.isbn = dupe.isbn; changed = true; }
+        if (!keeper.book.description && dupe.description) { keeper.book.description = dupe.description; changed = true; }
+        if (!keeper.book.coverUrl && dupe.coverUrl) { keeper.book.coverUrl = dupe.coverUrl; changed = true; }
+        if (!keeper.book.author && dupe.author) { keeper.book.author = dupe.author; changed = true; }
+      });
+      if (changed) mergedCount++;
+      dupes.forEach(({ idx }) => toRemove.add(idx));
+    });
+
+    const deduped = all.filter((_, idx) => !toRemove.has(idx));
+    saveUserBooks(deduped);
+    setRunning(false);
+    setResult({ removed: toRemove.size, mergedCount, total: all.length });
+  };
+
+  return (
+    <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 10, padding: "18px 24px", marginBottom: 20, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 20 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 4 }}>
+          🧹 Remove Duplicate Books
+        </div>
+        <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: th.textSoft, marginBottom: 6 }}>
+          Finds books with the same title in the same format (ebook/audiobook/physical) and merges them into one, keeping whichever copy has the most complete data.
+        </div>
+        {result && (
+          <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#2d6a2d", marginTop: 4 }}>
+            ✅ Removed {result.removed} duplicate{result.removed !== 1 ? "s" : ""} out of {result.total} books{result.mergedCount > 0 ? ` (merged data from ${result.mergedCount} pair${result.mergedCount !== 1 ? "s" : ""})` : ""}.
+          </div>
+        )}
+      </div>
+      <button
+        onClick={handleRemoveDuplicates}
+        disabled={running}
+        style={{ padding: "10px 22px", background: running ? th.bgDeep : th.accent, color: running ? th.textSoft : th.bg, border: "none", borderRadius: 8, cursor: running ? "default" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", alignSelf: isMobile ? "stretch" : "flex-start" }}
+      >
+        {running ? "Scanning…" : "🧹 Remove Duplicates"}
+      </button>
+    </div>
+  );
+}
+
+function PushToCacheButton({ th }) {
+  const [cacheProgress, setCacheProgress] = useState(null);
+  const [cacheResult, setCacheResult] = useState(null);
+  const isMobile = useIsMobile();
+  const handlePushToCache = async () => {
+    const allBooks = getUserBooksSync();
+    const eligible = allBooks.filter(b => b.isbn || b.description || b.coverUrl);
+    setCacheProgress({ done: 0, total: eligible.length });
+    setCacheResult(null);
+    const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+    const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+    let pushed = 0;
+    for (let i = 0; i < eligible.length; i++) {
+      const b = eligible[i];
+      const safeCover = b.coverUrl && !b.coverUrl.includes("covers.openlibrary.org/b/isbn/") ? b.coverUrl : null;
+      try {
+        await fetch(`${url}/rest/v1/book_cache`, {
+          method: "POST",
+          headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", "Prefer": "return=minimal,resolution=merge-duplicates" },
+          body: JSON.stringify({ isbn: b.isbn || null, title: b.title || null, author: b.author || null, description: b.description || null, cover_url: safeCover, genre: b.genre || null, source: "community" }),
+        });
+        pushed++;
+      } catch { /* skip */ }
+      if (i % 10 === 9) await new Promise(r => setTimeout(r, 200));
+      setCacheProgress({ done: i + 1, total: eligible.length });
+    }
+    setCacheProgress(null);
+    setCacheResult({ pushed, total: eligible.length });
+  };
+  return (
+    <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 10, padding: "18px 24px", marginBottom: 20, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 20 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 4 }}>
+          ☁️ Push All Books to Community Cache
+        </div>
+        <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: th.textSoft, marginBottom: 6 }}>
+          Sends every book with an ISBN, description, cover, or author to the shared community cache so all users benefit. Run this once after importing or enriching.
+        </div>
+        {cacheProgress && (
+          <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textMid }}>
+            [{cacheProgress.done}/{cacheProgress.total}] Uploading…
+          </div>
+        )}
+        {cacheResult && !cacheProgress && (
+          <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#2d6a2d", marginTop: 4 }}>
+            ✅ {cacheResult.pushed} of {cacheResult.total} books pushed to community cache.
+          </div>
+        )}
+      </div>
+      <button
+        onClick={handlePushToCache}
+        disabled={!!cacheProgress}
+        style={{ padding: "10px 22px", background: cacheProgress ? th.bgDeep : th.accent, color: cacheProgress ? th.textSoft : th.bg, border: "none", borderRadius: 8, cursor: cacheProgress ? "default" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", alignSelf: isMobile ? "stretch" : "flex-start" }}
+      >
+        {cacheProgress ? `Uploading… ${cacheProgress.done}/${cacheProgress.total}` : "☁️ Push to Cache"}
+      </button>
+    </div>
+  );
+}
+
 function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin, isPWA }) {
   const scrollRef = useRef(null);
+  const isNativeApp = Capacitor.isNativePlatform();
+  const isMobile = useIsMobile();
   const [atTop, setAtTop] = useState(true);
   const [showFetchDesc, setShowFetchDesc] = useState(false);
   const [connections, setConnections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_connections")) || {}; } catch { return {}; }
   });
 
-  // Re-read connections from localStorage after a cloud sync
+  // Re-read connections and book counts from localStorage after a cloud sync
   useEffect(() => {
     const onSync = () => {
       try { setConnections(JSON.parse(localStorage.getItem("sk_connections")) || {}); } catch {}
+      refreshBookCounts();
     };
     window.addEventListener("sk-cloud-synced", onSync);
     return () => window.removeEventListener("sk-cloud-synced", onSync);
@@ -7098,31 +9187,43 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
   const [redetectProgress, setRedetectProgress] = useState(null);
   const redetectStopRef = useRef(false);
   const [bookCounts, setBookCounts] = useState(() => {
-    const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    return { total: all.length, noDesc: all.filter(needsDesc).length, noCover: all.filter(b => !b.coverUrl).length, noAuthor: all.filter(b => !b.author).length };
+    const all = getUserBooksSync();
+    return { total: all.length, noDesc: all.filter(needsDesc).length, noCover: all.filter(b => !b.coverUrl).length, noAuthor: all.filter(b => !b.author).length, noIsbn: all.filter(b => !b.isbn && !SKIP_DESC_GENRES.includes(b.genre)).length };
   });
 
   // One-time migrations
   (() => {
     try {
-      const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const all = getUserBooksSync();
       const updated = all.map(b => {
         if (GENRE_MIGRATIONS[b.genre]) return { ...b, genre: migrateGenre(b.genre) };
         if (b.genre === "Health & Fitness") return { ...b, genre: "Health & Wellness" };
         return b;
       });
-      if (updated.some((b, i) => b.genre !== all[i].genre)) localStorage.setItem("sk_user_books", JSON.stringify(updated));
+      if (updated.some((b, i) => b.genre !== all[i].genre)) saveUserBooks(updated);
     } catch { /* ignore */ }
   })();
 
   const refreshBookCounts = () => {
-    const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    setBookCounts({ total: all.length, noDesc: all.filter(needsDesc).length, noCover: all.filter(b => !b.coverUrl).length, noAuthor: all.filter(b => !b.author).length });
+    const all = getUserBooksSync();
+    setBookCounts({ total: all.length, noDesc: all.filter(needsDesc).length, noCover: all.filter(b => !b.coverUrl).length, noAuthor: all.filter(b => !b.author).length, noIsbn: all.filter(b => !b.isbn && !SKIP_DESC_GENRES.includes(b.genre)).length });
   };
   const [googleApiKey, setGoogleApiKey] = useState(() => localStorage.getItem("sk_google_api_key") || "");
   const [apiKeyInput, setApiKeyInput] = useState(() => localStorage.getItem("sk_google_api_key") || "");
   const [isbndbKey, setIsbndbKey] = useState(() => localStorage.getItem("sk_isbndb_key") || "");
   const [isbndbKeyInput, setIsbndbKeyInput] = useState(() => localStorage.getItem("sk_isbndb_key") || "");
+
+  // Re-read API keys from localStorage after a cloud sync pulls them down from another device
+  useEffect(() => {
+    const onSync = () => {
+      const g = localStorage.getItem("sk_google_api_key") || "";
+      const i = localStorage.getItem("sk_isbndb_key") || "";
+      setGoogleApiKey(g); setApiKeyInput(g);
+      setIsbndbKey(i); setIsbndbKeyInput(i);
+    };
+    window.addEventListener("sk-cloud-synced", onSync);
+    return () => window.removeEventListener("sk-cloud-synced", onSync);
+  }, []);
   const [supabaseUrl] = useState(SUPABASE_URL);
   const [supabaseKey] = useState(SUPABASE_ANON_KEY);
 
@@ -7134,7 +9235,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     // Cleanup: strip LibraryThing placeholder descriptions
     if (!localStorage.getItem("sk_lt_desc_cleaned_v2")) {
       try {
-        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+        const all = getUserBooksSync();
         let cleaned = 0;
         const isPlaceholder = (d) => !d || d.includes("LibraryThing") || d.includes("catalogs your") || d.includes("catalogs your books") || d.includes("easily, quickly and for free") || d.trim().length < 30;
         const updated = all.map(b => {
@@ -7144,7 +9245,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           }
           return b;
         });
-        if (cleaned > 0) localStorage.setItem("sk_user_books", JSON.stringify(updated));
+        if (cleaned > 0) saveUserBooks(updated);
         localStorage.setItem("sk_lt_desc_cleaned_v2", "1");
       } catch(e) {}
     }
@@ -7153,10 +9254,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
   const connect = (id) => setConnections((prev) => ({ ...prev, [id]: true }));
   const disconnect = (id) => {
     // Remove all books imported from this platform
-    const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const allBooks = getUserBooksSync();
     const removed = allBooks.filter(b => b.platform === id);
     const remaining = allBooks.filter(b => b.platform !== id);
-    localStorage.setItem("sk_user_books", JSON.stringify(remaining));
+    saveUserBooks(remaining);
 
     // Clean up statuses, favorites, progress, dates for removed books
     if (removed.length > 0) {
@@ -7199,13 +9300,13 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
 
   const writeToCache = async (isbn, title, author, description, coverUrl, genre) => {
     const url = localStorage.getItem("sk_supabase_url") || "";
-    if (!url || !description) return;
+    if (!url || (!isbn && !description)) return;
     const safeCoverUrl = isBadCover(coverUrl) ? null : (coverUrl || null);
     try {
       await fetch(sbBase(), {
         method: "POST",
-        headers: { ...sbHeaders(), "Prefer": "return=minimal" },
-        body: JSON.stringify({ isbn: isbn || null, title: title || null, author: author || null, description, cover_url: safeCoverUrl, genre: genre || null, source: "community" }),
+        headers: { ...sbHeaders(), "Prefer": "return=minimal,resolution=merge-duplicates" },
+        body: JSON.stringify({ isbn: isbn || null, title: title || null, author: author || null, description: description || null, cover_url: safeCoverUrl, genre: genre || null, source: "community" }),
       });
     } catch { /* ignore */ }
   };
@@ -7215,8 +9316,8 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     setIsbnFinding(true);
     setIsbnResult(null);
     setIsbnProgress(null);
-    const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    const noIsbn = userBooks.map((b, i) => ({ b, i })).filter(({ b }) => !b.isbn);
+    const userBooks = getUserBooksSync();
+    const noIsbn = userBooks.map((b, i) => ({ b, i })).filter(({ b }) => !b.isbn && !SKIP_DESC_GENRES.includes(b.genre));
     let found = 0;
     let quotaHit = false;
     setIsbnProgress({ done: 0, total: noIsbn.length, found: 0, current: "", quotaHit: false });
@@ -7231,6 +9332,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
       try {
         const cleaned = cleanTitle(b.title);
         const normAuthor = normalizeAuthor(b.author);
+
+        // Check community cache first — instant, no API quota used
+        const cached = await fetchFromCache(null, cleaned, normAuthor);
+        if (cached?.isbn) isbn = cached.isbn;
 
         // Try ISBNdb via Vercel proxy (avoids CORS)
         if (!isbn && isbndbApiKey) {
@@ -7261,15 +9366,20 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           }
         }
 
-        if (isbn) { userBooks[i].isbn = isbn; found++; }
+        if (isbn) {
+          userBooks[i].isbn = isbn;
+          found++;
+          // Write to community cache so other users skip the API lookup entirely
+          writeToCache(isbn, b.title, b.author, b.description || null, b.coverUrl || null, b.genre || null);
+        }
       } catch { /* ignore network errors */ }
-      if (j % 50 === 49) localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+      if (j % 50 === 49) saveUserBooks(userBooks);
       await new Promise(r => setTimeout(r, 350));
       setIsbnProgress({ done: j + 1, total: noIsbn.length, found, current: b.title, quotaHit });
     }
 
-    localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
-    const stillMissing = userBooks.filter(b => !b.isbn).length;
+    saveUserBooks(userBooks);
+    const stillMissing = userBooks.filter(b => !b.isbn && !SKIP_DESC_GENRES.includes(b.genre)).length;
     setIsbnFinding(false);
     setIsbnProgress(null);
     setIsbnResult({ found, stillMissing, stopped: isbnStopRef.current, quotaHit });
@@ -7281,7 +9391,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     setEnriching(true);
     setEnrichResult(null);
     setEnrichProgress(null);
-    const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const userBooks = getUserBooksSync();
     const needsEnrich = userBooks.filter(b => needsDesc(b) || !b.author || !b.coverUrl);
     let enriched = 0;
     setEnrichProgress({ done: 0, total: needsEnrich.length, current: "", enriched: 0 });
@@ -7476,18 +9586,15 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         const nowHasDescription = !!userBooks[idx].description;
         const nowHasCover = !!userBooks[idx].coverUrl;
         const nowHasAuthor = !!userBooks[idx].author;
-        if (
-          (!hadDescription && nowHasDescription) ||
-          (!hadCover && nowHasCover) ||
-          (!hadAuthor && nowHasAuthor)
-        ) enriched++;
-        // Write back to community cache if we gained a description from an external source
-        if (!hadDescription && nowHasDescription) {
+        const gainedAny = (!hadDescription && nowHasDescription) || (!hadCover && nowHasCover) || (!hadAuthor && nowHasAuthor);
+        if (gainedAny) enriched++;
+        // Write to community cache whenever any field was gained so all users benefit
+        if (gainedAny && userBooks[idx].isbn) {
           writeToCache(userBooks[idx].isbn, userBooks[idx].title, userBooks[idx].author, userBooks[idx].description, userBooks[idx].coverUrl, userBooks[idx].genre);
         }
-        // Save after every book that gained a description (most important field)
-        if (!hadDescription && nowHasDescription) localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
-        else if (enriched % 25 === 0 && enriched > 0) localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+        // Save after every book that gained data
+        if (gainedAny) saveUserBooks(userBooks);
+        else if (enriched % 25 === 0 && enriched > 0) saveUserBooks(userBooks);
       } catch { /* skip on network error */ }
       await new Promise(r => setTimeout(r, 400));
       const doneCount = needsEnrich.indexOf(book) + 1;
@@ -7495,7 +9602,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
       skDispatch('sk-bg-progress', { task: 'enrich', done: doneCount, total: needsEnrich.length, current: book.title, enriched });
     }
 
-    localStorage.setItem("sk_user_books", JSON.stringify(userBooks));
+    saveUserBooks(userBooks);
     const stillNoDesc = userBooks.filter(b => !b.description).length;
     const stillNoCover = userBooks.filter(b => !b.coverUrl).length;
     const stillNoAuthor = userBooks.filter(b => !b.author).length;
@@ -7513,7 +9620,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     setRedetecting(true);
     setRedetectResult(null);
     setRedetectProgress({ done: 0, total: 0, changed: 0, current: "" });
-    const allUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const allUserBooks = getUserBooksSync();
     // Only process books matching the filter (or all if no filter)
     const targetIndices = allUserBooks
       .map((b, i) => ({ b, i }))
@@ -7567,14 +9674,8 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         continue;
       }
 
-      // Step 4: skip API if already in a specific genre
-      if (!genericGenres.has(book.genre)) {
-        setRedetectProgress({ done: i + 1, total: userBooks.length, changed, current: book.title });
-        await yield_();
-        continue;
-      }
-
-      // Step 5: OpenLibrary — only for books stuck in Fiction/Fantasy/blank
+      // Step 4: full re-scan — always verify against OpenLibrary/Google, even if the book
+      // already has a specific genre, since that genre could have been assigned incorrectly.
       try {
         const cleaned = cleanTitle(book.title);
         const normAuthor = normalizeAuthor(book.author);
@@ -7618,9 +9719,9 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     }
 
     // Write updated books back — only touching the filtered indices
-    const finalBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+    const finalBooks = getUserBooksSync();
     targetIndices.forEach((origIdx, i) => { finalBooks[origIdx] = userBooks[i]; });
-    localStorage.setItem("sk_user_books", JSON.stringify(finalBooks));
+    saveUserBooks(finalBooks);
     setRedetecting(false);
     setRedetectProgress(null);
     setRedetectResult({ changed, total: userBooks.length, stopped: redetectStopRef.current, filterMediaType });
@@ -7643,11 +9744,12 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
       position: "absolute",
       inset: 0,
       backgroundColor: th.bgDeep,
-      backgroundImage: (themeKey === "firelight" || themeKey === "midnight" || themeKey === "forest") ? 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")' : "none",
+      backgroundImage: (themeKey === "firelight" || themeKey === "midnight" || themeKey === "forest") ? 'url("/parchment.jpg")' : "none",
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundBlendMode: "multiply",
       overflowY: "auto",
+      overflowX: "hidden",
       padding: "30px 40px",
     }}
     ref={scrollRef}
@@ -7682,7 +9784,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         ← Back
       </button>
 
-      <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 10 }}>
+      {/* Back button sits at top:56, absolutely positioned (so it can fade
+          independent of scroll) — paddingTop here clears it on narrow mobile
+          screens, where the centered title would otherwise overlap it. */}
+      <div style={{ maxWidth: 900, margin: "0 auto", paddingTop: 70 }}>
         <h1 style={{
           fontFamily: '"Palatino Linotype", Palatino, serif',
           fontSize: 32,
@@ -7738,12 +9843,12 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                   style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
                 />
                 <button
-                  onClick={() => { localStorage.setItem("sk_google_api_key", apiKeyInput); setGoogleApiKey(apiKeyInput); }}
+                  onClick={() => { localStorage.setItem("sk_google_api_key", apiKeyInput); setGoogleApiKey(apiKeyInput); window.dispatchEvent(new CustomEvent("sk-books-changed")); }}
                   style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
                 >
                   Save Key
                 </button>
-                {googleApiKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
+                {googleApiKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved — syncing to your other devices…</span>}
               </div>
             </div>
 
@@ -7764,12 +9869,12 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                   style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
                 />
                 <button
-                  onClick={() => { localStorage.setItem("sk_isbndb_key", isbndbKeyInput); setIsbndbKey(isbndbKeyInput); }}
+                  onClick={() => { localStorage.setItem("sk_isbndb_key", isbndbKeyInput); setIsbndbKey(isbndbKeyInput); window.dispatchEvent(new CustomEvent("sk-books-changed")); }}
                   style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
                 >
                   Save Key
                 </button>
-                {isbndbKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved</span>}
+                {isbndbKey && <span style={{ fontSize: 11, color: "#2d6a2d", fontFamily: "Georgia, serif" }}>✓ Key saved — syncing to your other devices…</span>}
               </div>
             </div>
             </>)}
@@ -7917,8 +10022,9 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
 
         {/* Find Missing ISBNs */}
         {(() => {
-          const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-          const missingIsbn = allBooks.filter(b => !b.isbn).length;
+          // While actively searching, count down live using the in-progress found tally
+          // (accurate immediately, rather than waiting on localStorage writes that only happen every 50 books)
+          const missingIsbn = isbnFinding && isbnProgress ? Math.max(0, bookCounts.noIsbn - isbnProgress.found) : bookCounts.noIsbn;
           return missingIsbn > 0 ? (
             <div style={{
               background: th.bgMuted,
@@ -7927,7 +10033,8 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
               padding: "18px 24px",
               marginBottom: 20,
               display: "flex",
-              alignItems: "center",
+              flexDirection: isMobile ? "column" : "row",
+              alignItems: isMobile ? "stretch" : "center",
               gap: 20,
             }}>
               <div style={{ flex: 1 }}>
@@ -7953,7 +10060,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                   </div>
                 )}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, alignSelf: "flex-start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, alignSelf: isMobile ? "stretch" : "flex-start" }}>
                 <button
                   onClick={handleFindISBNs}
                   disabled={isbnFinding}
@@ -7996,6 +10103,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           ) : null;
         })()}
 
+        {/* Push All Books to Community Cache — admin only */}
+        {isAdmin && <RemoveDuplicatesButton th={th} />}
+        {isAdmin && <PushToCacheButton th={th} />}
+
         {/* Re-detect Genres */}
         <div style={{
           background: th.bgMuted,
@@ -8013,7 +10124,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
               🏷️ Re-detect Genres
             </div>
             <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: th.textSoft, marginBottom: 8 }}>
-              Fix incorrect genre assignments — run on eBooks only, Audiobooks only, or your entire library.
+              Re-checks every book against OpenLibrary/Google Books to fix incorrect genre assignments — run on eBooks only, Audiobooks only, or your entire library. Since it verifies every book individually, this can take a while for large libraries.
             </div>
             {redetectResult && !redetecting && (
               <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: redetectResult.changed > 0 ? "#2d6a2d" : th.textSoft }}>
@@ -8094,7 +10205,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
             reader.onload = async (ev) => {
               try {
                 const docs = JSON.parse(ev.target.result);
-                const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const existing = getUserBooksSync();
                 const existingByTitle = new Map(existing.map((b, i) => [(b.title || "").toLowerCase().trim(), i]));
                 let added = 0, patched = 0, statusSet = 0;
                 const newBooks = [];
@@ -8139,7 +10250,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                 }
 
                 const merged = [...existing, ...newBooks];
-                localStorage.setItem("sk_user_books", JSON.stringify(merged));
+                saveUserBooks(merged);
 
                 // Save status updates
                 if (Object.keys(statusUpdates).length > 0) {
@@ -8241,7 +10352,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
 
                 {/* LibraryThing Description Scraper */}
         {(() => {
-          const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+          const allBooks = getUserBooksSync();
           const eligible = allBooks
             .map((b, i) => ({ isbn: b.isbn, title: b.title, author: b.author, _idx: i }))
             .filter(b => !allBooks[b._idx].description && (b.isbn || b.title));
@@ -8358,7 +10469,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
             reader.onload = async (ev) => {
               try {
                 const results = JSON.parse(ev.target.result);
-                const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const books = getUserBooksSync();
                 let applied = 0;
                 const toCache = [];
                 books.forEach((b, idx) => {
@@ -8367,7 +10478,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                   const badDesc = desc && (desc.includes("LibraryThing catalogs") || desc.length < 30);
                   if (desc && !badDesc) { b.description = desc; applied++; toCache.push({ b, desc }); }
                 });
-                localStorage.setItem("sk_user_books", JSON.stringify(books));
+                saveUserBooks(books);
                 alert(`✅ Applied ${applied} descriptions to your library! Syncing to community cache…`);
                 e.target.value = "";
                 for (const { b, desc } of toCache) {
@@ -8437,7 +10548,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
 
         {/* StoryGraph Description Scraper */}
         {(() => {
-          const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+          const allBooks = getUserBooksSync();
           const SKIP_GENRES = SKIP_DESC_GENRES.map(g => g.toLowerCase());
           const eligible = allBooks
             .map((b, i) => ({ isbn: b.isbn, title: b.title, author: b.author, genre: (b.genre || "").toLowerCase(), _idx: i }))
@@ -8582,7 +10693,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
             reader.onload = async (ev) => {
               try {
                 const results = JSON.parse(ev.target.result);
-                const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const books = getUserBooksSync();
                 let applied = 0;
                 const toCache = [];
                 books.forEach((b, idx) => {
@@ -8590,7 +10701,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                   const desc = (b.isbn && results[b.isbn]) ? results[b.isbn] : results['_idx_' + idx];
                   if (desc) { b.description = desc; applied++; toCache.push({ b, desc }); }
                 });
-                localStorage.setItem("sk_user_books", JSON.stringify(books));
+                saveUserBooks(books);
                 alert(`✅ Applied ${applied} descriptions to your library! Syncing to community cache…`);
                 e.target.value = "";
                 for (const { b, desc } of toCache) {
@@ -8660,7 +10771,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
 
         {/* Book Cover Scraper */}
         {(() => {
-          const allBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+          const allBooks = getUserBooksSync();
           const eligible = allBooks
             .map((b, i) => ({ isbn: b.isbn, title: b.title, author: b.author, _idx: i }))
             .filter(b => !allBooks[b._idx].coverUrl && (b.isbn || b.title));
@@ -8899,7 +11010,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
             reader.onload = async (ev) => {
               try {
                 const results = JSON.parse(ev.target.result);
-                const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const books = getUserBooksSync();
                 let applied = 0;
                 const toCache = [];
                 books.forEach((b, idx) => {
@@ -8908,7 +11019,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                   const badUrl = !url || url.includes('20years') || url.includes('nophoto') || url.includes('nocover') || url.includes('1x1');
                   if (url && !badUrl) { b.coverUrl = url; applied++; toCache.push({ b, url }); }
                 });
-                localStorage.setItem("sk_user_books", JSON.stringify(books));
+                saveUserBooks(books);
                 alert(`✅ Applied ${applied} covers to your library! Syncing to community cache…`);
                 e.target.value = "";
                 for (const { b, url } of toCache) {
@@ -9045,53 +11156,40 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         <div style={{ marginBottom: 40 }}>
           {sectionTitle("📱 Import on Mobile")}
 
-          {/* Goodreads — featured mobile option */}
-          <div style={{ background: th.bgMuted, border: `2px solid ${th.accent}`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-              <span style={{ fontSize: 28 }}>🌸</span>
-              <div>
-                <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontWeight: 700, color: th.text }}>Goodreads — Easiest Mobile Import</div>
-                <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: th.textSoft, fontStyle: "italic" }}>Works on phone and tablet. Import your full reading history in seconds.</div>
+          {/* Goodreads' own Platform Connections card (with the up-to-date native
+              one-tap import flow) already covers this — a separate "featured" card
+              here duplicated it with stale manual-export instructions. Removed. */}
+
+          {/* Desktop-required platforms (native app can import these directly, no desktop needed) */}
+          {isNativeApp ? (
+            <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 6 }}>
+                📱 Kindle, Audible & Chirp — No Desktop Needed
+              </div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, marginBottom: 14, lineHeight: 1.7 }}>
+                Tap the platform below and StoryKeeper will open it right inside the app, sign you in, and pull your entire library automatically.
               </div>
             </div>
-            <ol style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.text, margin: "0 0 12px 0", paddingLeft: 20, lineHeight: 2 }}>
-              <li><strong>First:</strong> open <strong>amazon.com</strong> in Safari and make sure you are fully signed in. Then open <strong>goodreads.com</strong> and sign in there too. Do this before anything else to avoid a sign-in loop.</li>
-              <li>On Goodreads, tap the menu icon → <strong>My Books</strong></li>
-              <li>Scroll all the way down to <strong>Import and Export</strong></li>
-              <li>Tap <strong>Export Library</strong> and wait for the export link to appear — <strong>do not leave this page</strong></li>
-              <li><strong>Long press</strong> the export link → tap <strong>Share</strong> → tap <strong>Save to Files</strong> to download the CSV</li>
-              <li>Come back here, tap <strong>Import from Goodreads</strong> below, then select the file from your Files app</li>
-            </ol>
-            <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 12, fontFamily: "Georgia, serif", color: th.textSoft, fontStyle: "italic" }}>
-              💡 If you keep getting sent back to the Amazon sign-in page, sign into Amazon in a separate tab first, then return to Goodreads and try the export again.
+          ) : (
+            <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 6 }}>
+                🖥️ Kindle, Audible & Chirp — Desktop Required
+              </div>
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, marginBottom: 14, lineHeight: 1.7 }}>
+                These platforms require a desktop browser to export your library. Do it on your computer, save the CSV file, then upload it here from any device — including your phone.
+              </div>
+              <button
+                onClick={() => {
+                  const subject = encodeURIComponent("Import my books to StoryKeeper");
+                  const body = encodeURIComponent("Reminder: import my Kindle/Audible library to StoryKeeper.\n\n1. Go to thestorykeeper.co/app on my desktop\n2. Open Platform Connections\n3. Click Import from Kindle or Audible\n4. Follow the steps to export and upload my CSV");
+                  window.open(`mailto:?subject=${subject}&body=${body}`);
+                }}
+                style={{ padding: "9px 18px", background: "transparent", color: th.accent, border: `1px solid ${th.accent}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}
+              >
+                📧 Email Me a Reminder
+              </button>
             </div>
-            <button
-              onClick={() => { connect("goodreads"); setImportingPlatform(EBOOK_PLATFORMS.find(p => p.id === "goodreads")); }}
-              style={{ padding: "10px 22px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}
-            >
-              🌸 Import from Goodreads
-            </button>
-          </div>
-
-          {/* Desktop-required platforms */}
-          <div style={{ background: th.bgDeep, border: `1px solid ${th.border}`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
-            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 6 }}>
-              🖥️ Kindle, Audible & Chirp — Desktop Required
-            </div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.textSoft, marginBottom: 14, lineHeight: 1.7 }}>
-              These platforms require a desktop browser to export your library. Do it on your computer, save the CSV file, then upload it here from any device — including your phone.
-            </div>
-            <button
-              onClick={() => {
-                const subject = encodeURIComponent("Import my books to StoryKeeper");
-                const body = encodeURIComponent("Reminder: import my Kindle/Audible library to StoryKeeper.\n\n1. Go to thestorykeeper.co/app on my desktop\n2. Open Platform Connections\n3. Click Import from Kindle or Audible\n4. Follow the steps to export and upload my CSV");
-                window.open(`mailto:?subject=${subject}&body=${body}`);
-              }}
-              style={{ padding: "9px 18px", background: "transparent", color: th.accent, border: `1px solid ${th.accent}`, borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}
-            >
-              📧 Email Me a Reminder
-            </button>
-          </div>
+          )}
 
           {/* Manual add */}
           <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 12, padding: "18px 20px" }}>
@@ -9140,9 +11238,16 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           mediaType={AUDIO_PLATFORMS.some(p => p.id === importingPlatform.id) ? "audiobooks" : "ebooks"}
           onClose={() => setImportingPlatform(null)}
           onImport={(newBooks) => {
-            const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+            const existing = getUserBooksSync();
             const withIds = newBooks.map(b => ({ ...b, id: `${b.platform}-${Date.now()}-${Math.random()}` }));
-            localStorage.setItem("sk_user_books", JSON.stringify([...existing, ...withIds]));
+            saveUserBooks([...existing, ...withIds]);
+
+            // Write all imported books with ISBNs to community cache so every user benefits
+            withIds.forEach(b => {
+              if (b.isbn || b.description) {
+                writeToCache(b.isbn || null, b.title, b.author, b.description || null, b.coverUrl || null, b.genre || null);
+              }
+            });
 
             // Save Goodreads reading status and dates
             const statusKey = `sk_statuses_${mediaType}`;
@@ -9191,7 +11296,7 @@ function SearchBar({ mediaType, onSelectBook }) {
       books.map(b => ({ ...b, genre }))
     );
     try {
-      const user = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const user = getUserBooksSync();
       return [...base, ...user];
     } catch { return base; }
   })();
@@ -9418,6 +11523,8 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   const [sortBy, setSortBy] = useState(() => localStorage.getItem("sk_shelf_sort") || "default");
   const [selectedBook, setSelectedBook] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const scrollRef = useRef(null);
+  const [atTop, setAtTop] = useState(true);
 
   useEffect(() => {
     if (autoOpenBook) {
@@ -9438,12 +11545,14 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
       .filter(b => !hiddenBooks.has(b.isbn || b.title));
     const userBooks = (() => {
       try {
-        const all = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-        return all.filter(b => {
-          const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
-          const effectiveGenre = migrateGenre(genreOverrides[b.isbn || b.title] || b.genre || "");
-          return effectiveGenre === genre && bookMedia === mediaType;
-        });
+        const all = getUserBooksSync();
+        return all
+          .map((b, idx) => ({ ...b, _libIdx: idx }))
+          .filter(b => {
+            const bookMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
+            const effectiveGenre = migrateGenre(genreOverrides[b.isbn || b.title] || b.genre || "");
+            return effectiveGenre === genre && bookMedia === mediaType;
+          });
       } catch { return []; }
     })();
     return [...allBooks, ...overriddenToHere, ...userBooks];
@@ -9466,17 +11575,9 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
     if (sortBy === "author") return [...arr].sort((a, b) => (a.author || "").split(" ").pop().localeCompare((b.author || "").split(" ").pop()));
     return arr;
   };
-  const crossMediaMatches = filterQuery.trim().length >= 2 ? (() => {
-    try {
-      const q = filterQuery.toLowerCase();
-      const allUserBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-      return allUserBooks.filter(b => {
-        const bMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
-        if (bMedia === mediaType) return false; // already in current shelf
-        return b.title?.toLowerCase().includes(q) || (b.author || "").toLowerCase().includes(q);
-      });
-    } catch { return []; }
-  })() : [];
+  // Cross-shelf/cross-media matching belongs only to the home screen's global search
+  // (GlobalSearchOverlay) — a per-shelf filter should stay scoped to the shelf you're
+  // actually on, not surface audiobooks while browsing eBooks.
   const filtered = filterQuery.trim()
     ? allShelfBooks.filter(b => b.title.toLowerCase().includes(filterQuery.toLowerCase()) || (b.author || "").toLowerCase().includes(filterQuery.toLowerCase()))
     : allShelfBooks;
@@ -9495,14 +11596,19 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
 
   const handleDelete = (book) => {
     const bookKey = book.isbn || book.title;
-    const userBooksAll = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-    const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-    if (isUser) {
-      localStorage.setItem("sk_user_books", JSON.stringify(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title))));
+    const userBooksAll = getUserBooksSync();
+    if (typeof book._libIdx === "number" && userBooksAll[book._libIdx] &&
+        ((book.isbn && userBooksAll[book._libIdx].isbn === book.isbn) || userBooksAll[book._libIdx].title === book.title)) {
+      saveUserBooks(userBooksAll.filter((_, idx) => idx !== book._libIdx));
     } else {
-      const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
-      if (!hidden.includes(bookKey)) hidden.push(bookKey);
-      localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+      if (isUser) {
+        saveUserBooks(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
+      } else {
+        const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
+        if (!hidden.includes(bookKey)) hidden.push(bookKey);
+        localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      }
     }
     setRefreshKey(k => k + 1);
     setSelectedBook(null);
@@ -9514,7 +11620,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   return (
     <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", zIndex: 550, overflowX: "hidden" }}>
       {/* Parchment background — separate fixed layer so it never scrolls */}
-      <div style={{ position: "fixed", inset: 0, background: '#F8F1E4 url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg") center/cover', zIndex: 0, pointerEvents: "none" }} />
+      <div style={{ position: "fixed", inset: 0, background: '#F8F1E4 url("/parchment.jpg") center/cover', zIndex: 0, pointerEvents: "none" }} />
 
       {/* Header */}
       <div style={{
@@ -9583,50 +11689,67 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
         </div>
       </div>
 
+      {/* Back to top button */}
+      <button
+        onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+        style={{
+          position: "absolute",
+          bottom: 28,
+          right: 28,
+          width: 48,
+          height: 48,
+          borderRadius: "50%",
+          border: "1px solid #8B5E3C",
+          cursor: "pointer",
+          background: '#F8F1E4 url("/parchment.jpg") center/cover fixed',
+          color: "#3A2A1A",
+          fontSize: 20,
+          boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
+          zIndex: 201,
+          opacity: atTop ? 0 : 1,
+          pointerEvents: atTop ? "none" : "auto",
+          transition: "opacity 0.25s ease",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        title="Back to top"
+      >
+        ↑
+      </button>
+
       {/* Book shelf */}
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}>
-        {crossMediaMatches.length > 0 && (
-          <div style={{ margin: "12px 12px 0", background: "rgba(255,255,255,0.6)", border: "1px solid #D8C3A5", borderRadius: 10, padding: "10px 14px" }}>
-            <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, color: "#5C3A1E", marginBottom: 8 }}>
-              Also found in your other shelves:
-            </div>
-            {crossMediaMatches.map((b, i) => {
-              const bMedia = b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "ebook" ? "ebooks" : b.mediaType);
-              const emoji = bMedia === "physical" ? "📚" : bMedia === "audiobooks" ? "🎧" : "📱";
-              const label = bMedia === "physical" ? "Physical" : bMedia === "audiobooks" ? "Audiobook" : "eBook";
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: i < crossMediaMatches.length - 1 ? "1px solid #E8D5B0" : "none", cursor: "pointer" }}
-                  onClick={() => { setFilterQuery(""); }}>
-                  {b.coverUrl ? <img src={b.coverUrl} alt="" style={{ width: 28, height: 40, objectFit: "cover", borderRadius: 2, flexShrink: 0 }} /> : <div style={{ width: 28, height: 40, background: "#D8C3A5", borderRadius: 2, flexShrink: 0 }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 600, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.title}</div>
-                    <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#6B4E32", fontStyle: "italic" }}>{b.author}</div>
-                  </div>
-                  <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", flexShrink: 0 }}>{emoji} {label}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {books.length === 0 ? (
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
+        style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 100, position: "relative", zIndex: 1 }}
+      >
+        {filterQuery && books.length === 0 ? (
           <div style={{ textAlign: "center", color: "rgba(200,180,140,0.5)", fontFamily: "Georgia, serif", fontSize: 14, fontStyle: "italic", marginTop: 60 }}>
-            {filterQuery ? "No books match your search." : "No books in this collection yet."}
+            No books match your search.
           </div>
         ) : (() => {
-          const perRowBooks = mediaType === "audiobooks" ? (isTablet ? 4 : 3) : (isTablet ? 7 : 5);
+          const canFitFourBooks = window.innerWidth >= 420;
+          const perRowBooks = mediaType === "audiobooks" ? (isTablet ? 4 : 2) : (isTablet ? 7 : (canFitFourBooks ? 4 : 3));
           const rows = [];
           for (let i = 0; i < books.length; i += perRowBooks) rows.push(books.slice(i, i + perRowBooks));
+          // Always keep 6 extra vacant shelves available beyond whatever's filled —
+          // as books fill existing shelves, new empty ones get added automatically
+          const vacantShelvesAlwaysAvailable = 6;
+          for (let i = 0; i < vacantShelvesAlwaysAvailable; i++) rows.push([]);
           const bookGap = mediaType === "audiobooks" ? (isTablet ? 10 : 6) : (isTablet ? 5 : 3);
           const rowMinH = mediaType === "audiobooks" ? (isTablet ? 150 : 110) : (isTablet ? 300 : 230);
           const spineW = mediaType === "audiobooks" ? undefined : (isTablet ? 56 : 44);
           const plantW = mediaType === "audiobooks" ? (isTablet ? 200 : 155) : (isTablet ? 280 : 220);
           const plantH = mediaType === "audiobooks" ? (isTablet ? 500 : 380) : (isTablet ? 960 : 760);
 
+          const plantOffset = mediaType === "audiobooks" ? (isTablet ? 90 : 68) : 152;
           return rows.map((row, rowIndex) => {
             const layout = rowIndex % 3;
             const plantSrc = "/" + PLANT_IMAGES[rowIndex % PLANT_IMAGES.length];
+
             const plantEl = (
-              <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: "translateY(112px)", position: "relative", zIndex: 10 }}>
+              <div style={{ flexShrink: 0, alignSelf: "flex-end", pointerEvents: "none", transform: `translateY(${plantOffset}px)`, position: "relative", zIndex: 10 }}>
                 <img src={plantSrc} alt="plant" style={{ width: plantW, height: "auto", display: "block" }} />
               </div>
             );
@@ -9643,7 +11766,8 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
             // Layout 2: all books LEFT, plant FAR RIGHT
             let rowContent;
             const plantGap = 6;
-            const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: "center", width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
+            const edgeJustify = layout === 0 ? "flex-start" : layout === 2 ? "flex-end" : "center";
+            const rowBase = { display: "flex", alignItems: "flex-end", justifyContent: edgeJustify, width: "100%", padding: "20px 8px 0", minHeight: rowMinH, boxSizing: "border-box", gap: plantGap };
             if (layout === 0) {
               rowContent = (
                 <div style={rowBase}>
@@ -9685,7 +11809,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
         position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
         background: "rgba(248,241,228,0.97)", borderTop: "1px solid rgba(139,94,60,0.3)",
         display: "flex", justifyContent: "space-around", alignItems: "center",
-        padding: `${isTablet ? "12px" : "10px"} env(safe-area-inset-right, 0px) calc(${isTablet ? "12px" : "10px"} + env(safe-area-inset-bottom)) env(safe-area-inset-left, 0px)`,
+        padding: `${isTablet ? "8px" : "6px"} env(safe-area-inset-right, 0px) calc(${isTablet ? "8px" : "6px"} + env(safe-area-inset-bottom)) env(safe-area-inset-left, 0px)`,
         pointerEvents: "all",
       }}>
         {[
@@ -9698,12 +11822,12 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
           <button key={label} onClick={action}
             style={{
               background: "none", border: "none", cursor: "pointer",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
               color: active ? "#8B2020" : "#5C3A1E",
-              fontFamily: "Georgia, serif", fontSize: isTablet ? 13 : 10, padding: "4px 12px",
+              fontFamily: "Georgia, serif", fontSize: isTablet ? 12 : 9, padding: "3px 10px",
               WebkitTapHighlightColor: "transparent", touchAction: "manipulation",
             }}>
-            <span style={{ fontSize: isTablet ? 28 : 22 }}>{icon}</span>
+            <span style={{ fontSize: isTablet ? 24 : 18 }}>{icon}</span>
             <span>{label}</span>
           </button>
         ))}
@@ -9723,6 +11847,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
             setRefreshKey(k => k + 1);
           }}
           onDelete={handleDelete}
+          allBooks={books}
         />
       )}
     </div>
@@ -9943,7 +12068,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   });
   const allGenreMap = Object.fromEntries([...DEFAULT_LEFT, ...DEFAULT_RIGHT].map(g => [g.genre, g.image]));
   const allGenres = genreOrder.map(g => ({ genre: g, image: allGenreMap[g] || "", label: customGenreNames[g] || g }));
-  const _allBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+  const _allBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
   const bookCount = _allBooks.length;
   const ebookCount = _allBooks.filter(b => b.type === "ebooks" || b.mediaType === "ebook").length;
   const audiobookCount = _allBooks.filter(b => b.type === "audiobooks" || b.mediaType === "audiobook").length;
@@ -9954,7 +12079,20 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
       {/* Full-screen background video */}
       <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
         <video autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain", filter: "brightness(1)" }}
-          src="/reading-nook.mp4" onError={e => e.target.style.display = "none"} />
+          src="/reading-nook.mp4" onError={e => e.target.style.display = "none"}
+          ref={el => {
+            if (!el) return;
+            const resume = () => { if (el.paused) el.play().catch(() => {}); };
+            document.addEventListener("visibilitychange", () => { if (!document.hidden) resume(); }, { once: false });
+            window.addEventListener("pageshow", resume, { once: false });
+            window.addEventListener("focus", resume, { once: false });
+            // Web visibility events aren't reliably fired in a native WebView when the OS
+            // backgrounds/foregrounds the whole app (e.g. tapping "Read" opens the Kindle
+            // app, then returning to StoryKeeper) — Capacitor's own resume event covers that.
+            if (Capacitor.isNativePlatform()) {
+              import('@capacitor/app').then(({ App: CapApp }) => { CapApp.addListener('resume', resume); }).catch(() => {});
+            }
+          }} />
         {/* Light vignette only at very top and bottom so video stays visible */}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(10,6,2,0.55) 0%, transparent 30%, transparent 55%, rgba(10,6,2,0.75) 100%)" }} />
         {/* Lamp damper — softens the bright lamp on the left near the bottom */}
@@ -9962,7 +12100,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
       </div>
 
       {/* Floating header */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2, padding: `${isPWA && isIOS ? "calc(env(safe-area-inset-top) + 8px)" : isTablet ? "16px" : "12px"} 20px 8px`, textAlign: "center" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2, padding: `${(isPWA && isIOS) || Capacitor.isNativePlatform() ? "calc(env(safe-area-inset-top) + 8px)" : isTablet ? "16px" : "12px"} 20px 8px`, textAlign: "center" }}>
         <div style={{ fontFamily: '"Italianno", cursive', fontSize: isTablet ? 72 : 52, color: "#F5ECD7", letterSpacing: 2, fontWeight: 400, textShadow: "0 2px 24px rgba(0,0,0,0.95), 0 0 50px rgba(210,150,50,0.35)", lineHeight: 1 }}>
           StoryKeeper
         </div>
@@ -10001,7 +12139,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
 
       {/* Genre strip — pinned above tab bar, horizontally scrollable */}
       <div style={{
-        position: "absolute", bottom: "calc(64px + env(safe-area-inset-bottom))", left: 0, right: 0, zIndex: 2,
+        position: "absolute", bottom: `calc(${isTablet ? "62px" : "50px"} + env(safe-area-inset-bottom))`, left: 0, right: 0, zIndex: 2,
       }}>
         {/* Label */}
         <div style={{ paddingLeft: 16, marginBottom: 8, fontFamily: "Georgia, serif", fontSize: 11, color: "rgba(201,169,110,0.8)", letterSpacing: 1, textTransform: "uppercase", textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
@@ -10049,8 +12187,8 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
                     <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(10,5,2,0.88) 0%, rgba(10,5,2,0.15) 60%)" }} />
                     {reorderMode && canReorder && <div style={{ position: "absolute", top: 6, left: 0, right: 0, textAlign: "center", fontSize: 14, opacity: 0.8 }}>⠿</div>}
                     <div style={{
-                      position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 4px 6px",
-                      fontFamily: '"Palatino Linotype", Palatino, Georgia, serif', fontSize: isTablet ? 13 : 10, fontWeight: 700,
+                      position: "absolute", bottom: 0, left: 0, right: 0, padding: isTablet ? "8px 4px 6px" : "5px 3px 4px",
+                      fontFamily: '"Palatino Linotype", Palatino, Georgia, serif', fontSize: isTablet ? 13 : 11, fontWeight: 700,
                       color: "#F8F1E4", textAlign: "center", textShadow: "0 1px 6px rgba(0,0,0,0.9)",
                     }}>
                       {label}
@@ -10169,7 +12307,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
         position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
         background: "rgba(15,8,3,0.96)", borderTop: "1px solid rgba(139,94,60,0.3)",
         display: "flex", justifyContent: "space-around", alignItems: "center",
-        padding: `${isTablet ? "12px" : "10px"} 0 calc(${isTablet ? "12px" : "10px"} + env(safe-area-inset-bottom))`,
+        padding: `${isTablet ? "8px" : "6px"} 0 calc(${isTablet ? "8px" : "6px"} + env(safe-area-inset-bottom))`,
         paddingLeft: "env(safe-area-inset-left, 0px)",
         paddingRight: "env(safe-area-inset-right, 0px)",
         pointerEvents: "all",
@@ -10184,13 +12322,13 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
           <button key={label} onClick={action ?? undefined}
             style={{
               background: "none", border: "none", cursor: action ? "pointer" : "default",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
               color: active ? "#C9A96E" : "rgba(200,180,140,0.7)",
-              fontFamily: "Georgia, serif", fontSize: isTablet ? 13 : 10,
-              padding: "4px 12px", WebkitTapHighlightColor: "transparent",
+              fontFamily: "Georgia, serif", fontSize: isTablet ? 12 : 9,
+              padding: "3px 10px", WebkitTapHighlightColor: "transparent",
               touchAction: "manipulation",
             }}>
-            <span style={{ fontSize: isTablet ? 28 : 22 }}>{icon}</span>
+            <span style={{ fontSize: isTablet ? 24 : 18 }}>{icon}</span>
             <span>{label}</span>
           </button>
         ))}
@@ -10482,15 +12620,13 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
 
   const renderFlowerPanel = (genres, side) => (
     <div style={{
-      width: 100,
+      width: 130,
       flexShrink: 0,
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "space-evenly",
-      padding: "60px 0 10px",
-      paddingLeft: side === "left" ? 20 : 0,
-      paddingRight: side === "right" ? 20 : 0,
+      padding: "60px 8px 10px",
       background: "rgba(8,4,2,0.72)",
       borderRight: side === "left" ? "1px solid rgba(90,50,20,0.4)" : "none",
       borderLeft: side === "right" ? "1px solid rgba(90,50,20,0.4)" : "none",
@@ -10532,8 +12668,8 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
           >
             {/* Frame */}
             <div style={{
-              width: 52,
-              height: 58,
+              width: 72,
+              height: 86,
               background: "#F5EDD5",
               border: `1px solid ${isHov ? "#C4A870" : "rgba(180,148,90,0.55)"}`,
               borderRadius: 2,
@@ -10572,11 +12708,11 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
             <span style={{
               fontFamily: "Georgia, serif",
               fontStyle: "italic",
-              fontSize: "clamp(7px, 0.7vw, 9px)",
+              fontSize: "clamp(8px, 0.8vw, 11px)",
               color: isHov ? "#F5E6C8" : "rgba(220,200,160,0.75)",
               textAlign: "center",
               lineHeight: 1.2,
-              maxWidth: 64,
+              maxWidth: 80,
               userSelect: "none",
               textShadow: "0 1px 4px rgba(0,0,0,0.9)",
             }}>
@@ -10603,7 +12739,19 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
           <div style={{ position: "relative", aspectRatio: "4/3", maxWidth: "100%", maxHeight: "100%", width: "100%" }}>
           <video
             autoPlay loop muted playsInline
-            style={{ width: "100%", height: "100%", objectFit: "fill", display: "block", filter: "brightness(1)" }}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", filter: "brightness(1)" }}
+            ref={el => {
+              if (!el) return;
+              el.muted = true;
+              const resume = () => { if (el.paused) el.play().catch(() => {}); };
+              resume();
+              document.addEventListener("visibilitychange", () => { if (!document.hidden) resume(); }, { once: false });
+              window.addEventListener("pageshow", resume, { once: false });
+              window.addEventListener("focus", resume, { once: false });
+              if (Capacitor.isNativePlatform()) {
+                import('@capacitor/app').then(({ App: CapApp }) => { CapApp.addListener('resume', resume); }).catch(() => {});
+              }
+            }}
           >
             <source src="/reading-nook.mp4" type="video/mp4" />
           </video>
@@ -10664,7 +12812,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
 
           {/* Library totals */}
           {(() => {
-            const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+            const userBooks = getUserBooksSync();
             const ebooks = userBooks.filter(b => b.mediaType === "ebook" || b.type === "ebooks").length;
             const audiobooks = userBooks.filter(b => b.mediaType === "audiobook" || b.type === "audiobooks").length;
             const physical = userBooks.filter(b => b.type === "physical" || b.mediaType === "physical").length;
@@ -10980,6 +13128,9 @@ function ConfirmEmailScreen({ email, supabaseRef, onChangeEmail }) {
   const [resending, setResending] = React.useState(false);
   const [resent, setResent] = React.useState(false);
   const [resentMsg, setResentMsg] = React.useState("");
+  const [code, setCode] = React.useState("");
+  const [verifying, setVerifying] = React.useState(false);
+  const [verifyError, setVerifyError] = React.useState("");
 
   async function resend(targetEmail) {
     setResending(true); setResent(false); setResentMsg("");
@@ -10989,6 +13140,16 @@ function ConfirmEmailScreen({ email, supabaseRef, onChangeEmail }) {
     if (error) { setResentMsg("Could not resend. Try again."); return; }
     setResent(true);
     setResentMsg(`Confirmation resent to ${targetEmail}`);
+  }
+
+  async function verifyCode() {
+    if (!code.trim()) return;
+    setVerifying(true); setVerifyError("");
+    const sb = supabaseRef?.current;
+    const { error } = await sb.auth.verifyOtp({ email, token: code.trim(), type: "signup" });
+    setVerifying(false);
+    if (error) { setVerifyError("That code didn't work — check for typos or click the link in your email instead."); return; }
+    // On success, onAuthStateChange picks up the new session and closes this modal automatically
   }
 
   return (
@@ -11042,6 +13203,34 @@ function ConfirmEmailScreen({ email, supabaseRef, onChangeEmail }) {
 
       <div style={{ fontSize: 12, color: th.textSoft, lineHeight: 1.6, marginBottom: 16 }}>
         Don't see it? Check your spam or junk folder.
+      </div>
+
+      <div style={{ borderTop: `1px solid ${th.textSoft}33`, paddingTop: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: th.textMid, marginBottom: 8 }}>
+          Link not working? Enter the 6-digit code from the email instead:
+        </div>
+        <input
+          value={code}
+          onChange={e => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+          onKeyDown={e => e.key === "Enter" && verifyCode()}
+          placeholder="000000"
+          inputMode="numeric"
+          style={{
+            width: "100%", boxSizing: "border-box", padding: "9px 12px",
+            border: `1.5px solid ${th.accent}`, borderRadius: 7, fontSize: 18,
+            letterSpacing: 4, textAlign: "center",
+            background: th.bgMuted, color: th.text, marginBottom: 8,
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}
+        />
+        {verifyError && <div style={{ fontSize: 12, color: "#c04040", marginBottom: 8 }}>{verifyError}</div>}
+        <button disabled={verifying || code.length < 6} onClick={verifyCode} style={{
+          width: "100%", padding: "9px", borderRadius: 7, fontSize: 13,
+          background: th.accent, border: "none", color: th.bg,
+          cursor: verifying || code.length < 6 ? "default" : "pointer",
+          opacity: verifying || code.length < 6 ? 0.6 : 1,
+          fontFamily: '"Palatino Linotype", Palatino, serif',
+        }}>{verifying ? "Verifying…" : "Verify Code"}</button>
       </div>
 
       {resentMsg && (
@@ -11180,6 +13369,7 @@ function OnboardingWelcome({ onGetStarted, onSignIn, onSkip }) {
 
 function NewUserOnboarding({ userName, onImportGoodreads, onAddManually, onDismiss }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const isNativeApp = Capacitor.isNativePlatform();
   const [step, setStep] = React.useState(0);
 
   const steps = [
@@ -11214,7 +13404,7 @@ function NewUserOnboarding({ userName, onImportGoodreads, onAddManually, onDismi
             </div>
           </button>
 
-          <button onClick={() => setStep(2)} style={{
+          <button onClick={() => isNativeApp ? onImportGoodreads() : setStep(2)} style={{
             width: "100%", padding: "14px 18px", borderRadius: 10, fontSize: 14,
             border: `1.5px solid ${th.accent}55`, background: th.bgMuted, color: th.text, cursor: "pointer",
             fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
@@ -11223,7 +13413,7 @@ function NewUserOnboarding({ userName, onImportGoodreads, onAddManually, onDismi
             <span style={{ fontSize: 28 }}>📱</span>
             <div>
               <div style={{ fontWeight: 700 }}>Import from Kindle or Audible</div>
-              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>Best done on a desktop browser</div>
+              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>{isNativeApp ? "Opens right inside the app — no desktop needed" : "Best done on a desktop browser"}</div>
             </div>
           </button>
 
@@ -11326,7 +13516,7 @@ function RedetectGenresModal({ onClose, th }) {
   const runScan = () => {
     setPhase("scanning");
     try {
-      const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const books = getUserBooksSync();
       const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
       const userRules = JSON.parse(localStorage.getItem("sk_author_genres") || "{}");
       const changes = [];
@@ -11348,15 +13538,18 @@ function RedetectGenresModal({ onClose, th }) {
   const applyAll = () => {
     setPhase("applying");
     try {
-      const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const books = getUserBooksSync();
       const overrides = JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}");
       const userRules = JSON.parse(localStorage.getItem("sk_author_genres") || "{}");
       books.forEach(b => {
         if (b.isbn && overrides[b.isbn]) return;
         const detected = detectGenreFromTitle(b.title || "") || getAuthorGenre(b.author || "", userRules, {}) || null;
-        if (detected && detected !== b.genre) b.genre = detected;
+        if (detected && detected !== b.genre) {
+          b.genre = detected;
+          if (b.isbn) setGenreOverride(b.isbn, detected);
+        }
       });
-      localStorage.setItem("sk_user_books", JSON.stringify(books));
+      saveUserBooks(books);
       setPhase("done");
     } catch(e) {
       setErrorMsg(e.message);
@@ -11439,10 +13632,14 @@ function FetchDescriptionsModal({ onClose, th }) {
   const [phase, setPhase] = React.useState("idle"); // idle | running | done | error
   const [progress, setProgress] = React.useState({ done: 0, total: 0, fetched: 0, current: "" });
   const [errorMsg, setErrorMsg] = React.useState("");
+  const [quotaHit, setQuotaHit] = React.useState(false);
+  const [storageFull, setStorageFull] = React.useState(false);
   const stopRef = React.useRef(false);
 
   const run = async () => {
     stopRef.current = false;
+    setQuotaHit(false);
+    setStorageFull(false);
     setPhase("running");
 
     const fetchWithTimeout = async (url, ms = 2000) => {
@@ -11456,32 +13653,36 @@ function FetchDescriptionsModal({ onClose, th }) {
     const gKey = localStorage.getItem("sk_google_api_key") || "";
 
     try {
-      const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const books = getUserBooksSync();
       const targets = books.map((b, i) => ({ b, i })).filter(({ b }) =>
         (!b.description || b.description.trim() === "") && !SKIP_DESC_GENRES.includes(b.genre)
       );
 
-      // Load entire community cache once — avoids one Supabase query per book
+      setProgress({ done: 0, total: targets.length, fetched: 0, current: "Loading community cache…" });
+
+      // Load only the cache rows we actually need (by ISBN), in batches — not the whole table
       const cacheByIsbn = new Map();
       const cacheByTitle = new Map();
       try {
-        let from = 0;
-        const PAGE = 1000;
-        while (true) {
-          const { data } = await sb.from("community_descriptions").select("isbn,title,author,description").range(from, from + PAGE - 1);
-          if (!data?.length) break;
-          data.forEach(r => {
+        const isbns = [...new Set(targets.map(({ b }) => b.isbn).filter(Boolean))];
+        const CHUNK = 150;
+        for (let i = 0; i < isbns.length; i += CHUNK) {
+          const chunk = isbns.slice(i, i + CHUNK);
+          const { data } = await sb.from("community_descriptions").select("isbn,title,author,description").in("isbn", chunk);
+          (data || []).forEach(r => {
             if (r.isbn) cacheByIsbn.set(r.isbn, r.description);
             if (r.title) cacheByTitle.set(r.title.toLowerCase().trim(), r.description);
           });
-          if (data.length < PAGE) break;
-          from += PAGE;
         }
       } catch { /* ignore — will fall through to API */ }
 
       const userId = (await sb.auth.getUser()).data.user?.id;
       let fetched = 0;
       let done = 0;
+      // Google enforces both a daily quota AND a short burst-rate limit (e.g. 100 requests/minute).
+      // A 429 is far more likely to be the short burst limit, so back off temporarily instead of
+      // permanently disabling Google for the rest of the run — it self-recovers after the cooldown.
+      let googleCooldownUntil = 0;
       setProgress({ done: 0, total: targets.length, fetched: 0, current: "" });
 
       const processBook = async ({ b: book, i: idx }) => {
@@ -11532,16 +13733,18 @@ function FetchDescriptionsModal({ onClose, th }) {
           } catch { /* ignore */ }
         }
 
-        // Step 4: Google Books (last — 1000/day limit)
-        if (!desc && cleaned) {
+        // Step 4: Google Books (last — daily quota + short burst-rate limit apply). Backs off
+        // temporarily on 429 rather than disabling Google for the rest of the run; cache/OpenLibrary
+        // lookups (steps 1-3) keep working for remaining books regardless.
+        if (!desc && cleaned && Date.now() > googleCooldownUntil) {
           try {
             const gq = normAuthor ? `intitle:${encodeURIComponent(cleaned)}+inauthor:${encodeURIComponent(normAuthor)}` : `intitle:${encodeURIComponent(cleaned)}`;
             const res = await fetchWithTimeout(`https://www.googleapis.com/books/v1/volumes?q=${gq}&maxResults=1&langRestrict=en${gKey ? `&key=${gKey}` : ""}`, 5000);
             const json = await res.json();
             if (json.error) {
-              // Quota exceeded — stop hitting Google Books for remaining books
               if (json.error.code === 429 || json.error.status === "RESOURCE_EXHAUSTED" || /quota/i.test(json.error.message || "")) {
-                stopRef.current = true;
+                googleCooldownUntil = Date.now() + 60000;
+                setQuotaHit(true);
               }
             } else {
               const vol = json.items?.[0]?.volumeInfo;
@@ -11557,7 +13760,14 @@ function FetchDescriptionsModal({ onClose, th }) {
           cacheByIsbn.set(book.isbn, desc);
           if (cleaned) cacheByTitle.set(cleaned.toLowerCase(), desc);
           // Save immediately so nothing is lost
-          localStorage.setItem("sk_user_books", JSON.stringify(books));
+          try {
+            saveUserBooks(books);
+          } catch (storageErr) {
+            // Browser local storage is full (large libraries can hit this) — stop cleanly
+            // instead of crashing; whatever was saved before this point is kept.
+            stopRef.current = true;
+            setStorageFull(true);
+          }
           if (book.isbn) {
             try { await sb.from("community_descriptions").upsert({ isbn: book.isbn, title: cleaned, author: normAuthor, description: desc, uploaded_by: userId }); }
             catch { /* ignore */ }
@@ -11577,13 +13787,18 @@ function FetchDescriptionsModal({ onClose, th }) {
         await yield_();
       }
 
-      localStorage.setItem("sk_user_books", JSON.stringify(books));
+      try { saveUserBooks(books); } catch { setStorageFull(true); }
       setProgress(p => ({ ...p, done: targets.length }));
       setPhase("done");
     } catch(e) {
-      // Save whatever we got before crashing
-      try { localStorage.setItem("sk_user_books", JSON.stringify(JSON.parse(localStorage.getItem("sk_user_books") || "[]"))); } catch { /* ignore */ }
-      setErrorMsg(e.message);
+      // Try to save whatever was found in memory before the crash
+      try { saveUserBooks(books); } catch { /* storage itself is the problem — nothing more we can do here */ }
+      if (e.name === "QuotaExceededError") {
+        setStorageFull(true);
+        setErrorMsg("Your browser's local storage is full.");
+      } else {
+        setErrorMsg(e.message);
+      }
       setPhase("error");
     }
   };
@@ -11632,6 +13847,16 @@ function FetchDescriptionsModal({ onClose, th }) {
 
         {phase === "done" && (
           <>
+            {storageFull && (
+              <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#B05040", margin: "0 0 8px" }}>
+                ⚠️ Your browser's local storage is full, so saving had to stop early — this isn't a Google quota issue, it's a device storage limit (common with very large libraries). What was already found up to this point is saved. Try clearing unused books, photos, or other site data on this device to free up space, then run this again to pick up where it left off.
+              </p>
+            )}
+            {quotaHit && (
+              <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#b85c00", margin: "0 0 8px" }}>
+                ⚠️ Google Books rate limit hit at least once — those books may have been skipped (your daily quota likely isn't exhausted; this resolves on its own, just run it again later).
+              </p>
+            )}
             <p style={{ fontFamily: "Georgia, serif", fontSize: 14, color: th.text, margin: "0 0 20px" }}>
               Done! Found descriptions for <strong>{progress.fetched}</strong> of {progress.total} books checked.
             </p>
@@ -11646,7 +13871,11 @@ function FetchDescriptionsModal({ onClose, th }) {
                 ✅ Saved <strong>{progress.fetched}</strong> descriptions before stopping.
               </p>
             )}
-            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#B05040", margin: "0 0 16px" }}>⚠️ {errorMsg} — run again tomorrow to continue.</p>
+            <p style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#B05040", margin: "0 0 16px" }}>
+              ⚠️ {errorMsg}{storageFull
+                ? " This is a device storage limit, not a daily quota — free up some space on this device, then run it again to continue."
+                : " Try running it again."}
+            </p>
             <button onClick={onClose} style={{ width: "100%", padding: "10px", background: th.bgMuted, color: th.text, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14 }}>Close</button>
           </>
         )}
@@ -12218,12 +14447,35 @@ function BookOfTheMonthPage({ onClose }) {
     ? new Date(botm.month + "-02").toLocaleDateString("en-US", { month: "long", year: "numeric" })
     : "";
 
-  const addToTBR = () => {
+  const addToTBR = async () => {
     if (!botm) return;
     const tbr = (() => { try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; } })();
     const already = tbr.some(b => b.title === botm.title);
     if (!already) {
-      tbr.push({ title: botm.title, author: botm.author, isbn: botm.isbn || "", cover: botm.cover || null, addedAt: Date.now() });
+      let enriched = { title: botm.title, author: botm.author, isbn: botm.isbn || "", coverUrl: botm.cover || null };
+      if (!enriched.description || !enriched.coverUrl || !enriched.isbn) {
+        try {
+          const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+          const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+          let res;
+          if (enriched.isbn) {
+            res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(enriched.isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          } else {
+            const t = encodeURIComponent((enriched.title || "").toLowerCase());
+            res = await fetch(`${url}/rest/v1/book_cache?title=ilike.*${t}*&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+          }
+          const rows = await res.json();
+          const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+          if (cached) {
+            if (!enriched.isbn && cached.isbn) enriched.isbn = cached.isbn;
+            if (!enriched.description && cached.description) enriched.description = cached.description;
+            if (!enriched.coverUrl && cached.cover_url && !cached.cover_url.includes("covers.openlibrary.org/b/isbn/")) enriched.coverUrl = cached.cover_url;
+            if (!enriched.author && cached.author) enriched.author = cached.author;
+          }
+        } catch { /* proceed with what we have */ }
+      }
+      writeToCommunityCache(enriched.isbn, enriched.title, enriched.author, enriched.description, enriched.coverUrl, null);
+      tbr.push({ ...enriched, cover: enriched.coverUrl, addedAt: Date.now() });
       localStorage.setItem("sk_tbr_books", JSON.stringify(tbr));
     }
     setAdded(true);
@@ -12233,7 +14485,7 @@ function BookOfTheMonthPage({ onClose }) {
     <div style={{
       position: "fixed", inset: 0, zIndex: 2100,
       backgroundColor: "#F8F1E4",
-      backgroundImage: 'url("https://www.myfreetextures.com/wp-content/uploads/2013/07/old-brown-vintage-parchment-paper-texture.jpg")',
+      backgroundImage: 'url("/parchment.jpg")',
       backgroundSize: "cover", backgroundPosition: "center",
       overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif',
     }}>
@@ -12280,6 +14532,12 @@ function BookOfTheMonthPage({ onClose }) {
             <div style={{ textAlign: "center", marginBottom: 24 }}>
               <h2 style={{ fontSize: 22, color: "#3A2A1A", margin: "0 0 6px", fontStyle: "italic" }}>{botm.title}</h2>
               <div style={{ fontSize: 15, color: "#6B4C2A" }}>by {botm.author}</div>
+              {botm.goodreadsUrl && (
+                <a href={botm.goodreadsUrl} target="_blank" rel="noopener noreferrer" style={{
+                  display: "inline-block", marginTop: 8, fontSize: 12, color: "#8B5E3C",
+                  textDecoration: "underline", fontFamily: "Georgia, serif",
+                }}>View on Goodreads →</a>
+              )}
             </div>
 
             {/* Note */}
@@ -12320,9 +14578,9 @@ function MyClubsPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookCl
     if (!authUser || !supabaseRef?.current) { setLoading(false); return; }
     const sb = supabaseRef.current;
     Promise.all([
-      sb.from("group_members").select("genre, joined_at").eq("user_id", authUser.id).order("joined_at", { ascending: false }),
-      sb.from("book_club_posts").select("genre, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
-      sb.from("book_club_nominations").select("genre, created_at").eq("user_id", authUser.id).order("created_at", { ascending: false }),
+      restSelect(sb, "group_members", `select=genre,joined_at&user_id=eq.${authUser.id}&order=joined_at.desc`),
+      restSelect(sb, "book_club_posts", `select=genre,created_at&user_id=eq.${authUser.id}&order=created_at.desc`),
+      restSelect(sb, "book_club_nominations", `select=genre,created_at&user_id=eq.${authUser.id}&order=created_at.desc`),
     ]).then(([{ data: gData }, { data: postsData }, { data: nomsData }]) => {
       setGroups(gData || []);
       // Deduplicate book clubs by genre, picking earliest participation date
@@ -12661,22 +14919,21 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
     const sb = supabaseRef.current;
 
     const [{ count }, { data: postsData }, { data: likesData }] = await Promise.all([
-      sb.from("group_members").select("*", { count: "exact", head: true }).eq("genre", genre),
-      sb.from("group_posts").select("*").eq("genre", genre).order("created_at", { ascending: false }).limit(60),
-      authUser ? sb.from("group_likes").select("post_id").eq("user_id", authUser.id) : { data: [] },
+      restCount(sb, "group_members", `select=*&genre=eq.${encodeURIComponent(genre)}`),
+      restSelect(sb, "group_posts", `select=*&genre=eq.${encodeURIComponent(genre)}&order=created_at.desc&limit=60`),
+      authUser ? restSelect(sb, "group_likes", `select=post_id&user_id=eq.${authUser.id}`) : { data: [] },
     ]);
 
     setMemberCount(count || 0);
     setPosts(postsData || []);
     setLikedPosts(new Set((likesData || []).map(l => l.post_id)));
 
-    const { data: discsData } = await sb.from("group_discussions").select("*").eq("genre", genre)
-      .order("last_reply_at", { ascending: false }).limit(50);
+    const { data: discsData } = await restSelect(sb, "group_discussions", `select=*&genre=eq.${encodeURIComponent(genre)}&order=last_reply_at.desc&limit=50`);
     setDiscussions(discsData || []);
 
     if (authUser) {
-      const { data: mem } = await sb.from("group_members").select("user_id").eq("genre", genre).eq("user_id", authUser.id).maybeSingle();
-      setIsMember(!!mem);
+      const { data: memRows } = await restSelect(sb, "group_members", `select=user_id&genre=eq.${encodeURIComponent(genre)}&user_id=eq.${authUser.id}`);
+      setIsMember(Array.isArray(memRows) && memRows.length > 0);
     }
     setLoading(false);
   }, [genre, authUser]);
@@ -12755,11 +15012,11 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
     const liked = likedPosts.has(postId);
     if (liked) {
       await sb.from("group_likes").delete().eq("post_id", postId).eq("user_id", authUser.id);
-      await sb.from("group_posts").update({ like_count: (posts.find(p => p.id === postId)?.like_count || 1) - 1 }).eq("id", postId);
+      await sb.rpc("sync_group_post_like_count", { p_post_id: postId });
       setLikedPosts(prev => { const s = new Set(prev); s.delete(postId); return s; });
     } else {
       await sb.from("group_likes").insert({ post_id: postId, user_id: authUser.id });
-      await sb.from("group_posts").update({ like_count: (posts.find(p => p.id === postId)?.like_count || 0) + 1 }).eq("id", postId);
+      await sb.rpc("sync_group_post_like_count", { p_post_id: postId });
       setLikedPosts(prev => new Set([...prev, postId]));
     }
     loadData();
@@ -12786,8 +15043,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
     await supabaseRef.current.from("group_comments").insert({
       post_id: postId, user_id: authUser.id, username, content: text,
     });
-    await supabaseRef.current.from("group_posts")
-      .update({ comment_count: (posts.find(p => p.id === postId)?.comment_count || 0) + 1 }).eq("id", postId);
+    await supabaseRef.current.rpc("sync_group_post_comment_count", { p_post_id: postId });
     setCommentText("");
     loadComments(postId);
     loadData();
@@ -12894,8 +15150,8 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)", flexShrink: 0 }}>‹</button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
             <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>👥 Group</h2>
@@ -13430,6 +15686,12 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
     if (!supabaseRef.current || !hasAccess) { setLoading(false); return; }
     setLoading(true);
     const sb = supabaseRef.current;
+    // Safety net: this function makes many sequential supabase-js calls, any one
+    // of which can hang indefinitely (see getFreshAccessToken/getSession lock
+    // issue) — without this, "loading" would never resolve to false, leaving the
+    // page stuck on "Loading…" forever instead of showing whatever did load.
+    let settled = false;
+    setTimeout(() => { if (!settled) setLoading(false); }, 20000);
 
     // Load or create the reading session (this month — the book chosen last month)
     const meetDate = new Date(readingYear, readingMonth - 1, lastSaturday).toISOString().split("T")[0];
@@ -13476,12 +15738,13 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
       .order("last_reply_at", { ascending: false }).limit(50);
     setDiscussionsBC(discsData || []);
 
-    const { count: memCount } = await sb.from("book_club_members").select("*", { count: "exact", head: true }).eq("genre", genre);
+    const { count: memCount } = await restCount(sb, "book_club_members", `select=*&genre=eq.${encodeURIComponent(genre)}`);
     setMemberCountBC(memCount || 0);
     if (authUser) {
-      const { data: mem } = await sb.from("book_club_members").select("user_id").eq("genre", genre).eq("user_id", authUser.id).maybeSingle();
-      setIsMemberBC(!!mem);
+      const { data: memRows } = await restSelect(sb, "book_club_members", `select=user_id&genre=eq.${encodeURIComponent(genre)}&user_id=eq.${authUser.id}`);
+      setIsMemberBC(Array.isArray(memRows) && memRows.length > 0);
     }
+    settled = true;
     setLoading(false);
   }, [genre, hasAccess, authUser]);
 
@@ -13734,8 +15997,8 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
     <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: th.bg, overflowY: "auto", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 100px" }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>‹</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+          <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, cursor: "pointer", color: "#F5ECD7", fontSize: 20, padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)", flexShrink: 0 }}>‹</button>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1 }}>{genre}</div>
             <h2 style={{ margin: 0, fontSize: 22, color: th.text }}>📚 Book Club</h2>
@@ -14508,12 +16771,106 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
       });
   }, [authUser?.id]);
 
+  // Fetch social links via a direct REST call rather than the supabase-js client's
+  // .maybeSingle() — confirmed via diagnostics that a plain authenticated REST GET
+  // reliably returns the row while .maybeSingle() was silently coming back empty for
+  // this same user/session, so this sidesteps whatever's going wrong there.
+  const fetchOwnSocialLinks = React.useCallback(async (attempt = 0) => {
+    console.log("UserProfileModal: fetchOwnSocialLinks starting, attempt", attempt, "authUserId", authUser?.id, "hasSupabaseRef", !!supabaseRef?.current);
+    const retry = async (delayMs) => {
+      if (attempt >= 5) return;
+      await new Promise(r => setTimeout(r, delayMs));
+      fetchOwnSocialLinks(attempt + 1);
+    };
+    if (!authUser?.id || !supabaseRef?.current) {
+      // supabaseRef.current is set by the parent's own effect, which can run
+      // after this component's effect on first mount (e.g. refreshing directly
+      // into #profile) — a plain ref doesn't re-trigger this callback like state
+      // would, so without a retry here this fails silently exactly once and
+      // never tries again for the rest of the session.
+      console.warn("UserProfileModal: authUser/supabaseRef not ready yet (attempt", attempt, ")");
+      return retry(300 * (attempt + 1));
+    }
+    try {
+      const token = await getFreshAccessToken(supabaseRef.current);
+      if (!token) {
+        // Right after a fresh page load, the SDK may not have finished
+        // hydrating the session from storage yet — retry shortly rather than
+        // giving up, since "not connected" here is otherwise indistinguishable
+        // from a real disconnect.
+        console.warn("UserProfileModal: no session token yet (attempt", attempt, ")");
+        return retry(400 * (attempt + 1));
+      }
+      const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+      const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+      const res = await fetch(`${url}/rest/v1/user_social_links?select=*&user_id=eq.${authUser.id}`, {
+        headers: { apikey: key, Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        console.warn("UserProfileModal: failed to fetch social links, status", res.status);
+        // A page-load access token can still be expired right as the SDK is
+        // refreshing it in the background — force a refresh and retry.
+        if (res.status === 401 || res.status === 403) {
+          await supabaseRef.current.auth.refreshSession();
+        }
+        return retry(600 * (attempt + 1));
+      }
+      const rows = await res.json();
+      console.log("UserProfileModal: fetch succeeded, rows:", JSON.stringify(rows));
+      const data = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+      if (data) {
+        const links = { instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" };
+        console.log("UserProfileModal: setting links to", JSON.stringify(links));
+        setSocialLinks(links);
+        setSocialInputs(links);
+        if (onSocialLinksChange) onSocialLinksChange(links);
+      } else {
+        console.log("UserProfileModal: no row returned for this user_id");
+      }
+    } catch (err) {
+      console.warn("UserProfileModal: failed to fetch social links:", err);
+      return retry(600 * (attempt + 1));
+    }
+  }, [authUser?.id]);
+
   React.useEffect(() => {
     if (initialSocialLinks) {
       setSocialLinks(initialSocialLinks);
       setSocialInputs(initialSocialLinks);
     }
-  }, [initialSocialLinks]);
+    fetchOwnSocialLinks();
+  }, [fetchOwnSocialLinks]);
+
+  React.useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") fetchOwnSocialLinks(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchOwnSocialLinks]);
+
+  // Raw-REST upsert helper for one-off field updates (disconnect buttons) — same
+  // reasoning as fetchOwnSocialLinks/handleSaveSocial: avoid the supabase-js client
+  // query methods that have shown unreliable hangs/silent failures for some sessions.
+  async function upsertSocialField(fields) {
+    const sb = supabaseRef?.current;
+    if (!sb || !authUser) return false;
+    try {
+      const token = await getFreshAccessToken(sb);
+      if (!token) return false;
+      const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+      const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+      const res = await Promise.race([
+        fetch(`${url}/rest/v1/user_social_links`, {
+          method: "POST",
+          headers: { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify({ user_id: authUser.id, ...fields, updated_at: new Date().toISOString() }),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), 15000)),
+      ]);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
 
   async function handleSaveSocial() {
     const sb = supabaseRef?.current;
@@ -14527,8 +16884,24 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
       tiktok: socialLinks.tiktok,
       updated_at: new Date().toISOString(),
     };
-    const { error } = await sb.from("user_social_links").upsert(payload, { onConflict: "user_id" });
-    if (error) { setSocialMsg("Could not save. Try again."); return; }
+    try {
+      const token = await getFreshAccessToken(sb);
+      if (!token) { setSocialMsg("Could not save. Try again."); return; }
+      const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+      const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+      const res = await Promise.race([
+        fetch(`${url}/rest/v1/user_social_links`, {
+          method: "POST",
+          headers: { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify(payload),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), 15000)),
+      ]);
+      if (!res.ok) { setSocialMsg("Could not save. Try again."); return; }
+    } catch {
+      setSocialMsg("Could not save. Try again.");
+      return;
+    }
     const saved = { instagram: payload.instagram, tiktok: payload.tiktok, facebook: payload.facebook, x_twitter: payload.x_twitter };
     setSocialLinks(saved);
     if (onSocialLinksChange) onSocialLinksChange(saved);
@@ -14544,7 +16917,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
     if (!sb || !authUser) return;
     await sb.auth.updateUser({ data: { privacy: JSON.stringify(updated) } });
     // Sync to public_profiles so the shareable page reflects latest settings
-    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
     await sb.from("public_profiles").upsert({
       user_id: authUser.id,
       is_public: updated.public,
@@ -14566,7 +16939,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
 
   // Book stats
   const stats = React.useMemo(() => {
-    const userBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_user_books") || "[]"); } catch { return []; } })();
+    const userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
     const ebooks = userBooks.filter(b => !b.type || b.type === "ebooks" || b.mediaType === "ebook").length;
     const audiobooks = userBooks.filter(b => b.type === "audiobooks" || b.mediaType === "audiobook").length;
     const reading = userBooks.filter(b => b.status === "reading").length;
@@ -14723,10 +17096,10 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ flex: 1, fontSize: 12, color: th.accent, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 6, padding: "7px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                thestorykeeper.co/#u/{currentUsername}
+                thestorykeeper.co/app/#u/{currentUsername}
               </div>
               <button onClick={() => {
-                navigator.clipboard.writeText(`https://www.thestorykeeper.co/#u/${currentUsername}`);
+                navigator.clipboard.writeText(`https://www.thestorykeeper.co/app/#u/${currentUsername}`);
                 setLinkCopied(true);
                 setTimeout(() => setLinkCopied(false), 2000);
               }} style={{
@@ -14752,10 +17125,10 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <div style={{ flex: 1, fontSize: 12, color: th.accent, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 6, padding: "7px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                thestorykeeper.co?ref={currentUsername}
+                thestorykeeper.co/?ref={currentUsername}
               </div>
               <button onClick={() => {
-                navigator.clipboard.writeText(`https://www.thestorykeeper.co?ref=${currentUsername}`);
+                navigator.clipboard.writeText(`https://www.thestorykeeper.co/?ref=${currentUsername}`);
                 setInviteCopied(true);
                 setTimeout(() => setInviteCopied(false), 2000);
               }} style={{ padding: "7px 14px", borderRadius: 6, fontSize: 12, border: "none", background: th.accent, color: th.bg, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', whiteSpace: "nowrap" }}>
@@ -14766,7 +17139,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
               <button onClick={() => navigator.share({
                 title: "Join me on StoryKeeper 📚",
                 text: "I've been tracking my reading on StoryKeeper — come check it out!",
-                url: `https://www.thestorykeeper.co?ref=${currentUsername}`,
+                url: `https://www.thestorykeeper.co/?ref=${currentUsername}`,
               })} style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${th.accent}`, background: "none", color: th.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
                 📤 Share via…
               </button>
@@ -15048,7 +17421,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ color: "#14171A", fontSize: 13, fontWeight: 600 }}>@{socialLinks.x_twitter}</span>
                             <button onClick={async () => {
-                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, x_twitter: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+                              await upsertSocialField({ x_twitter: "" });
                               setSocialLinks(prev => ({ ...prev, x_twitter: "" }));
                               setSocialInputs(prev => ({ ...prev, x_twitter: "" }));
                             }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "2px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
@@ -15064,7 +17437,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ color: "#010101", fontSize: 13, fontWeight: 600 }}>@{socialLinks.tiktok}</span>
                             <button onClick={async () => {
-                              await supabaseRef.current.from("user_social_links").upsert({ user_id: authUser.id, tiktok: "", updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+                              await upsertSocialField({ tiktok: "" });
                               setSocialLinks(prev => ({ ...prev, tiktok: "" }));
                               setSocialInputs(prev => ({ ...prev, tiktok: "" }));
                             }} style={{ background: "none", border: `1px solid ${th.border}`, borderRadius: 6, padding: "2px 8px", fontSize: 11, color: th.textSoft, cursor: "pointer" }}>Disconnect</button>
@@ -15323,11 +17696,14 @@ function AdminDashboard({ authUser, supabaseRef, onClose }) {
   );
 }
 
-function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR }) {
+function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBook }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
+  const [externalResults, setExternalResults] = useState([]);
+  const [externalSearching, setExternalSearching] = useState(false);
   const debounceRef = useRef(null);
   const inputRef = useRef(null);
+  const externalReqRef = useRef(0);
 
   useEffect(() => {
     const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
@@ -15336,20 +17712,48 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR }) {
 
   const runSearch = (q) => {
     const trimmed = q.toLowerCase().trim();
-    if (trimmed.length < 2) { setResults([]); return; }
+    if (trimmed.length < 2) { setResults([]); setExternalResults([]); externalReqRef.current++; return; }
+    let localKeys = new Set();
     try {
-      const userBooks = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+      const userBooks = getUserBooksSync()
+        .map((b, idx) => ({ ...b, _libIdx: idx }));
       const userKeys = new Set(userBooks.map(b => b.isbn || b.title));
       const builtInBooks = Object.entries(library).flatMap(([genre, books]) =>
         books.map(b => ({ ...b, genre }))
       ).filter(b => !userKeys.has(b.isbn || b.title));
-      const allBooks = [...userBooks, ...builtInBooks];
-      setResults(allBooks.filter(b =>
-        b.title?.toLowerCase().includes(trimmed) ||
-        b.author?.toLowerCase().includes(trimmed) ||
-        b.genre?.toLowerCase().includes(trimmed)
-      ).slice(0, 50));
+      const tbrBooks = JSON.parse(localStorage.getItem("sk_tbr_books") || "[]")
+        .filter(b => !userKeys.has(b.isbn || b.title))
+        .map(b => ({ ...b, _isTBR: true }));
+      const allBooks = [...userBooks, ...builtInBooks, ...tbrBooks];
+      localKeys = new Set(allBooks.map(b => (b.isbn || b.title || "").toLowerCase()));
+      // Also check the author normalized to "First Last" order, so a query like
+      // "Maas, Sarah" matches a book stored as "Sarah J. Maas" and vice versa.
+      const normalizedTrimmed = normalizeAuthor(trimmed).toLowerCase().trim();
+      setResults(allBooks.filter(b => {
+        const normalizedAuthor = b.author ? normalizeAuthor(b.author).toLowerCase() : "";
+        return b.title?.toLowerCase().includes(trimmed) ||
+          b.author?.toLowerCase().includes(trimmed) ||
+          normalizedAuthor.includes(trimmed) ||
+          normalizedAuthor.includes(normalizedTrimmed) ||
+          b.genre?.toLowerCase().includes(trimmed);
+      }).slice(0, 50));
     } catch { setResults([]); }
+
+    // Also check Google Books/Open Library for anything not already in your
+    // library/catalog/TBR — the local filter above only ever matches what's
+    // already stored on-device, so without this a typo-free search for a real
+    // book you don't own yet would come back empty with no way to find it.
+    if (trimmed.length < 3) { setExternalResults([]); return; }
+    const reqId = ++externalReqRef.current;
+    setExternalSearching(true);
+    fetchBookSearch(trimmed).then(res => {
+      if (externalReqRef.current !== reqId) return; // a newer search superseded this one
+      const filtered = res.filter(b => !localKeys.has((b.isbn || b.title || "").toLowerCase())).slice(0, 15);
+      setExternalResults(filtered);
+      setExternalSearching(false);
+    }).catch(() => {
+      if (externalReqRef.current === reqId) setExternalSearching(false);
+    });
   };
 
   const handleChange = (e) => {
@@ -15382,13 +17786,6 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR }) {
             <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center", fontStyle: "italic" }}>
               Type at least 2 characters to search your library
             </div>
-          ) : results.length === 0 ? (
-            <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center" }}>
-              <div style={{ fontStyle: "italic", marginBottom: 12 }}>No books found for "{query}"</div>
-              <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#8B5E3C", color: "#F8F1E4", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
-                📚 Search for this book to add it
-              </button>
-            </div>
           ) : (
             <>
               {results.map((book, i) => (
@@ -15403,19 +17800,58 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR }) {
                     <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic" }}>{book.author}</div>
                     <div style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", marginTop: 2 }}>{book.genre}</div>
                   </div>
-                  <div style={{ fontSize: 18, flexShrink: 0 }}>
-                    {(book.type === "audiobooks" || book.mediaType === "audiobook") ? "🎧" : (book.type === "physical" || book.mediaType === "physical") ? "📚" : "📱"}
+                  <div style={{ fontSize: book._isTBR ? 11 : 18, flexShrink: 0, color: book._isTBR ? "#8B5E3C" : undefined, fontFamily: book._isTBR ? "Georgia, serif" : undefined, background: book._isTBR ? "#E8D5B0" : undefined, borderRadius: book._isTBR ? 4 : undefined, padding: book._isTBR ? "2px 6px" : undefined, fontWeight: book._isTBR ? 600 : undefined }}>
+                    {book._isTBR ? "TBR" : (book.type === "audiobooks" || book.mediaType === "audiobook") ? "🎧" : (book.type === "physical" || book.mediaType === "physical") ? "📚" : "📱"}
                   </div>
                 </div>
               ))}
-              <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic", textAlign: "center" }}>
-                {results.length} result{results.length !== 1 ? "s" : ""}
-              </div>
-              <div style={{ padding: "10px 14px", borderTop: "1px solid #E8D5B0", textAlign: "center" }}>
-                <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: "transparent", color: "#8B5E3C", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600 }}>
-                  + Add a new book to your library
-                </button>
-              </div>
+              {results.length > 0 && (
+                <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic", textAlign: "center" }}>
+                  {results.length} result{results.length !== 1 ? "s" : ""} in your library
+                </div>
+              )}
+
+              {(externalSearching || externalResults.length > 0) && (
+                <>
+                  <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic", textAlign: "center", borderTop: results.length > 0 ? "1px solid #E8D5B0" : "none", background: "#EFE2C6" }}>
+                    Not in your library — from Google Books
+                  </div>
+                  {externalSearching && (
+                    <div style={{ padding: "14px 16px", fontFamily: "Georgia, serif", fontSize: 12, color: "#8B5E3C", textAlign: "center", fontStyle: "italic" }}>⟳ Searching online…</div>
+                  )}
+                  {externalResults.map((book, i) => (
+                    <div key={"ext" + i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid #E8D5B0", cursor: "pointer" }}
+                      onClick={() => { onAddExternalBook(book); handleClose(); }}>
+                      {book.coverUrl
+                        ? <img src={book.coverUrl} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
+                        : <div style={{ width: 36, height: 52, background: "#D8C3A5", borderRadius: 3, flexShrink: 0 }} />
+                      }
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, color: "#3A2A1A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{book.title}</div>
+                        <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic" }}>{book.author}</div>
+                      </div>
+                      <div style={{ fontSize: 11, flexShrink: 0, color: "#8B5E3C", fontFamily: "Georgia, serif", fontWeight: 600, background: "#E8D5B0", borderRadius: 4, padding: "2px 6px" }}>+ Add</div>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {results.length === 0 && !externalSearching && externalResults.length === 0 && (
+                <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center" }}>
+                  <div style={{ fontStyle: "italic", marginBottom: 12 }}>No books found for "{query}"</div>
+                  <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#8B5E3C", color: "#F8F1E4", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                    📚 Add it manually
+                  </button>
+                </div>
+              )}
+
+              {results.length > 0 && (
+                <div style={{ padding: "10px 14px", borderTop: "1px solid #E8D5B0", textAlign: "center" }}>
+                  <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: "transparent", color: "#8B5E3C", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600 }}>
+                    + Add a new book to your library
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -15463,73 +17899,171 @@ function GlobalSearchBookModal({ book, onClose, onGoToShelf }) {
   );
 }
 
-export default function App() {
+class StoryKeeperErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("StoryKeeper crashed:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "#F8F1E4", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Georgia, serif", textAlign: "center", zIndex: 99999 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>📚💔</div>
+          <h2 style={{ fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2010", marginBottom: 8, fontSize: 20 }}>Something went wrong</h2>
+          <p style={{ color: "#8B5E3C", fontSize: 14, marginBottom: 20, maxWidth: 320 }}>
+            StoryKeeper hit an unexpected error. Your library data is saved locally — try reloading.
+          </p>
+          <button onClick={() => window.location.reload()} style={{ padding: "12px 28px", background: "#8B5E3C", color: "#F8F1E4", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: 16 }}>
+            Reload App
+          </button>
+          <details style={{ fontSize: 11, color: "#A0785A", maxWidth: 320 }}>
+            <summary style={{ cursor: "pointer" }}>Technical details (for support)</summary>
+            <p style={{ fontWeight: 700, marginTop: 8, marginBottom: 4, color: "#3A2010" }}>
+              {String(this.state.error?.name || "Error")}: {String(this.state.error?.message || this.state.error)}
+            </p>
+            <pre style={{ whiteSpace: "pre-wrap", textAlign: "left", marginTop: 8, fontSize: 10 }}>{String(this.state.error?.stack || "")}</pre>
+          </details>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Decoded ambient-sound buffers, cached at module level so toggling sound
+// on/off repeatedly doesn't re-fetch/re-decode the same MP3s every time.
+// Caches the in-flight PROMISE, not just the resolved value — decodeAudioData
+// is async, so if sound gets toggled again before the first decode finishes,
+// checking only the resolved cache would miss it and kick off a second
+// concurrent decode of the same (multi-MB once decoded to raw PCM) file,
+// doubling memory right when iOS Safari is most likely to crash from it.
+let _ambientBufferCache = {};
+function getAmbientBuffer(audioCtx, url) {
+  if (_ambientBufferCache[url]) return _ambientBufferCache[url];
+  const promise = (async () => {
+    const res = await fetch(url);
+    const arrayBuffer = await res.arrayBuffer();
+    return audioCtx.decodeAudioData(arrayBuffer);
+  })();
+  _ambientBufferCache[url] = promise;
+  promise.catch(() => { delete _ambientBufferCache[url]; }); // allow retry on failure
+  return promise;
+}
+
+// A single shared AudioContext for the whole session, not a new one per
+// toggle. iOS Safari strictly limits how many AudioContexts can exist in a
+// tab — repeatedly creating+closing one on every sound toggle was crashing
+// the tab there. Source nodes (cheap, one-shot, created fresh per playback)
+// still get created/stopped normally; only the context itself is shared and
+// suspended/resumed instead of closed.
+let _sharedAudioCtx = null;
+function getSharedAudioContext() {
+  if (!_sharedAudioCtx) {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    // Decoding the ~56s rain track to full-fidelity 44.1kHz stereo PCM is
+    // ~20MB+ held in memory just for that one buffer — crashing on the very
+    // first toggle on iOS even with everything else already fixed. Ambient
+    // background sound doesn't need full fidelity; a lower sample rate halves
+    // the decoded buffer size. Falls back to the default rate if the browser
+    // rejects the requested one.
+    try {
+      _sharedAudioCtx = new Ctor({ sampleRate: 22050 });
+    } catch (_) {
+      _sharedAudioCtx = new Ctor();
+    }
+  }
+  return _sharedAudioCtx;
+}
+
+function StoryKeeperApp() {
   const [soundOn, setSoundOn] = useState(false);
   const audioRef = useRef(null);
   const pendingResumeRef = useRef(null);
 
-  const startAudio = (ctx) => {
-    const FADE_DURATION = 3000;
-    const FADE_STEPS = 30;
-    const TARGET_VOL = 0.85;
-    const startCrossfade = (c) => {
-      if (!c) return;
-      const incoming = c.activeRain === "A" ? c.rainB : c.rainA;
-      const outgoing = c.activeRain === "A" ? c.rainA : c.rainB;
-      c.activeRain = c.activeRain === "A" ? "B" : "A";
-      incoming.currentTime = 0; incoming.volume = 0;
-      incoming.play().catch(() => {});
-      let step = 0;
-      if (c.xfadeInterval) clearInterval(c.xfadeInterval);
-      c.xfadeInterval = setInterval(() => {
-        step++;
-        const t = step / FADE_STEPS;
-        incoming.volume = Math.min(TARGET_VOL * t, TARGET_VOL);
-        outgoing.volume = Math.max(TARGET_VOL * (1 - t), 0);
-        if (step >= FADE_STEPS) {
-          clearInterval(c.xfadeInterval); c.xfadeInterval = null;
-          try { outgoing.pause(); outgoing.currentTime = 0; } catch (_) {}
-          scheduleNext(c);
-        }
-      }, FADE_DURATION / FADE_STEPS);
-    };
-    const scheduleNext = (c) => {
-      if (!c) return;
-      const active = c.activeRain === "A" ? c.rainA : c.rainB;
-      const remaining = (active.duration - active.currentTime - FADE_DURATION / 1000) * 1000;
-      if (c.xfadeTimer) clearTimeout(c.xfadeTimer);
-      c.xfadeTimer = setTimeout(() => startCrossfade(c), Math.max(remaining, 500));
-    };
-    ctx.rainA.volume = TARGET_VOL;
-    ctx.fire.loop = true; ctx.fire.volume = 0.08;
-    ctx.rainA.addEventListener("loadedmetadata", () => scheduleNext(ctx), { once: true });
-    ctx.rainA.play().catch(() => {});
-    ctx.fire.play().catch(() => {});
+  // Web Audio API instead of HTMLAudioElement. AudioBufferSourceNode.loop gives
+  // sample-accurate, gapless looping handled natively by the browser's audio
+  // engine — no JS-side seeking/replaying needed, which is what the old
+  // HTMLAudioElement crossfade approach required and what was leaking ~25-30MB
+  // per cycle in WebKit (Activity Monitor confirmed: multi-GB growth over an
+  // idle session, triggering Safari's "page reloaded due to memory" kill). A
+  // fresh AudioBufferSourceNode per playback is cheap and auto-GC'd once
+  // stopped — only the decoded buffer (fetched/decoded once, cached at module
+  // level) is reused.
+  const startAudio = async (ctx) => {
+    const [rainBuffer, fireBuffer] = await Promise.all([
+      getAmbientBuffer(ctx.audioCtx, "/sounds/rain-thunder.mp3"),
+      getAmbientBuffer(ctx.audioCtx, "/sounds/fire.mp3"),
+    ]);
+    // ctx.cancelled gets set by toggleSound if the user turns sound back off
+    // while this decode was still in flight. Without this check, the sources
+    // below would start playing anyway with no reference left to stop them
+    // (audioRef.current was already cleared), leaving an orphaned, unstoppable
+    // playback running — sound staying on after the user toggled it off.
+    if (ctx.cancelled) return;
+    if (ctx.audioCtx.state === "suspended") await ctx.audioCtx.resume();
+    if (ctx.cancelled) return;
+    ctx.rainSource = ctx.audioCtx.createBufferSource();
+    ctx.rainSource.buffer = rainBuffer;
+    ctx.rainSource.loop = true;
+    ctx.rainGain = ctx.audioCtx.createGain();
+    // Web Audio's GainNode allows amplification above 1.0 (unlike the old
+    // HTMLAudioElement.volume, capped at 1.0) — bumped up since the previous
+    // levels were reported as too quiet, especially on Macbook speakers.
+    ctx.rainGain.gain.value = 1.3;
+    ctx.rainSource.connect(ctx.rainGain).connect(ctx.audioCtx.destination);
+    ctx.rainSource.start();
+
+    ctx.fireSource = ctx.audioCtx.createBufferSource();
+    ctx.fireSource.buffer = fireBuffer;
+    ctx.fireSource.loop = true;
+    ctx.fireGain = ctx.audioCtx.createGain();
+    ctx.fireGain.gain.value = 0.15;
+    ctx.fireSource.connect(ctx.fireGain).connect(ctx.audioCtx.destination);
+    ctx.fireSource.start();
+  };
+
+  // Stop this playback's source nodes, but suspend (not close) the shared
+  // AudioContext so it's instantly ready to reuse on the next toggle, rather
+  // than needing a brand new context (the actual iOS crash cause) each time.
+  const teardownAudioContext = (ctx) => {
+    if (!ctx) return;
+    ctx.cancelled = true;
+    try { ctx.rainSource?.stop(); } catch (_) {}
+    try { ctx.fireSource?.stop(); } catch (_) {}
+    try { ctx.audioCtx?.suspend(); } catch (_) {}
   };
 
   const toggleSound = () => {
     try {
       if (soundOn) {
         if (pendingResumeRef.current) {
-          document.removeEventListener("touchstart", pendingResumeRef.current);
-          document.removeEventListener("click", pendingResumeRef.current);
+          document.removeEventListener("touchstart", pendingResumeRef.current, true);
+          document.removeEventListener("click", pendingResumeRef.current, true);
           pendingResumeRef.current = null;
         }
-        if (audioRef.current) {
-          try { audioRef.current.rainA.pause(); } catch (_) {}
-          try { audioRef.current.rainB.pause(); } catch (_) {}
-          try { audioRef.current.fire.pause(); } catch (_) {}
-          if (audioRef.current.xfadeInterval) clearInterval(audioRef.current.xfadeInterval);
-          if (audioRef.current.xfadeTimer) clearTimeout(audioRef.current.xfadeTimer);
-          audioRef.current = null;
-        }
+        teardownAudioContext(audioRef.current);
+        audioRef.current = null;
         localStorage.setItem("sk_sound", "off");
         setSoundOn(false);
         return;
       }
-      const ctx = { rainA: new Audio("/sounds/rain-thunder.mp3"), rainB: new Audio("/sounds/rain-thunder.mp3"), fire: new Audio("/sounds/fire.mp3"), activeRain: "A", xfadeInterval: null, xfadeTimer: null };
-      startAudio(ctx);
+      const ctx = { audioCtx: getSharedAudioContext() };
       audioRef.current = ctx;
+      startAudio(ctx).catch(() => {
+        // Playback genuinely failed (bad decode, context creation, etc.) — don't
+        // leave the toggle showing "on" with no audible sound and no indication.
+        if (audioRef.current === ctx) {
+          audioRef.current = null;
+          localStorage.setItem("sk_sound", "off");
+          setSoundOn(false);
+        }
+      });
       localStorage.setItem("sk_sound", "on");
       setSoundOn(true);
     } catch (_) {
@@ -15538,49 +18072,38 @@ export default function App() {
     }
   };
 
-  // Auto-resume sound after refresh if it was on.
-  // Safari mobile blocks autoplay — so we show sound as "on" and resume on first user tap.
+  // Auto-resume sound after refresh if it was on. Browsers reliably block
+  // unmuted autoplay without a recent user gesture (true on Safari and modern
+  // Chrome alike) — AudioContext starts "suspended" until a gesture resumes it
+  // — so show sound as on and actually start it on the first tap.
   useEffect(() => {
+    // Always start with sound off — clear any saved "on" state from previous session
+    localStorage.removeItem("sk_sound");
     if (localStorage.getItem("sk_sound") !== "on") return;
-    const ctx = { rainA: new Audio("/sounds/rain-thunder.mp3"), rainB: new Audio("/sounds/rain-thunder.mp3"), fire: new Audio("/sounds/fire.mp3"), activeRain: "A", xfadeInterval: null, xfadeTimer: null };
-    ctx.rainA.volume = 0.85;
-    const playPromise = ctx.rainA.play();
-    if (playPromise !== undefined) {
-      playPromise.then(() => {
-        // Autoplay allowed (desktop/non-Safari)
-        ctx.rainA.pause();
-        ctx.rainA.currentTime = 0;
-        startAudio(ctx);
-        audioRef.current = ctx;
-        setSoundOn(true);
-      }).catch(() => {
-        // Autoplay blocked (Safari mobile) — show as on, resume on first tap
-        setSoundOn(true);
-        let resumed = false;
-        const resume = () => {
-          if (resumed) return;
-          resumed = true;
-          document.removeEventListener("touchstart", resume);
-          document.removeEventListener("click", resume);
-          pendingResumeRef.current = null;
-          const freshCtx = {
-            rainA: new Audio("/sounds/rain-thunder.mp3"),
-            rainB: new Audio("/sounds/rain-thunder.mp3"),
-            fire: new Audio("/sounds/fire.mp3"),
-            activeRain: "A", xfadeInterval: null, xfadeTimer: null
-          };
-          startAudio(freshCtx);
-          audioRef.current = freshCtx;
-        };
-        pendingResumeRef.current = resume;
-        document.addEventListener("touchstart", resume);
-        document.addEventListener("click", resume);
-      });
-    } else {
-      startAudio(ctx);
-      audioRef.current = ctx;
-      setSoundOn(true);
-    }
+    setSoundOn(true);
+    let resumed = false;
+    const resume = () => {
+      if (resumed) return;
+      resumed = true;
+      document.removeEventListener("touchstart", resume, true);
+      document.removeEventListener("click", resume, true);
+      pendingResumeRef.current = null;
+      const freshCtx = { audioCtx: getSharedAudioContext() };
+      audioRef.current = freshCtx;
+      startAudio(freshCtx).catch(() => {});
+    };
+    pendingResumeRef.current = resume;
+    // Capture phase, not bubble — many buttons throughout the app call
+    // e.stopPropagation(), which would otherwise stop a bubble-phase listener
+    // on document from ever firing for those clicks. Capture fires top-down
+    // before any handler (and its stopPropagation) runs, so this reliably
+    // catches the very first tap/click anywhere, on any element.
+    document.addEventListener("touchstart", resume, true);
+    document.addEventListener("click", resume, true);
+    return () => {
+      document.removeEventListener("touchstart", resume, true);
+      document.removeEventListener("click", resume, true);
+    };
   }, []);
 
   const [showHome, setShowHome] = useState(() => {
@@ -15635,7 +18158,12 @@ export default function App() {
   const [appSocialLinks, setAppSocialLinks] = useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
   const [communityAuthorGenres, setCommunityAuthorGenres] = useState({});
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState("signin"); // "signin" | "signup"
+  const [authMode, setAuthMode] = useState("signin"); // "signin" | "signup" | "forgot"
+  const [showPasswordRecovery, setShowPasswordRecovery] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryError, setRecoveryError] = useState("");
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryDone, setRecoveryDone] = useState(false);
   const [authEmail, setAuthEmail] = useState(() => localStorage.getItem("sk_saved_email") || "");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -15662,12 +18190,28 @@ export default function App() {
     };
   }, []);
 
+  const fetchAppSocialLinks = React.useCallback(async (isRetry = false) => {
+    if (!authUser?.id || !supabaseRef.current) return;
+    const { data, error } = await supabaseRef.current.from("user_social_links").select("*").eq("user_id", authUser.id).maybeSingle();
+    if (data) {
+      setAppSocialLinks({ instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" });
+      return;
+    }
+    if (error) {
+      console.warn("Failed to fetch social links:", error);
+      // A page-load access token can be stale right as the SDK is refreshing it in
+      // the background — refresh explicitly and retry once rather than silently
+      // leaving the Profile page showing "Not connected" for the rest of the session.
+      if (!isRetry) {
+        const { error: refreshError } = await supabaseRef.current.auth.refreshSession();
+        if (!refreshError) fetchAppSocialLinks(true);
+      }
+    }
+  }, [authUser?.id]);
+
   useEffect(() => {
     if (!authUser?.id || !supabaseRef.current) return;
-    supabaseRef.current.from("user_social_links").select("*").eq("user_id", authUser.id).maybeSingle()
-      .then(({ data }) => {
-        if (data) setAppSocialLinks({ instagram: data.instagram || "", tiktok: data.tiktok || "", facebook: data.facebook || "", x_twitter: data.x_twitter || "" });
-      });
+    fetchAppSocialLinks();
     // Handle OAuth callback hashes
     const hash = window.location.hash;
     if (hash.includes("tiktok_connected=")) {
@@ -15694,22 +18238,43 @@ export default function App() {
   // --- Cloud sync helpers ---
   const SYNC_KEYS = [
     "sk_user_books",
-    "sk_statuses_ebooks", "sk_statuses_audiobooks",
-    "sk_favorites_ebooks", "sk_favorites_audiobooks",
-    "sk_progress_ebooks", "sk_progress_audiobooks",
-    "sk_dates_ebooks", "sk_dates_audiobooks",
-    "sk_sessions_ebooks", "sk_sessions_audiobooks",
+    "sk_statuses_ebooks", "sk_statuses_audiobooks", "sk_statuses_physical",
+    "sk_favorites_ebooks", "sk_favorites_audiobooks", "sk_favorites_physical",
+    "sk_progress_ebooks", "sk_progress_audiobooks", "sk_progress_physical",
+    "sk_dates_ebooks", "sk_dates_audiobooks", "sk_dates_physical",
+    "sk_sessions_ebooks", "sk_sessions_audiobooks", "sk_sessions_physical",
     "sk_chapters_ebooks",
     "sk_dark_factor", "sk_world_building",
-    "sk_connections", "sk_genre_overrides", "sk_hidden_books",
+    "sk_connections", "sk_genre_overrides", "sk_genre_overrides_ts", "sk_hidden_books",
     "sk_avatar", "sk_avatar_pos",
+    // User preferences + content
+    "sk_notes", "sk_tbr_books", "sk_ratings",
+    "sk_theme", "sk_lights_out", "sk_sound",
+    "sk_cry_factor", "sk_skull_factor", "sk_spice",
+    "sk_ebook_progress_mode", "sk_audiobook_progress_mode",
+    // Shelf organization (should follow the user across devices)
+    "sk_left_order", "sk_right_order", "sk_mobile_genre_order", "sk_shelf_sort",
+    "sk_custom_genre", "sk_custom_genre_names",
+    // Author→genre overrides (the 500+ author map)
+    "sk_author_genres",
+    // API keys — entered once, should follow the user across every device/reinstall
+    "sk_google_api_key", "sk_isbndb_key",
   ];
+
+  const isSyncTier = (user) => {
+    const tier = user ? (localStorage.getItem("sk_user_tier") || "reluctant") : "reluctant";
+    return ["librarian", "storykeeper"].includes(tier);
+  };
 
   const gatherLocalData = () => {
     const payload = {};
     SYNC_KEYS.forEach(k => {
+      if (k === "sk_user_books") {
+        payload[k] = getUserBooksSync();
+        return;
+      }
       const v = localStorage.getItem(k);
-      if (!v) return;
+      if (!v || v === "undefined") return;
       try {
         const parsed = JSON.parse(v);
         payload[k] = parsed;
@@ -15725,7 +18290,7 @@ export default function App() {
 
       if (k === "sk_user_books") {
         // Merge cloud books with local books — never overwrite locally-enriched fields
-        const local = (() => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch { return []; } })();
+        const local = getUserBooksSync();
         const cloudBooks = (Array.isArray(data[k]) ? data[k] : []).map(b => ({ ...b, genre: migrateGenre(b.genre || "") }));
         const localMap = new Map();
         local.forEach(b => {
@@ -15759,14 +18324,50 @@ export default function App() {
             cloudTitles.has(localBook.title?.toLowerCase().trim());
           if (!inCloud) merged.push(localBook);
         });
-        localStorage.setItem(k, JSON.stringify(merged));
+        saveUserBooks(merged);
+
+      } else if (k === "sk_genre_overrides_ts") {
+        // Handled together with sk_genre_overrides below — skip here so it
+        // doesn't also get blanket-replaced by the generic branch.
+        return;
 
       } else if (k === "sk_genre_overrides") {
-        // Merge overrides — local manually-set genres take precedence
-        const local = (() => { try { return JSON.parse(localStorage.getItem(k) || "{}"); } catch { return {}; } })();
-        const merged = { ...data[k], ...local }; // local wins conflicts
-        localStorage.setItem(k, JSON.stringify(merged));
+        // Per-book last-write-wins using sk_genre_overrides_ts, instead of
+        // local unconditionally winning every conflict — the latter meant a
+        // stale override set on one device (e.g. before the author->genre
+        // map was last updated) could never be corrected by a more recent,
+        // more correct value set on another device; each device just kept
+        // re-asserting its own old value forever.
+        const localOverrides = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides") || "{}"); } catch { return {}; } })();
+        const localTs = (() => { try { return JSON.parse(localStorage.getItem("sk_genre_overrides_ts") || "{}"); } catch { return {}; } })();
+        const cloudOverrides = data[k] || {};
+        const cloudTs = data["sk_genre_overrides_ts"] || {};
+        const mergedOverrides = {};
+        const mergedTs = {};
+        new Set([...Object.keys(localOverrides), ...Object.keys(cloudOverrides)]).forEach(isbn => {
+          const lt = localTs[isbn] || 0;
+          const ct = cloudTs[isbn] || 0;
+          // No timestamp on either side (legacy data from before this fix) —
+          // keep the old local-wins behavior rather than guessing.
+          if (lt >= ct) {
+            mergedOverrides[isbn] = localOverrides[isbn] !== undefined ? localOverrides[isbn] : cloudOverrides[isbn];
+            mergedTs[isbn] = lt;
+          } else {
+            mergedOverrides[isbn] = cloudOverrides[isbn];
+            mergedTs[isbn] = ct;
+          }
+        });
+        localStorage.setItem("sk_genre_overrides", JSON.stringify(mergedOverrides));
+        localStorage.setItem("sk_genre_overrides_ts", JSON.stringify(mergedTs));
 
+      } else if (data[k] === "undefined") {
+        // A handful of accounts picked up the literal string "undefined" for
+        // some key at some point (likely an old JSON.stringify(undefined)
+        // bug) — sync was faithfully round-tripping that garbage forever
+        // since it looks like valid string data. Drop it instead of writing
+        // it back, so any code reading this key with a plain JSON.parse
+        // (rather than a defensive try/catch) doesn't crash on it.
+        localStorage.removeItem(k);
       } else {
         // Store strings (e.g. base64 avatar) as-is; everything else as JSON
         const val = data[k];
@@ -15775,55 +18376,134 @@ export default function App() {
     });
     // Notify components to re-read from localStorage
     window.dispatchEvent(new CustomEvent("sk-cloud-synced"));
+    // Also refresh shelves so enriched covers/descriptions appear immediately
+    window.dispatchEvent(new CustomEvent("sk-books-changed", { detail: { fromSync: true } }));
   };
 
-  const withTimeout = (promise, ms = 10000) =>
+  // Until a library's first successful gzip-compressed upload lands, the cloud copy
+  // may still be the old multi-MB uncompressed blob — give that one-time legacy
+  // transfer enough headroom to actually complete rather than timing out before it
+  // ever finishes (after which it stays small/fast going forward).
+  const withTimeout = (promise, ms = 120000) =>
     Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), ms))]);
 
-  const syncToCloud = async (user) => {
-    const sb = supabaseRef.current;
-    if (!sb || !user) return;
-    const payload = gatherLocalData();
-    await withTimeout(
-      sb.from("user_libraries").upsert({ user_id: user.id, data: payload, updated_at: new Date().toISOString() })
-    );
+  // Sync uses raw REST calls rather than the supabase-js client — we found the client's
+  // query methods (.maybeSingle()/.single()) can silently hang or fail for some
+  // sessions while a plain authenticated fetch() to the same endpoint works reliably
+  // (confirmed with the same pattern on the social-links fetch earlier).
+  const getAuthHeaders = async () => {
+    const token = await getFreshAccessToken(supabaseRef.current);
+    if (!token) return null;
+    const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+    const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+    return { url, headers: { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": "application/json" } };
   };
 
-  const syncFromCloud = async (user) => {
+  const syncToCloud = async (user, attempt = 0) => {
     const sb = supabaseRef.current;
-    if (!sb || !user) return false;
-    const { data, error } = await withTimeout(
-      sb.from("user_libraries").select("data, updated_at").eq("user_id", user.id).single()
-    );
-    if (error || !data) return false;
-    applyCloudData(data.data);
-    window.dispatchEvent(new CustomEvent("sk-cloud-synced"));
-    return true;
+    if (!sb || !user || !isSyncTier(user)) return false;
+    try {
+      const t0 = performance.now();
+      const payload = gatherLocalData();
+      const rawSize = JSON.stringify(payload).length;
+      const compressed = await gzipJsonToBase64(payload);
+      const compressedSize = JSON.stringify(compressed).length;
+      const t1 = performance.now();
+      console.log(`syncToCloud: raw ${(rawSize/1024).toFixed(0)}KB -> compressed ${(compressedSize/1024).toFixed(0)}KB in ${(t1-t0).toFixed(0)}ms (attempt ${attempt})`);
+      const auth = await getAuthHeaders();
+      if (!auth) throw new Error("No auth session");
+      const res = await withTimeout(
+        fetch(`${auth.url}/rest/v1/user_libraries`, {
+          method: "POST",
+          headers: { ...auth.headers, Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify({ user_id: user.id, data: compressed, updated_at: new Date().toISOString() }),
+        })
+      );
+      console.log(`syncToCloud: upload took ${(performance.now()-t1).toFixed(0)}ms, status ${res.status}`);
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+      return true;
+    } catch (err) {
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        return syncToCloud(user, attempt + 1);
+      }
+      console.error("syncToCloud failed after retries:", err?.message);
+      return false;
+    }
+  };
+
+  const syncFromCloud = async (user, attempt = 0) => {
+    const sb = supabaseRef.current;
+    if (!sb || !user || !isSyncTier(user)) return false;
+    try {
+      const t0 = performance.now();
+      const auth = await getAuthHeaders();
+      if (!auth) throw new Error("No auth session");
+      const res = await withTimeout(
+        fetch(`${auth.url}/rest/v1/user_libraries?select=data,updated_at&user_id=eq.${user.id}`, { headers: auth.headers })
+      );
+      const t1 = performance.now();
+      console.log(`syncFromCloud: download took ${(t1-t0).toFixed(0)}ms (attempt ${attempt}), status ${res.status}`);
+      if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+      const rows = await res.json();
+      const data = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+      if (!data) return false;
+      const payload = await gunzipBase64ToJson(data.data);
+      console.log(`syncFromCloud: decompress took ${(performance.now()-t1).toFixed(0)}ms`);
+      applyCloudData(payload);
+      window.dispatchEvent(new CustomEvent("sk-cloud-synced"));
+      return true;
+    } catch (err) {
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        return syncFromCloud(user, attempt + 1);
+      }
+      console.error("syncFromCloud failed after retries:", err?.message);
+      return false;
+    }
   };
 
   const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "done", "error"
   const syncDebounceRef = useRef(null);
+  const fullSyncInFlightRef = useRef(null);
+  const lastFullSyncAtRef = useRef(0);
+
+  // Runs one full pull-then-push sync. If a sync is already running, or one just finished
+  // within the last 5s (e.g. INITIAL_SESSION and SIGNED_IN both firing for the same load),
+  // this reuses/skips instead of doing the whole network round-trip twice.
+  const runFullSync = (user) => {
+    if (fullSyncInFlightRef.current) return fullSyncInFlightRef.current;
+    if (Date.now() - lastFullSyncAtRef.current < 5000) return Promise.resolve();
+    const p = (async () => {
+      await syncFromCloud(user);
+      await syncToCloud(user);
+      lastFullSyncAtRef.current = Date.now();
+    })().finally(() => { fullSyncInFlightRef.current = null; });
+    fullSyncInFlightRef.current = p;
+    return p;
+  };
 
   const triggerAutoSync = (user) => {
-    if (!user) return;
+    if (!user || !isSyncTier(user)) return;
     clearTimeout(syncDebounceRef.current);
     syncDebounceRef.current = setTimeout(() => syncToCloud(user), 5000);
   };
 
-  // Sync from cloud whenever app comes back into focus (switching from Safari → PWA etc.)
+  // Full sync (pull then push) when app comes back into focus
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && authUser) {
-        syncFromCloud(authUser);
+      if (document.visibilityState === "visible" && authUser && isSyncTier(authUser)) {
+        runFullSync(authUser);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [authUser]);
 
-  // Sync to cloud whenever books change
+  // Sync to cloud whenever books change (skip if the change came from a sync itself)
   useEffect(() => {
-    const handleBooksChanged = () => {
+    const handleBooksChanged = (e) => {
+      if (e.detail?.fromSync) return;
       if (authUser) triggerAutoSync(authUser);
     };
     window.addEventListener("sk-books-changed", handleBooksChanged);
@@ -15883,6 +18563,14 @@ export default function App() {
       }
     });
     const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
+      if (event === "TOKEN_REFRESHED") fetchAppSocialLinks();
+      // Clicking the "reset your password" email link signs the user in and fires
+      // this event — show the set-new-password screen instead of dropping them
+      // straight into the app on a session they didn't intentionally start.
+      if (event === "PASSWORD_RECOVERY") {
+        setShowAuthModal(false);
+        setShowPasswordRecovery(true);
+      }
       const user = session?.user ?? null;
       setAuthUser(user);
       if (user) {
@@ -15893,6 +18581,22 @@ export default function App() {
           "mbrady991@gmail.com",
           "ceb5891@snet.net",
           "mamadub83@yahoo.com",
+          "msbratt23@yahoo.com",
+          // Founding beta testers — lifetime top-tier access (added 2026-07-12)
+          "amandagray03@yahoo.com", // her Play Store/tester account email
+          "amandagray03@gmail.com", // the email she actually signed into StoryKeeper with
+          "beautifulangel1209@gmail.com",
+          "bingochops1980@gmail.com",
+          "brandyreneebrady@gmail.com",
+          "forseee1991@gmail.com",
+          "heather.roo1980@gmail.com",
+          "katrinasmommy513@gmail.com",
+          "kebrownrn@gmail.com",
+          "kristinjcole@gmail.com",
+          "mrsfortin17@gmail.com",
+          "steph.spone@gmail.com",
+          "weezie918@gmail.com",
+          "yankeesgirl1974@gmail.com",
         ];
         if (LIFETIME_EMAILS.includes(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
@@ -15912,7 +18616,7 @@ export default function App() {
       }
       // On a fresh app load (INITIAL_SESSION), do a full sync so all devices stay up to date
       if (user && event === "INITIAL_SESSION") {
-        syncFromCloud(user).then(() => syncToCloud(user));
+        runFullSync(user);
         fetchCommunityAuthorGenres();
       }
       // On actual sign-in, do full sync + onboarding
@@ -15923,8 +18627,7 @@ export default function App() {
           setThemeKey(cloudTheme);
           localStorage.setItem("sk_theme", cloudTheme);
         }
-        const pulled = await syncFromCloud(user);
-        if (!pulled) await syncToCloud(user);
+        await runFullSync(user);
         // Always restore username from Supabase on sign-in (handles new devices + sign-out/in)
         sb.from("usernames").select("username").eq("user_id", user.id).maybeSingle()
           .then(({ data }) => {
@@ -15975,15 +18678,91 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Handle native OAuth callback (Capacitor deep link) — covers both platforms:
+  // iOS returns via the custom URI scheme, Android via the verified App Link.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cleanup;
+
+    (async () => {
+      const { App: CapApp } = await import('@capacitor/app');
+      const { Browser } = await import('@capacitor/browser');
+
+      const handleUrl = async (url) => {
+        // Matches both the legacy custom-scheme callback (iOS) and the verified
+        // Android App Link (https://www.thestorykeeper.co/app?code=...) — but not
+        // unrelated opens of that same host/path, like a shared profile link
+        // (https://www.thestorykeeper.co/app/#u/username), which carry neither.
+        const urlObj = new URL(url);
+        const code = urlObj.searchParams.get('code');
+        const hash = url.includes('#') ? url.split('#')[1] : '';
+        const hashParams = new URLSearchParams(hash);
+        const access_token = hashParams.get('access_token');
+        const refresh_token = hashParams.get('refresh_token');
+        const isOAuthCallback = url.includes('login-callback') || !!code || (access_token && refresh_token);
+        if (!isOAuthCallback) return;
+        await Browser.close();
+        const sb = supabaseRef.current;
+        if (!sb) return;
+        try {
+          if (code) {
+            const { error } = await sb.auth.exchangeCodeForSession(url);
+            if (error) throw error;
+          } else if (access_token && refresh_token) {
+            const { error } = await sb.auth.setSession({ access_token, refresh_token });
+            if (error) throw error;
+          }
+          // Explicitly dismiss auth modal after successful OAuth
+          setShowAuthModal(false);
+          setShowWelcome(false);
+          localStorage.setItem("sk_onboarded", "1");
+        } catch (e) {
+          console.error('OAuth callback failed:', e);
+        }
+      };
+
+      // Warm resume: app was already running in the background
+      const { listener } = await CapApp.addListener('appUrlOpen', (event) => handleUrl(event.url));
+      cleanup = listener;
+
+      // Cold start: returning from the OAuth browser relaunched the app process,
+      // so the appUrlOpen event may have already fired before this listener was
+      // attached — getLaunchUrl() catches that missed case.
+      const launch = await CapApp.getLaunchUrl();
+      if (launch?.url) await handleUrl(launch.url);
+    })();
+    return () => { cleanup?.remove?.(); };
+  }, []);
+
   const handleAuthSubmit = async () => {
     const sb = supabaseRef.current;
     if (!sb) return;
     setAuthError(""); setAuthSuccess(""); setAuthLoading(true);
     try {
       if (authMode === "signup") {
-        const { error } = await sb.auth.signUp({ email: authEmail, password: authPassword });
+        const { data, error } = await sb.auth.signUp({
+          email: authEmail,
+          password: authPassword,
+          options: { emailRedirectTo: "https://www.thestorykeeper.co/app" },
+        });
         if (error) throw error;
-        setAuthSuccess("Check your email to confirm your account! If you don't see it within a few minutes, check your spam or junk folder.");
+        // Supabase returns a success response with a fake user (empty identities)
+        // instead of an error when the email is already registered — this is
+        // deliberate on their end to prevent attackers from using signup to
+        // enumerate which emails have accounts, but it means we have to check
+        // for it ourselves or users get told to "check your email" for a
+        // confirmation that was never actually sent.
+        if (data?.user && data.user.identities?.length === 0) {
+          setAuthError("An account with this email already exists. Try signing in instead.");
+        } else {
+          setAuthSuccess("Check your email to confirm your account! If you don't see it within a few minutes, check your spam or junk folder.");
+        }
+      } else if (authMode === "forgot") {
+        const { error } = await sb.auth.resetPasswordForEmail(authEmail, {
+          redirectTo: "https://www.thestorykeeper.co/app",
+        });
+        if (error) throw error;
+        setAuthSuccess("Check your email for a link to reset your password. If you don't see it within a few minutes, check your spam or junk folder.");
       } else {
         const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
         if (error) throw error;
@@ -15997,10 +18776,69 @@ export default function App() {
     }
   };
 
+  const handleSetNewPassword = async () => {
+    const sb = supabaseRef.current;
+    if (!sb) return;
+    if (recoveryPassword.length < 6) { setRecoveryError("Password must be at least 6 characters."); return; }
+    setRecoveryError(""); setRecoveryLoading(true);
+    try {
+      const { error } = await sb.auth.updateUser({ password: recoveryPassword });
+      if (error) throw error;
+      setRecoveryDone(true);
+    } catch (e) {
+      setRecoveryError(e.message);
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  // Google blocks "Sign in with Google" from any embedded WebView (error 403
+  // disallowed_useragent) — it must run in a real browser or Chrome Custom Tabs.
+  // Android: redirectTo is a verified App Link (real https URL); Chrome hands
+  // control back to the app via a proper Intent once Supabase redirects there,
+  // caught by the appUrlOpen/getLaunchUrl listener below.
+  // iOS: the custom scheme already works reliably, so it's left as-is.
+  const nativeOAuthRedirectTo = () =>
+    Capacitor.getPlatform() === 'android'
+      ? "https://www.thestorykeeper.co/app"
+      : "co.thestorykeeper.app://login-callback";
+
   const handleGoogleAuth = async () => {
     const sb = supabaseRef.current;
     if (!sb) return;
-    await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
+    const isNative = Capacitor.isNativePlatform();
+    if (isNative) {
+      const { Browser } = await import('@capacitor/browser');
+      const { data } = await sb.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: nativeOAuthRedirectTo(),
+          skipBrowserRedirect: true,
+        },
+      });
+      if (data?.url) await Browser.open({ url: data.url });
+    } else {
+      await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin + "/app" } });
+    }
+  };
+
+  const handleAppleAuth = async () => {
+    const sb = supabaseRef.current;
+    if (!sb) return;
+    const isNative = Capacitor.isNativePlatform();
+    if (isNative) {
+      const { Browser } = await import('@capacitor/browser');
+      const { data } = await sb.auth.signInWithOAuth({
+        provider: "apple",
+        options: {
+          redirectTo: nativeOAuthRedirectTo(),
+          skipBrowserRedirect: true,
+        },
+      });
+      if (data?.url) await Browser.open({ url: data.url });
+    } else {
+      await sb.auth.signInWithOAuth({ provider: "apple", options: { redirectTo: window.location.origin + "/app" } });
+    }
   };
 
   const handleSignOut = async () => {
@@ -16049,6 +18887,7 @@ export default function App() {
   const [showNewUserOnboarding, setShowNewUserOnboarding] = useState(false);
   const [showPWAInstallModal, setShowPWAInstallModal] = useState(false);
   const [showAddToLibrary, setShowAddToLibrary] = useState(false);
+  const [addToLibraryPrefill, setAddToLibraryPrefill] = useState(null);
   const [publicProfileUsername, setPublicProfileUsername] = useState(() => {
     const h = window.location.hash;
     return h.startsWith("#u/") ? decodeURIComponent(h.slice(3)) : "";
@@ -16065,6 +18904,15 @@ export default function App() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#profile" || localStorage.getItem("sk_current_page") === "profile";
   });
+  // Re-fetch social links whenever the Profile modal opens and when the tab/PWA
+  // regains focus — a stale or just-refreshing auth token at the time of the
+  // initial app-load fetch would otherwise leave appSocialLinks empty for good.
+  useEffect(() => { if (showProfile) fetchAppSocialLinks(); }, [showProfile, fetchAppSocialLinks]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") fetchAppSocialLinks(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchAppSocialLinks]);
   const [showCommunity, setShowCommunity] = useState(() => {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#community" || localStorage.getItem("sk_current_page") === "community";
@@ -16270,7 +19118,7 @@ export default function App() {
 
       {/* PLATFORMS PAGE */}
       {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; setShowSidebar(true); }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} />}
-      {showAddToLibrary && <AddToLibraryModal onClose={() => setShowAddToLibrary(false)} th={th} onOpenSubscription={() => { setShowAddToLibrary(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
+      {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
 
       {/* SUBSCRIPTION PAGE */}
       {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} />}
@@ -16356,7 +19204,15 @@ export default function App() {
           backdropFilter: "blur(6px)",
           WebkitBackdropFilter: "blur(6px)",
           boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-          display: showSidebar || !showHome ? "none" : "block",
+          // Sub-pages like "My Platforms" render as overlays on top of home without
+          // actually turning showHome off, so checking !showHome alone left the
+          // hamburger visible (and overlapping each page's own Back button) underneath
+          // them. Hide it whenever any sub-page is open, mirroring the same "any page
+          // open" list used elsewhere in this component (~line 18845).
+          display: (showSidebar || !showHome || genre || showFavorites || showTBR || showStats ||
+            showSettings || showProfile || showCommunity || showPlatforms || showAddToLibrary ||
+            showSubscription || showGroup || showBookClub || showGlobalSearch || showMyClubs)
+            ? "none" : "block",
         }}
         aria-label="Open menu"
       >
@@ -16364,14 +19220,23 @@ export default function App() {
       </button>
 
       {/* SYNC NOW BUTTON — top-right, only on home screen or Settings (never on shelves) */}
-      {authUser && !showSidebar && !genre && (showHome || showSettings) && !globalSearchOpenBook && (
+      {authUser && isSyncTier(authUser) && !showSidebar && !genre && (showHome || showSettings) && !globalSearchOpenBook && (
         <button
           onClick={async () => {
             if (syncStatus === "syncing") return;
+            // Respect the cooldown even for manual taps — repeatedly forcing a
+            // real sync back-to-back (tap, success, immediately tap again) was
+            // stacking each sync's temporary in-memory buffers before the
+            // previous one could be garbage collected, crashing iOS Safari
+            // (which has a much smaller per-tab memory ceiling than desktop).
+            if (Date.now() - lastFullSyncAtRef.current < 5000) {
+              setSyncStatus("done");
+              setTimeout(() => setSyncStatus(""), 1500);
+              return;
+            }
             setSyncStatus("syncing");
             try {
-              await syncToCloud(authUser);
-              await syncFromCloud(authUser);
+              await runFullSync(authUser);
               setSyncStatus("done");
               setTimeout(() => setSyncStatus(""), 3000);
             } catch {
@@ -16411,6 +19276,7 @@ export default function App() {
           onClose={() => setShowGlobalSearch(false)}
           onSelectBook={(book) => setGlobalSearchOpenBook(book)}
           onOpenTBR={() => { setShowTBR(true); setShowHome(false); }}
+          onAddExternalBook={(book) => { setAddToLibraryPrefill(book); setShowAddToLibrary(true); }}
         />
       )}
 
@@ -16459,14 +19325,15 @@ export default function App() {
         borderRight: `2px solid ${th.accent}`,
         boxShadow: "4px 0 20px rgba(0,0,0,0.2)",
         paddingTop: "calc(env(safe-area-inset-top, 0px) + 60px)",
-        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 100px)",
+        paddingBottom: "calc(env(safe-area-inset-bottom, 34px) + 140px)",
         paddingLeft: 0,
         paddingRight: 0,
         transform: showSidebar ? "translateX(0)" : "translateX(-100%)",
         transition: "transform 0.3s ease",
-        overflowY: "auto",
+        overflowY: "scroll",
         overflowX: "hidden",
         WebkitOverflowScrolling: "touch",
+        overscrollBehavior: "contain",
       }}>
         {/* Close button */}
         <button
@@ -16599,7 +19466,7 @@ export default function App() {
               {smallItem("contact", "✉️ Contact Us",         () => { setShowSidebar(false); window.location.href = "mailto:support@thestorykeeper.co"; })}
               {smallItem("privacy", "🔒 Privacy Policy",     () => { setShowSidebar(false); setShowPrivacy(true); })}
               {smallItem("terms",   "📄 Terms of Service",   () => { setShowSidebar(false); setShowTerms(true); })}
-              <div style={{ height: 80 }} />
+              <div style={{ height: 200 }} />
             </>
           );
         })()}
@@ -16611,9 +19478,9 @@ export default function App() {
           book={searchBook}
           onClose={() => setSearchBook(null)}
           onBookEdited={(updated) => {
-            const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+            const books = getUserBooksSync();
             const idx = books.findIndex(b => (b.isbn && b.isbn === updated.isbn) || b.title === updated.title);
-            if (idx !== -1) { books[idx] = { ...books[idx], ...updated }; localStorage.setItem("sk_user_books", JSON.stringify(books)); }
+            if (idx !== -1) { books[idx] = { ...books[idx], ...updated }; saveUserBooks(books); }
             setSearchBook(null);
           }}
           favorites={(() => { try { return { ...JSON.parse(localStorage.getItem("sk_favorites_ebooks") || "{}"), ...JSON.parse(localStorage.getItem("sk_favorites_audiobooks") || "{}") }; } catch { return {}; } })()}
@@ -16640,17 +19507,23 @@ export default function App() {
           mediaType={searchBook.type || mediaType}
           onDelete={(book) => {
             const bookKey = book.isbn || book.title;
-            const userBooksAll = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-            const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
-            if (isUser) {
-              localStorage.setItem("sk_user_books", JSON.stringify(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title))));
+            const userBooksAll = getUserBooksSync();
+            if (typeof book._libIdx === "number" && userBooksAll[book._libIdx] &&
+                ((book.isbn && userBooksAll[book._libIdx].isbn === book.isbn) || userBooksAll[book._libIdx].title === book.title)) {
+              saveUserBooks(userBooksAll.filter((_, idx) => idx !== book._libIdx));
             } else {
-              const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
-              if (!hidden.includes(bookKey)) hidden.push(bookKey);
-              localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+              const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+              if (isUser) {
+                saveUserBooks(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
+              } else {
+                const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
+                if (!hidden.includes(bookKey)) hidden.push(bookKey);
+                localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+              }
             }
             setSearchBook(null);
           }}
+          allBooks={[]}
         />
       )}
 
@@ -16972,19 +19845,22 @@ export default function App() {
                 fontFamily: '"Palatino Linotype", Palatino, serif', color: th.text,
               }}>🔍 Re-detect & Fix Genre Assignments</button>
               <button onClick={() => {
-                const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
-                const statuses_e = JSON.parse(localStorage.getItem("sk_statuses_ebooks") || "{}");
-                const statuses_a = JSON.parse(localStorage.getItem("sk_statuses_audiobooks") || "{}");
-                const progress_e = JSON.parse(localStorage.getItem("sk_progress_ebooks") || "{}");
-                const progress_a = JSON.parse(localStorage.getItem("sk_progress_audiobooks") || "{}");
-                const dates_e = JSON.parse(localStorage.getItem("sk_dates_ebooks") || "{}");
-                const dates_a = JSON.parse(localStorage.getItem("sk_dates_audiobooks") || "{}");
-                const favorites_e = JSON.parse(localStorage.getItem("sk_favorites_ebooks") || "{}");
-                const favorites_a = JSON.parse(localStorage.getItem("sk_favorites_audiobooks") || "{}");
-                const backup = { books, statuses_e, statuses_a, progress_e, progress_a, dates_e, dates_a, favorites_e, favorites_a, exportedAt: new Date().toISOString() };
-                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a"); a.href = url; a.download = "storykeeper-backup.json"; a.click();
+                try {
+                  const books = getUserBooksSync();
+                  const statuses_e = safeParseLS("sk_statuses_ebooks", {});
+                  const statuses_a = safeParseLS("sk_statuses_audiobooks", {});
+                  const progress_e = safeParseLS("sk_progress_ebooks", {});
+                  const progress_a = safeParseLS("sk_progress_audiobooks", {});
+                  const dates_e = safeParseLS("sk_dates_ebooks", {});
+                  const dates_a = safeParseLS("sk_dates_audiobooks", {});
+                  const favorites_e = safeParseLS("sk_favorites_ebooks", {});
+                  const favorites_a = safeParseLS("sk_favorites_audiobooks", {});
+                  const backup = { books, statuses_e, statuses_a, progress_e, progress_a, dates_e, dates_a, favorites_e, favorites_a, exportedAt: new Date().toISOString() };
+                  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+                  downloadOrShareFile(blob, "storykeeper-backup.json", "application/json");
+                } catch (err) {
+                  alert("❌ Could not create backup. Error: " + err.message);
+                }
               }} style={{
                 width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8,
                 background: th.bgMuted, border: "none", cursor: "pointer", fontSize: 13,
@@ -17005,10 +19881,10 @@ export default function App() {
                       const books = Array.isArray(data) ? data : (data.books || []);
                       if (!books?.length) { alert("❌ No books found in this file."); return; }
                       if (!window.confirm(`Restore ${books.length} books from backup? This will merge with your current library.`)) return;
-                      const existing = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                      const existing = getUserBooksSync();
                       const existingTitles = new Set(existing.map(b => (b.title || "").toLowerCase().trim()));
                       const newBooks = books.filter(b => b.title && !existingTitles.has(b.title.toLowerCase().trim()));
-                      localStorage.setItem("sk_user_books", JSON.stringify([...existing, ...newBooks]));
+                      saveUserBooks([...existing, ...newBooks]);
                       if (!Array.isArray(data)) {
                         if (data.statuses_e) localStorage.setItem("sk_statuses_ebooks", JSON.stringify(data.statuses_e));
                         if (data.statuses_a) localStorage.setItem("sk_statuses_audiobooks", JSON.stringify(data.statuses_a));
@@ -17019,7 +19895,6 @@ export default function App() {
                         if (data.favorites_e) localStorage.setItem("sk_favorites_ebooks", JSON.stringify(data.favorites_e));
                         if (data.favorites_a) localStorage.setItem("sk_favorites_audiobooks", JSON.stringify(data.favorites_a));
                       }
-                      refreshBookCounts();
                       alert(`✅ Restored ${newBooks.length} books! (${books.length - newBooks.length} duplicates skipped)`);
                       e.target.value = "";
                     } catch(err) { alert("❌ Could not read backup file. Error: " + err.message); }
@@ -17028,7 +19903,7 @@ export default function App() {
                 }} />
               </label>
               <button onClick={() => {
-                const books = JSON.parse(localStorage.getItem("sk_user_books") || "[]");
+                const books = getUserBooksSync();
                 const skipGenre = (b) => SKIP_DESC_GENRES.includes(b.genre);
                 const incomplete = books.filter(b => needsDesc(b) || !b.coverUrl || !b.author || (!b.isbn && !skipGenre(b)));
                 if (incomplete.length === 0) { alert("All books are complete — nothing to export!"); return; }
@@ -17039,8 +19914,7 @@ export default function App() {
                 });
                 const csv = [headers.join(","), ...rows].join("\n");
                 const blob = new Blob([csv], { type: "text/csv" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a"); a.href = url; a.download = "storykeeper-incomplete-books.csv"; a.click();
+                downloadOrShareFile(blob, "storykeeper-incomplete-books.csv", "text/csv");
               }} style={{
                 width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8,
                 background: th.bgMuted, border: "none", cursor: "pointer", fontSize: 13,
@@ -17049,7 +19923,7 @@ export default function App() {
               <button onClick={() => {
                 if (window.confirm("⚠️ This will permanently clear your entire library. Are you sure?")) {
                   if (window.confirm("Are you absolutely sure? This cannot be undone.")) {
-                    localStorage.removeItem("sk_user_books");
+                    saveUserBooks([]);
                     setShowSettings(false);
                     alert("Library cleared.");
                   }
@@ -17069,22 +19943,28 @@ export default function App() {
                   <div style={{ fontSize: 13, color: th.textMid, marginBottom: 12, fontFamily: "Georgia, serif" }}>
                     Signed in as <strong>{authUser.email}</strong>
                   </div>
-                  <button onClick={async () => {
-                    if (syncStatus === "syncing") return;
-                    setSyncStatus("syncing");
-                    try {
-                      await syncToCloud(authUser);
-                      await syncFromCloud(authUser);
-                      setSyncStatus("done");
-                      setTimeout(() => setSyncStatus(""), 3000);
-                    } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus(""), 3000); }
-                  }} style={{
-                    width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
-                    background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
-                    fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8,
-                  }}>
-                    {syncStatus === "syncing" ? "☁️ Syncing…" : syncStatus === "done" ? "✅ Synced!" : syncStatus === "error" ? "❌ Sync failed" : "☁️ Sync Now"}
-                  </button>
+                  {isSyncTier(authUser) ? (
+                    <button onClick={async () => {
+                      if (syncStatus === "syncing") return;
+                      setSyncStatus("syncing");
+                      try {
+                        lastFullSyncAtRef.current = 0; // manual tap always forces a real sync, ignoring the cooldown
+                        await runFullSync(authUser);
+                        setSyncStatus("done");
+                        setTimeout(() => setSyncStatus(""), 3000);
+                      } catch { setSyncStatus("error"); setTimeout(() => setSyncStatus(""), 3000); }
+                    }} style={{
+                      width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
+                      background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
+                      fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 8,
+                    }}>
+                      {syncStatus === "syncing" ? "☁️ Syncing…" : syncStatus === "done" ? "✅ Synced!" : syncStatus === "error" ? "❌ Sync failed" : "☁️ Sync Now"}
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: 13, color: th.textSoft, fontFamily: "Georgia, serif", marginBottom: 8, padding: "8px 0" }}>
+                      ☁️ Cloud sync is available on Librarian and StoryKeeper plans.
+                    </div>
+                  )}
                   <button onClick={() => { handleSignOut(); setShowSettings(false); }} style={{
                     width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
                     background: th.bgMuted, color: th.text, cursor: "pointer", fontSize: 14,
@@ -17101,6 +19981,15 @@ export default function App() {
                   }}>
                     <img src="https://www.google.com/favicon.ico" alt="" style={{ width: 16, height: 16 }} />
                     Continue with Google
+                  </button>
+                  <button onClick={handleAppleAuth} style={{
+                    width: "100%", padding: "11px", marginBottom: 10, borderRadius: 8,
+                    border: "1px solid #000", background: "#000",
+                    fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#fff",
+                    fontFamily: '"Palatino Linotype", Palatino, serif',
+                  }}>
+                    <svg width="15" height="15" viewBox="0 0 384 512" style={{ fill: "#fff" }}><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+                    Continue with Apple
                   </button>
                   <button onClick={() => { setShowSettings(false); setAuthMode("signin"); setAuthEmail(""); setAuthPassword(""); setAuthError(""); setAuthSuccess(""); setShowAuthModal(true); }} style={{
                     width: "100%", padding: "11px", borderRadius: 8, border: `1px solid ${th.border}`,
@@ -17146,6 +20035,10 @@ export default function App() {
               <button onClick={() => { setShowProfile(false); handleGoogleAuth(); }} style={{ width: "100%", padding: "12px", marginBottom: 10, borderRadius: 8, border: `1px solid ${th.border}`, background: th.bgMuted, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: th.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
                 <img src="https://www.google.com/favicon.ico" alt="" style={{ width: 16, height: 16 }} />
                 Continue with Google
+              </button>
+              <button onClick={() => { setShowProfile(false); handleAppleAuth(); }} style={{ width: "100%", padding: "12px", marginBottom: 10, borderRadius: 8, border: "1px solid #000", background: "#000", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#fff", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+                <svg width="15" height="15" viewBox="0 0 384 512" style={{ fill: "#fff" }}><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+                Continue with Apple
               </button>
               <button onClick={() => { setShowProfile(false); window.location.hash = ""; }} style={{ width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`, background: "none", color: th.textSoft, fontSize: 13, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
             </div>
@@ -17295,63 +20188,155 @@ export default function App() {
             fontFamily: '"Palatino Linotype", Palatino, serif',
           }}>
             <h2 style={{ margin: "0 0 4px", fontSize: 22, color: th.text, textAlign: "center" }}>
-              {authMode === "signin" ? "Welcome Back" : "Create Account"}
+              {authMode === "signin" ? "Welcome Back" : authMode === "forgot" ? "Reset Password" : "Create Account"}
             </h2>
             <p style={{ margin: "0 0 20px", fontSize: 12, color: th.textSoft, textAlign: "center", fontStyle: "italic" }}>
-              StoryKeeper
+              {authMode === "forgot" ? "We'll email you a link to set a new password." : "StoryKeeper"}
             </p>
 
-            {/* Google */}
-            <button onClick={handleGoogleAuth} style={{
-              width: "100%", padding: "10px", marginBottom: 16,
-              background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 8,
-              fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: th.text,
-            }}>
-              <img src="https://www.google.com/favicon.ico" alt="" style={{ width: 16, height: 16 }} />
-              Continue with Google
-            </button>
+            {authMode !== "forgot" && (
+              <>
+                {/* Google */}
+                <button onClick={handleGoogleAuth} style={{
+                  width: "100%", padding: "10px", marginBottom: 10,
+                  background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 8,
+                  fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: th.text,
+                }}>
+                  <img src="https://www.google.com/favicon.ico" alt="" style={{ width: 16, height: 16 }} />
+                  Continue with Google
+                </button>
 
-            <div style={{ textAlign: "center", fontSize: 11, color: th.textSoft, marginBottom: 16 }}>— or —</div>
+                {/* Apple */}
+                <button onClick={handleAppleAuth} style={{
+                  width: "100%", padding: "10px", marginBottom: 16,
+                  background: "#000", border: "1px solid #000", borderRadius: 8,
+                  fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#fff",
+                }}>
+                  <svg width="15" height="15" viewBox="0 0 384 512" style={{ fill: "#fff" }}><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+                  Continue with Apple
+                </button>
+
+                <div style={{ textAlign: "center", fontSize: 11, color: th.textSoft, marginBottom: 16 }}>— or —</div>
+              </>
+            )}
 
             <input
               type="email" placeholder="Email address" value={authEmail}
               onChange={e => setAuthEmail(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && authMode === "forgot" && handleAuthSubmit()}
               style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
             />
-            <input
-              type="password" placeholder="Password" value={authPassword}
-              onChange={e => setAuthPassword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
-              style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
-            />
+            {authMode !== "forgot" && (
+              <input
+                type="password" placeholder="Password" value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
+                style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
+              />
+            )}
+            {authMode === "signin" && (
+              <div style={{ textAlign: "right", marginBottom: 10, marginTop: -4 }}>
+                <span onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthSuccess(""); }}
+                  style={{ color: th.accent, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>
+                  Forgot password?
+                </span>
+              </div>
+            )}
 
             {authSuccess ? (
-              <ConfirmEmailScreen
-                email={authEmail}
-                supabaseRef={supabaseRef}
-                onChangeEmail={(newEmail) => {
-                  setAuthEmail(newEmail);
-                  setAuthSuccess("");
-                  setAuthError("");
-                }}
-              />
+              authMode === "forgot" ? (
+                <div style={{ fontSize: 13, color: "#2d6a2d", background: "#F0FFF0", borderRadius: 8, padding: "12px 14px", textAlign: "center", marginBottom: 14 }}>
+                  {authSuccess}
+                </div>
+              ) : (
+                <ConfirmEmailScreen
+                  email={authEmail}
+                  supabaseRef={supabaseRef}
+                  onChangeEmail={(newEmail) => {
+                    setAuthEmail(newEmail);
+                    setAuthSuccess("");
+                    setAuthError("");
+                  }}
+                />
+              )
             ) : (
               <>
                 {authError && <div style={{ fontSize: 12, color: "#B94A4A", marginBottom: 10, textAlign: "center" }}>{authError}</div>}
-                <button onClick={handleAuthSubmit} disabled={authLoading || !authEmail || !authPassword} style={{
+                <button onClick={handleAuthSubmit} disabled={authLoading || !authEmail || (authMode !== "forgot" && !authPassword)} style={{
                   width: "100%", padding: "11px", background: th.accent, border: "none", borderRadius: 8,
                   color: th.bg, fontSize: 15, cursor: "pointer", marginBottom: 14,
-                  opacity: authLoading || !authEmail || !authPassword ? 0.6 : 1,
+                  opacity: authLoading || !authEmail || (authMode !== "forgot" && !authPassword) ? 0.6 : 1,
                 }}>
-                  {authLoading ? "Please wait…" : authMode === "signin" ? "Sign In" : "Create Account"}
+                  {authLoading ? "Please wait…" : authMode === "signin" ? "Sign In" : authMode === "forgot" ? "Send Reset Link" : "Create Account"}
                 </button>
-                <div style={{ textAlign: "center", fontSize: 12, color: th.textMid }}>
-                  {authMode === "signin" ? "Don't have an account? " : "Already have an account? "}
-                  <span onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(""); setAuthSuccess(""); }}
-                    style={{ color: th.accent, cursor: "pointer", textDecoration: "underline" }}>
-                    {authMode === "signin" ? "Sign up" : "Sign in"}
-                  </span>
+              </>
+            )}
+            {authMode === "forgot" ? (
+              <div style={{ textAlign: "center", fontSize: 12, color: th.textMid }}>
+                <span onClick={() => { setAuthMode("signin"); setAuthError(""); setAuthSuccess(""); }}
+                  style={{ color: th.accent, cursor: "pointer", textDecoration: "underline" }}>
+                  ← Back to sign in
+                </span>
+              </div>
+            ) : !authSuccess && (
+              <div style={{ textAlign: "center", fontSize: 12, color: th.textMid }}>
+                {authMode === "signin" ? "Don't have an account? " : "Already have an account? "}
+                <span onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(""); setAuthSuccess(""); }}
+                  style={{ color: th.accent, cursor: "pointer", textDecoration: "underline" }}>
+                  {authMode === "signin" ? "Sign up" : "Sign in"}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* PASSWORD RECOVERY MODAL — shown after tapping the reset-password email link */}
+      {showPasswordRecovery && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9100,
+          background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: th.bg, borderRadius: 14, padding: "36px 32px",
+            width: 360, boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+          }}>
+            <h2 style={{ margin: "0 0 4px", fontSize: 22, color: th.text, textAlign: "center" }}>
+              Set New Password
+            </h2>
+            {recoveryDone ? (
+              <>
+                <div style={{ fontSize: 13, color: "#2d6a2d", background: "#F0FFF0", borderRadius: 8, padding: "12px 14px", textAlign: "center", margin: "16px 0" }}>
+                  Your password has been updated.
                 </div>
+                <button onClick={() => { setShowPasswordRecovery(false); setRecoveryDone(false); setRecoveryPassword(""); }} style={{
+                  width: "100%", padding: "11px", background: th.accent, border: "none", borderRadius: 8,
+                  color: th.bg, fontSize: 15, cursor: "pointer",
+                }}>
+                  Continue
+                </button>
+              </>
+            ) : (
+              <>
+                <p style={{ margin: "0 0 20px", fontSize: 12, color: th.textSoft, textAlign: "center", fontStyle: "italic" }}>
+                  Choose a new password for your account.
+                </p>
+                <input
+                  type="password" placeholder="New password" value={recoveryPassword}
+                  onChange={e => setRecoveryPassword(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleSetNewPassword()}
+                  style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
+                />
+                {recoveryError && <div style={{ fontSize: 12, color: "#B94A4A", marginBottom: 10, textAlign: "center" }}>{recoveryError}</div>}
+                <button onClick={handleSetNewPassword} disabled={recoveryLoading || !recoveryPassword} style={{
+                  width: "100%", padding: "11px", background: th.accent, border: "none", borderRadius: 8,
+                  color: th.bg, fontSize: 15, cursor: "pointer",
+                  opacity: recoveryLoading || !recoveryPassword ? 0.6 : 1,
+                }}>
+                  {recoveryLoading ? "Please wait…" : "Update Password"}
+                </button>
               </>
             )}
           </div>
@@ -17359,5 +20344,13 @@ export default function App() {
       )}
 
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <StoryKeeperErrorBoundary>
+      <StoryKeeperApp />
+    </StoryKeeperErrorBoundary>
   );
 }
