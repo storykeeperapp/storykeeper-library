@@ -2404,7 +2404,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     setElapsed(0);
     setSessionSaved(false);
     // Auto-mark as reading if unstarted or want-to-read
-    const currentStatus = statuses[isbn];
+    const currentStatus = statuses[isbn] || book.status;
     if (!currentStatus || currentStatus === "want-to-read") {
       handleStatus("reading");
     }
@@ -2535,7 +2535,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     setEditing(false);
   };
   const isFav = !!favorites[isbn];
-  const status = statuses[isbn] || null;
+  const status = statuses[isbn] || book.status || null;
   const prog = progress[isbn] || 0;
 
   useEffect(() => { localStorage.setItem(`sk_dates_${mediaType}`, JSON.stringify(dates)); }, [dates, mediaType]);
@@ -2589,9 +2589,10 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const handleProgress = (e) => {
     const val = Number(e.target.value);
     setProgress((prev) => ({ ...prev, [isbn]: val }));
-    if (val === 100 && statuses[isbn] !== "finished") {
+    const currentStatus = statuses[isbn] || book.status;
+    if (val === 100 && currentStatus !== "finished") {
       handleStatus("finished");
-    } else if (val > 0 && val < 100 && (!statuses[isbn] || statuses[isbn] === "want-to-read")) {
+    } else if (val > 0 && val < 100 && (!currentStatus || currentStatus === "want-to-read")) {
       handleStatus("reading");
     }
   };
@@ -5734,8 +5735,10 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
   const allBooks = [...Object.values(library).flat(), ...(() => { try { return getUserBooksSync(); } catch { return []; } })()]
     .filter((b) => effectiveType(b) === mediaType);
 
-  const finishedBooks = allBooks.filter((b) => statuses[b.isbn] === "finished");
-  const readingBooks = allBooks.filter((b) => statuses[b.isbn] === "reading");
+  // Get status from localStorage override, or fall back to imported status on the book object
+  const getBookStatus = (b) => statuses[b.isbn] || b.status;
+  const finishedBooks = allBooks.filter((b) => getBookStatus(b) === "finished");
+  const readingBooks = allBooks.filter((b) => getBookStatus(b) === "reading");
   const favCount = Object.values(favorites).filter(Boolean).length;
 
   const avgDays = (() => {
