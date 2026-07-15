@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StoryKeeper — Social Media Guide & Content Calendar</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Palatino+Linotype&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      background: #FAF6EF;
+      color: #2C1A0E;
+      line-height: 1.7;
+      padding: 48px 32px;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    .cover {
+      text-align: center;
+      padding: 60px 20px 50px;
+      border-bottom: 2px solid #C9A96E;
+      margin-bottom: 48px;
+    }
+
+    .cover .logo { font-size: 48px; margin-bottom: 12px; }
+
+    .cover h1 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 34px;
+      color: #3A2A1A;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+
+    .cover .subtitle {
+      font-size: 15px;
+      font-style: italic;
+      color: #8B5E3C;
+      margin-bottom: 24px;
+    }
+
+    .cover .tagline {
+      font-size: 13px;
+      color: #6B4E32;
+      background: #F0E6D0;
+      border: 1px solid #D8C3A5;
+      border-radius: 6px;
+      display: inline-block;
+      padding: 8px 20px;
+    }
+
+    h2 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 22px;
+      color: #3A2A1A;
+      border-bottom: 1px solid #D8C3A5;
+      padding-bottom: 6px;
+      margin: 40px 0 16px;
+    }
+
+    h3 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 16px;
+      color: #5C3D1E;
+      margin: 24px 0 8px;
+    }
+
+    h4 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 14px;
+      color: #3A2A1A;
+      margin: 16px 0 6px;
+    }
+
+    p {
+      font-size: 13.5px;
+      margin-bottom: 10px;
+      color: #3A2A1A;
+    }
+
+    ul, ol {
+      font-size: 13.5px;
+      color: #3A2A1A;
+      padding-left: 22px;
+      margin-bottom: 12px;
+    }
+
+    li { margin-bottom: 6px; }
+
+    .note {
+      background: #FFF8EE;
+      border-left: 4px solid #C9A96E;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+      font-style: italic;
+      color: #5C3D1E;
+      margin: 14px 0;
+    }
+
+    .note strong { display: block; margin-bottom: 2px; font-style: normal; }
+
+    .warning {
+      background: #FFF3CD;
+      border-left: 4px solid #E6C86E;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+      color: #5C4A00;
+      margin: 14px 0;
+    }
+
+    .tip {
+      background: #EEF6EE;
+      border-left: 4px solid #6AAE6A;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+      color: #1E4A1E;
+      margin: 14px 0;
+    }
+
+    .tip strong { display: block; margin-bottom: 2px; }
+
+    .post-card {
+      background: rgba(255,255,255,0.7);
+      border: 1px solid #D8C3A5;
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin: 16px 0;
+    }
+
+    .post-card .post-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .post-number {
+      background: #5C3D1E;
+      color: #F8F1E4;
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 13px;
+      font-weight: 700;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .post-title {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 15px;
+      font-weight: 700;
+      color: #3A2A1A;
+    }
+
+    .post-meta {
+      font-size: 11px;
+      font-style: italic;
+      color: #8B5E3C;
+      margin-bottom: 8px;
+    }
+
+    .script-box {
+      background: #F5EFE4;
+      border: 1px dashed #C9A96E;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-style: italic;
+      color: #3A2A1A;
+      margin: 8px 0;
+      line-height: 1.6;
+    }
+
+    .caption-box {
+      background: #EEF0F8;
+      border: 1px dashed #8899CC;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #2A2A4A;
+      margin: 8px 0;
+      line-height: 1.6;
+    }
+
+    .caption-box .label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #6677AA;
+      margin-bottom: 4px;
+    }
+
+    .bio-option {
+      background: rgba(255,255,255,0.6);
+      border: 1px solid #D8C3A5;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 10px 0;
+      font-size: 13.5px;
+      font-style: italic;
+      color: #3A2A1A;
+      line-height: 1.8;
+    }
+
+    .bio-option .option-label {
+      font-size: 11px;
+      font-weight: 700;
+      font-style: normal;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #8B5E3C;
+      margin-bottom: 6px;
+    }
+
+    /* Calendar styles */
+    .calendar-month {
+      margin: 24px 0;
+    }
+
+    .calendar-month h3 {
+      background: #5C3D1E;
+      color: #F8F1E4;
+      padding: 8px 14px;
+      border-radius: 6px 6px 0 0;
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .calendar-week {
+      border: 1px solid #D8C3A5;
+      border-top: none;
+      padding: 0;
+    }
+
+    .calendar-week:last-child {
+      border-radius: 0 0 6px 6px;
+      overflow: hidden;
+    }
+
+    .week-row {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      border-bottom: 1px solid #EAD9C0;
+    }
+
+    .week-row:last-child { border-bottom: none; }
+
+    .week-label {
+      background: #F0E6D0;
+      padding: 10px 12px;
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 12px;
+      font-weight: 700;
+      color: #5C3D1E;
+      display: flex;
+      align-items: center;
+      border-right: 1px solid #D8C3A5;
+    }
+
+    .week-content {
+      padding: 10px 14px;
+    }
+
+    .week-content .day-post {
+      font-size: 12.5px;
+      color: #3A2A1A;
+      padding: 4px 0;
+      border-bottom: 1px dotted #E0C9A0;
+      display: flex;
+      gap: 8px;
+    }
+
+    .week-content .day-post:last-child { border-bottom: none; }
+
+    .day-label {
+      font-weight: 700;
+      color: #8B5E3C;
+      min-width: 36px;
+      font-size: 11px;
+      padding-top: 2px;
+    }
+
+    .post-desc { font-size: 12.5px; line-height: 1.5; }
+
+    .post-tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      margin-left: 6px;
+      vertical-align: middle;
+      font-style: normal;
+    }
+
+    .tag-tiktok { background: #FFE4EC; color: #AA2244; }
+    .tag-insta { background: #FFF0E0; color: #AA5500; }
+    .tag-both { background: #E4F0FF; color: #224488; }
+    .tag-engage { background: #E8F5E8; color: #1A5C1A; }
+    .tag-outreach { background: #F0E8F5; color: #5C1A8C; }
+
+    .phase-banner {
+      background: linear-gradient(135deg, #5C3D1E, #8B5E3C);
+      color: #F8F1E4;
+      padding: 12px 18px;
+      border-radius: 8px;
+      margin: 20px 0 8px;
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .phase-banner .phase-sub {
+      font-size: 12px;
+      font-style: italic;
+      font-weight: normal;
+      opacity: 0.85;
+      margin-top: 2px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 12px 0;
+    }
+
+    th {
+      font-family: "Palatino Linotype", Palatino, serif;
+      background: #E8D5B0;
+      color: #3A2A1A;
+      padding: 8px 12px;
+      text-align: left;
+      border: 1px solid #D8C3A5;
+    }
+
+    td {
+      padding: 7px 12px;
+      border: 1px solid #D8C3A5;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    tr:nth-child(even) td { background: rgba(200,163,100,0.06); }
+
+    .rules-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .rule-card {
+      background: rgba(255,255,255,0.6);
+      border: 1px solid #D8C3A5;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .rule-card .rule-icon { font-size: 20px; margin-bottom: 6px; }
+    .rule-card .rule-title {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: #3A2A1A;
+      margin-bottom: 4px;
+    }
+    .rule-card p { font-size: 12px; margin: 0; }
+
+    .outreach-box {
+      background: #F5EFE4;
+      border: 1px solid #C9A96E;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin: 14px 0;
+    }
+
+    .outreach-box .platform-label {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: #5C3D1E;
+      margin-bottom: 8px;
+    }
+
+    .outreach-box .message {
+      font-size: 13px;
+      font-style: italic;
+      line-height: 1.7;
+      color: #2C1A0E;
+    }
+
+    .page-break { page-break-before: always; }
+
+    footer {
+      text-align: center;
+      font-size: 11px;
+      font-style: italic;
+      color: #A08060;
+      margin-top: 60px;
+      padding-top: 20px;
+      border-top: 1px solid #D8C3A5;
+    }
+
+    @media print {
+      body { padding: 20px; background: white; }
+      .page-break { page-break-before: always; }
+    }
+
+    @media (max-width: 600px) {
+      body { padding: 20px 14px; }
+      .rules-grid { grid-template-columns: 1fr; }
+      .cover h1 { font-size: 26px; }
+      .week-row { grid-template-columns: 60px 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="logo">📚</div>
+    <h1>StoryKeeper</h1>
+    <div class="subtitle">Social Media Guide &amp; Content Calendar</div>
+    <div class="tagline">Building Your Audience From Zero &nbsp;·&nbsp; A Personal Roadmap</div>
+  </div>
+
+  <!-- MINDSET -->
+  <h2>First, A Mindset Shift</h2>
+  <p>You don't need to become an influencer. You need to be <strong>yourself, building something people want.</strong> The most engaging content on BookTok right now isn't polished — it's real people sharing genuine passion for books and creativity. That is your biggest advantage.</p>
+  <p>You have something most creators don't: <em>a real product with a real story behind it.</em> You identified a problem every book lover has, and you built a solution. Just show up and share it honestly — the audience will come.</p>
+
+  <div class="tip">
+    <strong>The "Build in Public" approach works.</strong>
+    Sharing your journey — the wins, the setbacks, the late nights — is some of the most watched content on TikTok right now. You don't need a finished product to start. You just need to start.
+  </div>
+
+  <!-- PLATFORM CHOICE -->
+  <h2>Where to Start</h2>
+  <p>Do not try to be everywhere at once. Pick <strong>one platform</strong> and do it well first.</p>
+
+  <table>
+    <thead>
+      <tr><th>Platform</th><th>Why It Works for StoryKeeper</th><th>Priority</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>🎵 TikTok</strong></td>
+        <td>BookTok is massive. New accounts can go viral without followers. Algorithm rewards good content over follower count. Your app's aesthetic films beautifully.</td>
+        <td><strong>Start here</strong></td>
+      </tr>
+      <tr>
+        <td><strong>📸 Instagram Reels</strong></td>
+        <td>Easy to cross-post TikTok videos. Great for reaching slightly older book lovers. Better for DM outreach to creators.</td>
+        <td>Add at Month 2</td>
+      </tr>
+      <tr>
+        <td><strong>🐦 X / Twitter</strong></td>
+        <td>Good for reaching indie developers and tech-adjacent book people. Less visual.</td>
+        <td>Optional later</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- BIO -->
+  <div class="page-break"></div>
+  <h2>Your Profile Bio</h2>
+  <p>Set this up before your first post. Choose the option that feels most like you:</p>
+
+  <div class="bio-option">
+    <div class="option-label">Option 1 — Clean &amp; Cozy</div>
+    📚 Building a cozy home for all your books<br>
+    One app to rule all your libraries ✨<br>
+    StoryKeeper — coming soon 🌿
+  </div>
+
+  <div class="bio-option">
+    <div class="option-label">Option 2 — Personality Forward</div>
+    🌿 Book lover. App builder. Probably reading right now.<br>
+    Bringing your Audible, Kindle &amp; Goodreads together<br>
+    StoryKeeper — coming soon 📚
+  </div>
+
+  <div class="bio-option">
+    <div class="option-label">Option 3 — Relatable &amp; Funny</div>
+    📖 I got tired of my books being scattered across 6 apps<br>
+    So I built something about it 🌸<br>
+    StoryKeeper — coming soon ✨
+  </div>
+
+  <div class="note">
+    <strong>Link in bio:</strong> Point it to your beta guide or a simple waitlist page. You can create a free waitlist at mailchimp.com or beehiiv.com in under 10 minutes.
+  </div>
+
+  <!-- SIMPLE RULES -->
+  <h2>Simple Rules for Posting</h2>
+
+  <div class="rules-grid">
+    <div class="rule-card">
+      <div class="rule-icon">🎥</div>
+      <div class="rule-title">No face required</div>
+      <p>Screen recordings with a voiceover work just as well. Start there if you're not comfortable on camera yet.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">☀️</div>
+      <div class="rule-title">Natural light</div>
+      <p>If you do show your face, sit near a window. It makes a bigger difference than any camera or lighting equipment.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">⏱️</div>
+      <div class="rule-title">Under 60 seconds</div>
+      <p>Shorter videos get more replays which tells the algorithm it's good content. Build up to longer videos later.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">📝</div>
+      <div class="rule-title">Always add captions</div>
+      <p>Most people watch without sound. TikTok auto-generates captions — turn them on and proofread them.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">🕐</div>
+      <div class="rule-title">Best posting times</div>
+      <p>7–9pm weekdays. Weekends are hit or miss. Post consistently rather than perfectly timed.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">🚫</div>
+      <div class="rule-title">Don't delete posts</div>
+      <p>Low-view posts can pick up later. Deleting signals to the algorithm that your content underperforms.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">💬</div>
+      <div class="rule-title">Engage daily</div>
+      <p>Spend 15 minutes a day leaving genuine comments on BookTok videos. People click profiles of commenters they like.</p>
+    </div>
+    <div class="rule-card">
+      <div class="rule-icon">🏷️</div>
+      <div class="rule-title">Hashtags to use</div>
+      <p>#BookTok #BookApp #ReadingApp #BookOrganization #Bookstagram #IndieApp #BuildInPublic #BookLover</p>
+    </div>
+  </div>
+
+  <!-- POST IDEAS -->
+  <div class="page-break"></div>
+  <h2>Your First 10 Post Ideas</h2>
+  <p>Work through these in order. Each one builds on the last and introduces your audience to a new part of StoryKeeper.</p>
+
+  <!-- Post 1 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">1</div>
+      <div class="post-title">Your Origin Story</div>
+    </div>
+    <div class="post-meta">🎯 Most important post — people follow people, not products &nbsp;·&nbsp; Talking head or voiceover &nbsp;·&nbsp; Under 60 sec</div>
+    <h4>Script idea:</h4>
+    <div class="script-box">
+      "I have books on Audible, Kindle, Kobo, Apple Books, and Goodreads. I can never remember which platform I bought something on, whether I already own it, or what I've actually read. So I did what any completely normal person would do… I built an app about it. This is StoryKeeper — and I'm going to show you how it's coming together."
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      POV: you have books on 6 different platforms and zero idea what you own 😭 So naturally I built an app about it. #BookTok #StoryKeeper #BuildInPublic #BookApp
+    </div>
+  </div>
+
+  <!-- Post 2 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">2</div>
+      <div class="post-title">The Aesthetic Hook</div>
+    </div>
+    <div class="post-meta">🎯 Pure vibes — no talking required &nbsp;·&nbsp; Screen record the home page with ambient sound &nbsp;·&nbsp; Set to cozy trending audio</div>
+    <h4>What to film:</h4>
+    <p>Screen record the home page — the reading nook video, the botanical frames, the firelight glow. Let the visuals do the work.</p>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      POV: your entire book library but make it a cozy reading nook 🌿📚 #BookTok #BookApp #CozyReading #StoryKeeper
+    </div>
+  </div>
+
+  <!-- Post 3 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">3</div>
+      <div class="post-title">The Relatable Problem</div>
+    </div>
+    <div class="post-meta">🎯 Lead with pain point, end with tease &nbsp;·&nbsp; Talking head or text overlay &nbsp;·&nbsp; Gets shares from people who relate</div>
+    <div class="script-box">
+      "Raise your hand if you've ever bought a book you already owned on a different platform 🙋‍♀️ Kindle, Audible, Kobo, Apple Books — they don't talk to each other and it's genuinely chaotic. I got so tired of it that I started building a solution. More soon. 👀"
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      If you have never bought a duplicate book by accident you are lying 😂 #BookTok #BookProblems #BookApp #StoryKeeper
+    </div>
+  </div>
+
+  <!-- Post 4 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">4</div>
+      <div class="post-title">Feature Reveal: Genre Shelves</div>
+    </div>
+    <div class="post-meta">🎯 Show one satisfying feature &nbsp;·&nbsp; Screen record clicking a botanical frame &nbsp;·&nbsp; Make it slow and satisfying</div>
+    <div class="script-box">
+      "Each genre gets its own pressed flower frame and its own shelf. Click it and all your books in that genre are right there waiting for you. I have been waiting to show this for months 🌸📚"
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      Pressed botanical frames for your genre shelves because why not make it beautiful 🌸 #BookTok #BookApp #StoryKeeper #CozyAesthetic
+    </div>
+  </div>
+
+  <!-- Post 5 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">5</div>
+      <div class="post-title">Behind the Scenes</div>
+    </div>
+    <div class="post-meta">🎯 People love watching things being built &nbsp;·&nbsp; Show your screen, code, notes &nbsp;·&nbsp; No need to explain the code</div>
+    <div class="script-box">
+      "This is what my screen looks like at 11pm on a Tuesday. Building a book app from scratch is equal parts exciting and 'why did I do this to myself' 😅 But when it comes together it's so worth it."
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      Late night building sessions hit different when you're making something you actually believe in 🌙 #IndieApp #BuildInPublic #BookApp #StoryKeeper
+    </div>
+  </div>
+
+  <!-- Post 6 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">6</div>
+      <div class="post-title">The Import Feature</div>
+    </div>
+    <div class="post-meta">🎯 Solve the problem visually &nbsp;·&nbsp; Screen record a CSV upload &nbsp;·&nbsp; Watch the books populate — very satisfying</div>
+    <div class="script-box">
+      "So you can actually import your entire Audible library — all 168 books — in about 60 seconds. Watch. 👀"
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      168 audiobooks imported in under a minute 👀 Your Kindle, Kobo and Goodreads too. #BookTok #BookApp #StoryKeeper #AudibleBooks
+    </div>
+  </div>
+
+  <!-- Post 7 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">7</div>
+      <div class="post-title">"Would You Use This?" Engagement Post</div>
+    </div>
+    <div class="post-meta">🎯 Drives comments and shares &nbsp;·&nbsp; Ask a direct question &nbsp;·&nbsp; Reply to every single comment</div>
+    <div class="script-box">
+      "Okay BookTok I need your opinion 👇 If there was one app that held ALL your books from every platform — Audible, Kindle, Kobo, Goodreads, all of it — organized by genre with covers and reading status… would you use it? Because I built it and I need to know if I'm the only one who wanted this 😂"
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      Drop a 📚 if you would use this. I genuinely need to know 😭 #BookTok #BookApp #StoryKeeper #BookLover
+    </div>
+  </div>
+
+  <!-- Post 8 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">8</div>
+      <div class="post-title">The Cozy Atmosphere Feature</div>
+    </div>
+    <div class="post-meta">🎯 Pure vibe content — gets saves &nbsp;·&nbsp; Screen record with sound on &nbsp;·&nbsp; Let people hear the rain and fire</div>
+    <div class="script-box">
+      "It has ambient rain and fire crackling sounds. Because why would you manage your book library without a cozy atmosphere. I don't make the rules 🌧️🔥📚"
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      Rain sounds and firelight while you browse your library because you deserve it 🌧️🔥 #BookTok #CozyVibes #StoryKeeper #BookApp
+    </div>
+  </div>
+
+  <!-- Post 9 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">9</div>
+      <div class="post-title">Beta Testing Announcement</div>
+    </div>
+    <div class="post-meta">🎯 Builds your waitlist organically &nbsp;·&nbsp; Talking head &nbsp;·&nbsp; Creates urgency and excitement</div>
+    <div class="script-box">
+      "Beta testing starts soon and I am equal parts excited and terrified 😭 If you want early access drop a 📚 in the comments and I'll add you to the list."
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      Beta access is almost open 👀 Drop a 📚 if you want in — limited spots! #BookTok #StoryKeeper #BookApp #EarlyAccess
+    </div>
+  </div>
+
+  <!-- Post 10 -->
+  <div class="post-card">
+    <div class="post-header">
+      <div class="post-number">10</div>
+      <div class="post-title">The Waitlist / Launch Announcement</div>
+    </div>
+    <div class="post-meta">🎯 Your biggest post &nbsp;·&nbsp; Heartfelt and genuine &nbsp;·&nbsp; Drive people to the link in your bio</div>
+    <div class="script-box">
+      "The beta waitlist for StoryKeeper is officially open. Link in bio. If you've been following along — thank you from the bottom of my heart. This started as a personal problem and turned into something I'm genuinely proud of. 🌿📚✨"
+    </div>
+    <div class="caption-box">
+      <div class="label">Caption</div>
+      It's here 🥺📚 Beta access is open — link in bio. Thank you for every comment, share and follow that got us here. #BookTok #StoryKeeper #BookApp #Launch
+    </div>
+  </div>
+
+  <!-- CREATOR OUTREACH -->
+  <div class="page-break"></div>
+  <h2>Reaching Out to Book Creators</h2>
+  <p>Wait until your beta is stable (roughly 6–8 weeks in) before reaching out to creators. Target <strong>small to mid-size accounts</strong> (5k–100k followers) first — they respond more often and their audiences are more engaged than mega-influencers.</p>
+
+  <div class="tip">
+    <strong>Before you DM anyone:</strong> Follow them for at least a week first. Leave a few genuine comments on their videos. Cold DMs from strangers get ignored — warm DMs from a familiar name get opened.
+  </div>
+
+  <h3>Instagram DM</h3>
+  <div class="outreach-box">
+    <div class="platform-label">📸 Instagram</div>
+    <div class="message">
+      Hi [name]! I've been following your content for a while and I love how you talk about books — your recommendations are so good! I've been building a cozy digital library app called StoryKeeper that lets book lovers bring all their libraries (Audible, Kindle, Goodreads and more) into one beautiful, organized home. I'd love to offer you completely free early access — no strings attached at all. If you enjoy it and feel like sharing it with your audience someday, that would honestly make my day, but there is zero obligation. Would you be interested? 📚✨
+    </div>
+  </div>
+
+  <h3>TikTok DM or Comment</h3>
+  <div class="outreach-box">
+    <div class="platform-label">🎵 TikTok</div>
+    <div class="message">
+      Hey [name]! Okay so I've been building something I think your BookTok brain would love 😭📚 It's called StoryKeeper — a cozy little app that pulls all your books from Audible, Kindle, Goodreads etc into one gorgeous digital library. I'd love to give you free early access just to try it out. No pressure to post anything at all — but if you love it and want to share it, I would literally cry happy tears lol. Interested? 🥺✨
+    </div>
+  </div>
+
+  <h3>Email</h3>
+  <div class="outreach-box">
+    <div class="platform-label">📧 Email</div>
+    <div class="message">
+      <strong>Subject: Early Access Invite — StoryKeeper App 📚</strong><br><br>
+      Hi [name],<br><br>
+      I hope this message finds you well! My name is [your name] and I've been a fan of your content for a while — the way you talk about books is exactly the kind of energy I had in mind when building my app.<br><br>
+      I've spent the past several months creating StoryKeeper, a cozy digital library app designed for book lovers who collect across multiple platforms. It brings your Audible, Kindle, Kobo, Goodreads, Apple Books, and Chirp libraries together into one beautifully organized home, complete with genre shelves, reading tracking, and ambient atmosphere to make browsing feel like settling into your favorite reading nook.<br><br>
+      I'd love to offer you completely free early access as one of our first testers. There are truly no strings attached — I just think you'd enjoy it and your feedback would be incredibly valuable.<br><br>
+      If after trying it you feel inspired to mention it to your audience, that would mean everything to me — but please know it is never expected or required. I want this to feel like a gift, not an obligation.<br><br>
+      If you're interested I'll send over the link along with a short testing guide. Either way, thank you so much for the incredible content you put out — you're one of the reasons I built this in the first place.<br><br>
+      Warmly,<br>
+      [Your name]
+    </div>
+  </div>
+
+  <!-- CONTENT CALENDAR -->
+  <div class="page-break"></div>
+  <h2>90-Day Content Calendar</h2>
+  <p>This is a realistic posting schedule — 3 to 4 posts per week with daily engagement. Adjust dates to match when you actually start.</p>
+
+  <div style="font-size: 12px; font-style: italic; color: #6B4E32; margin-bottom: 16px;">
+    Legend:
+    <span class="post-tag tag-tiktok">TikTok</span>
+    <span class="post-tag tag-insta">Instagram</span>
+    <span class="post-tag tag-both">Cross-post both</span>
+    <span class="post-tag tag-engage">Engagement activity</span>
+    <span class="post-tag tag-outreach">Creator outreach</span>
+  </div>
+
+  <!-- MONTH 1 -->
+  <div class="phase-banner">
+    Phase 1 — Month 1: Plant the Seed
+    <div class="phase-sub">Goal: Get your first 100 followers. Introduce yourself and the concept. Don't overthink it — just start.</div>
+  </div>
+
+  <div class="calendar-month">
+    <h3>Week 1 — Set Up &amp; First Post</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">Set up TikTok profile — photo, bio, link <span class="post-tag tag-engage">Setup</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Tue</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">Spend 20 min watching and commenting on BookTok videos <span class="post-tag tag-engage">Engage</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #1 — Your Origin Story <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Thu–Fri</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">Reply to every comment on Post #1. Follow everyone who comments. <span class="post-tag tag-engage">Engage</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Sat</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #2 — The Aesthetic Hook <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 2 — Build Momentum</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #3 — The Relatable Problem <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Tue–Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">20 min daily commenting on BookTok. Focus on accounts with 10k–50k followers. <span class="post-tag tag-engage">Engage</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Thu</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #4 — Genre Shelves Feature Reveal <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Sat</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #5 — Behind the Scenes <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 3 — Show the Product</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #6 — The Import Feature <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #7 — "Would You Use This?" Engagement post <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Thu–Fri</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">Reply to every single comment on Post #7 — this is your highest-engagement post so far <span class="post-tag tag-engage">Engage</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Sat</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #8 — Cozy Atmosphere Feature <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 4 — Tease the Beta</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Behind the scenes — "beta testing is almost ready" update <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #9 — Beta Testing Announcement <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Fri</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Thank you for 100 followers" appreciation post (adjust number to reality) <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MONTH 2 -->
+  <div class="page-break"></div>
+  <div class="phase-banner">
+    Phase 2 — Month 2: Build the Buzz
+    <div class="phase-sub">Goal: 250–500 followers. Start beta testing. Show real user reactions. Begin creator outreach.</div>
+  </div>
+
+  <div class="calendar-month">
+    <h3>Week 5</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Post #10 — Waitlist/Beta Open Announcement <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"First beta testers are in!" reaction video — show excitement <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Fri</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Walk through the app from a new user's perspective <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 6</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Things I fixed based on beta feedback" — transparency builds trust <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">OUTREACH</span><span class="post-desc">Send first 3–5 creator DMs (small accounts 5k–20k followers) <span class="post-tag tag-outreach">Creator outreach</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Thu</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Show the drag-and-drop genre reordering — satisfying to watch <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Sat</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Cozy night in with my book library" vibe video <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 7</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Reading wrap up" using StoryKeeper to show your own books <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">OUTREACH</span><span class="post-desc">Follow up with any creator who opened but didn't reply. Send 5 more new DMs. <span class="post-tag tag-outreach">Creator outreach</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Thu</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Here's what's coming next" — tease upcoming features <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 8</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Share a beta tester quote or reaction (with permission) <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Month 1 in review" — honest reflection on building in public <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Sat</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Bookshelf tour using StoryKeeper — show your actual library organized <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MONTH 3 -->
+  <div class="page-break"></div>
+  <div class="phase-banner">
+    Phase 3 — Month 3: Launch Ready
+    <div class="phase-sub">Goal: 500–1000+ followers. Creator posts start going live. Drive traffic to the app. Public launch.</div>
+  </div>
+
+  <div class="calendar-month">
+    <h3>Week 9–10</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Ongoing</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">3–4 posts per week — mix of feature reveals, behind the scenes, and cozy aesthetic content <span class="post-tag tag-both">Cross-post both</span></span></div>
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">Continue creator outreach — work up to accounts with 20k–100k followers <span class="post-tag tag-outreach">Creator outreach</span></span></div>
+          <div class="day-post"><span class="day-label">DO</span><span class="post-desc">Daily 15 min engagement — reply to comments, comment on others' posts <span class="post-tag tag-engage">Engage</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 11 — Pre-Launch Countdown</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Mon</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Launch is one week away" countdown post <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Wed</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Full app walkthrough — the most complete demo video yet <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Fri</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"Tomorrow is the day" — heartfelt behind the scenes <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Week 12 — Launch Week 🎉</h3>
+    <div class="calendar-week">
+      <div class="week-row">
+        <div class="week-label">Launch Day</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Launch announcement — link in bio — celebrate publicly <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Day 2–3</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"We're live and here's what people are saying" — share early reactions <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Day 4–5</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">Respond to questions, address any launch day issues publicly and honestly <span class="post-tag tag-tiktok">TikTok</span></span></div>
+        </div>
+      </div>
+      <div class="week-row">
+        <div class="week-label">Day 7</div>
+        <div class="week-content">
+          <div class="day-post"><span class="day-label">POST</span><span class="post-desc">"One week since launch" reflection — numbers, feedback, what's next <span class="post-tag tag-both">Cross-post both</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REALISTIC EXPECTATIONS -->
+  <h2>Realistic Expectations</h2>
+  <p>Building a following from zero takes time. Here's what to expect so you're not discouraged:</p>
+
+  <table>
+    <thead>
+      <tr><th>Timeframe</th><th>Realistic Follower Goal</th><th>What This Feels Like</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Week 1–2</td><td>10–50 followers</td><td>Slow. Normal. Keep going.</td></tr>
+      <tr><td>Month 1</td><td>50–200 followers</td><td>One post might do better than expected. Celebrate it.</td></tr>
+      <tr><td>Month 2</td><td>200–600 followers</td><td>Starting to feel real. Comments become conversations.</td></tr>
+      <tr><td>Month 3</td><td>500–1500 followers</td><td>Creator posts go live. Traffic picks up. Launch time.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warning">
+    <strong>The creators who succeed aren't the most talented — they're the most consistent.</strong> Your first 20 videos will probably get low views. That is completely normal and expected. Keep posting. The algorithm needs data before it knows who to show your content to.
+  </div>
+
+  <footer>
+    StoryKeeper Social Media Guide &nbsp;·&nbsp; For personal use only &nbsp;·&nbsp; You've got this 📚✨
+  </footer>
+
+</body>
+</html>

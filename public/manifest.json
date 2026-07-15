@@ -1,0 +1,26 @@
+{
+  "name": "StoryKeeper",
+  "short_name": "StoryKeeper",
+  "description": "Your cozy reading home. One library for all your books.",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#F8F1E4",
+  "theme_color": "#8B5E3C",
+  "orientation": "natural",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "categories": ["books", "lifestyle", "entertainment"]
+}

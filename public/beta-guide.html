@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StoryKeeper — Beta Tester Guide</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Palatino+Linotype&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      background: #FAF6EF;
+      color: #2C1A0E;
+      line-height: 1.7;
+      padding: 48px 32px;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    .cover {
+      text-align: center;
+      padding: 60px 20px 50px;
+      border-bottom: 2px solid #C9A96E;
+      margin-bottom: 48px;
+    }
+
+    .cover .logo {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .cover h1 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 36px;
+      color: #3A2A1A;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+
+    .cover .subtitle {
+      font-size: 15px;
+      font-style: italic;
+      color: #8B5E3C;
+      margin-bottom: 24px;
+    }
+
+    .cover .tagline {
+      font-size: 13px;
+      color: #6B4E32;
+      background: #F0E6D0;
+      border: 1px solid #D8C3A5;
+      border-radius: 6px;
+      display: inline-block;
+      padding: 8px 20px;
+    }
+
+    h2 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 22px;
+      color: #3A2A1A;
+      border-bottom: 1px solid #D8C3A5;
+      padding-bottom: 6px;
+      margin: 40px 0 16px;
+    }
+
+    h3 {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-size: 16px;
+      color: #5C3D1E;
+      margin: 24px 0 8px;
+    }
+
+    p {
+      font-size: 13.5px;
+      margin-bottom: 10px;
+      color: #3A2A1A;
+    }
+
+    ul, ol {
+      font-size: 13.5px;
+      color: #3A2A1A;
+      padding-left: 22px;
+      margin-bottom: 12px;
+    }
+
+    li {
+      margin-bottom: 6px;
+    }
+
+    .checklist {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 7px 10px;
+      border-radius: 5px;
+      margin-bottom: 4px;
+    }
+
+    .checklist li:nth-child(odd) {
+      background: rgba(200, 163, 100, 0.08);
+    }
+
+    .checklist li::before {
+      content: "☐";
+      font-size: 16px;
+      color: #8B5E3C;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .note {
+      background: #FFF8EE;
+      border-left: 4px solid #C9A96E;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+      font-style: italic;
+      color: #5C3D1E;
+      margin: 14px 0;
+    }
+
+    .warning {
+      background: #FFF3CD;
+      border-left: 4px solid #E6C86E;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      font-size: 13px;
+      color: #5C4A00;
+      margin: 14px 0;
+    }
+
+    .warning strong, .note strong {
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .platform-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 12px 0;
+    }
+
+    .platform-card {
+      background: rgba(255,255,255,0.6);
+      border: 1px solid #D8C3A5;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+
+    .platform-card .name {
+      font-family: "Palatino Linotype", Palatino, serif;
+      font-weight: 700;
+      color: #3A2A1A;
+      margin-bottom: 4px;
+    }
+
+    .platform-card .req {
+      font-size: 11px;
+      font-style: italic;
+      color: #8B5E3C;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-style: normal;
+      font-family: Georgia, serif;
+      margin-left: 4px;
+    }
+
+    .badge-desktop { background: #E8D5B0; color: #5C3D1E; }
+    .badge-any { background: #D5E8D0; color: #2D5C1E; }
+
+    .section-intro {
+      font-size: 13.5px;
+      font-style: italic;
+      color: #6B4E32;
+      margin-bottom: 16px;
+    }
+
+    .feedback-box {
+      background: #F0E6D0;
+      border: 1px solid #C9A96E;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-top: 16px;
+    }
+
+    .feedback-box h3 {
+      margin-top: 0;
+      margin-bottom: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 12px 0;
+    }
+
+    th {
+      font-family: "Palatino Linotype", Palatino, serif;
+      background: #E8D5B0;
+      color: #3A2A1A;
+      padding: 8px 12px;
+      text-align: left;
+      border: 1px solid #D8C3A5;
+    }
+
+    td {
+      padding: 7px 12px;
+      border: 1px solid #D8C3A5;
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td { background: rgba(200,163,100,0.06); }
+
+    .page-break { page-break-before: always; }
+
+    footer {
+      text-align: center;
+      font-size: 11px;
+      font-style: italic;
+      color: #A08060;
+      margin-top: 60px;
+      padding-top: 20px;
+      border-top: 1px solid #D8C3A5;
+    }
+
+    @media print {
+      body { padding: 24px 20px; background: white; }
+      .page-break { page-break-before: always; }
+      .no-print { display: none; }
+    }
+
+    @media (max-width: 600px) {
+      body { padding: 24px 16px; }
+      .platform-grid { grid-template-columns: 1fr; }
+      .cover h1 { font-size: 26px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="logo">📚</div>
+    <h1>StoryKeeper</h1>
+    <div class="subtitle">Your personal digital library, beautifully organized</div>
+    <div class="tagline">Beta Tester Guide &nbsp;·&nbsp; Confidential</div>
+  </div>
+
+  <!-- WELCOME -->
+  <h2>Welcome &amp; Thank You</h2>
+  <p>Thank you for being an early tester of StoryKeeper! Your feedback will directly shape the final product. This guide walks you through what the app does, how to test each feature, and how to let us know what you find.</p>
+  <p>Please don't worry about breaking anything — that's exactly what beta testing is for. Test freely, click everything, and note anything that feels off, confusing, or just plain wrong.</p>
+
+  <div class="warning">
+    <strong>🖥️ Best experienced on a laptop, desktop, or MacBook</strong>
+    For the most complete beta testing experience — especially importing your library — we strongly recommend using a laptop, desktop, or MacBook. Mobile phones and tablets can browse the app but cannot complete the library export steps for Audible, Kindle, Chirp, or Apple Books. If you only have a mobile device, you can still test the browsing and navigation experience and your feedback is still valuable!
+  </div>
+
+  <div class="note">
+    <strong>Your testing window</strong>
+    Aim to spend 20–30 minutes exploring the app. You don't need to test everything in one sitting.
+  </div>
+
+  <!-- WHAT IS STORYKEEPER -->
+  <h2>What Is StoryKeeper?</h2>
+  <p>StoryKeeper is a personal library management app that brings all your books — eBooks and audiobooks — from different platforms into one beautiful, cozy home. Think of it as a digital bookshelf where you can:</p>
+  <ul>
+    <li>Import books from Audible, Kindle, Kobo, Goodreads, Apple Books, Chirp, and more</li>
+    <li>Browse your library organized by genre, displayed on themed shelves</li>
+    <li>Track what you've read, what you're reading, and what's on your list</li>
+    <li>Customize genre categories with your own names and artwork</li>
+  </ul>
+
+  <!-- GETTING STARTED -->
+  <div class="page-break"></div>
+  <h2>Getting Started</h2>
+
+  <h3>Opening the App</h3>
+  <p>Open the link you were provided in any web browser. The app works best in <strong>Google Chrome</strong> or <strong>Safari</strong>. You'll land on the home page — a cozy reading nook scene with genre frames arranged along the sides.</p>
+
+  <div class="warning">
+    <strong>📱 Using a phone or tablet?</strong>
+    The app fully works on mobile for browsing and uploading CSVs. However, <em>exporting your library</em> from Audible, Kindle, or Chirp requires a desktop computer. If you're on mobile, you can still test by uploading a CSV file you exported earlier on a computer, or skip the import step and focus on the browsing experience.
+  </div>
+
+  <h3>The Home Screen</h3>
+  <p>The home screen has several elements to explore:</p>
+  <ul>
+    <li><strong>Background video</strong> — an animated reading nook with ambient sound (click the sound icon to toggle rain and fire crackling)</li>
+    <li><strong>Genre frames</strong> — pressed botanical frames along the left and right sides, each representing a book genre. Click one to open that genre's shelf.</li>
+    <li><strong>eBooks / Audiobooks toggle</strong> — the button in the top center switches between your eBook library and your audiobook library</li>
+    <li><strong>Hamburger menu (☰)</strong> — top left corner. Opens navigation including Platform Connections, Library Settings, and Search</li>
+    <li><strong>Sound toggle</strong> — speaker icon in the top area. Turns ambient rain and fire sounds on/off</li>
+  </ul>
+
+  <!-- SECTION: TESTING CHECKLIST -->
+  <div class="page-break"></div>
+  <h2>Testing Checklist</h2>
+  <p class="section-intro">Work through as many of these as you can. Check them off as you go — or just make notes to share with us.</p>
+
+  <h3>Home Screen</h3>
+  <ul class="checklist">
+    <li>The background video loads and plays without issues</li>
+    <li>The sound toggle turns rain/fire sounds on and off cleanly (no popping or delay)</li>
+    <li>The eBooks / Audiobooks toggle button is visible and switches the view</li>
+    <li>The hamburger menu (☰) opens and closes correctly</li>
+    <li>All genre frames are visible and legible on your screen size</li>
+    <li>Hovering over a genre frame highlights it</li>
+    <li>Clicking a genre frame opens that genre's bookshelf</li>
+    <li>The app name and tagline are readable at the top</li>
+  </ul>
+
+  <h3>Genre Frames</h3>
+  <ul class="checklist">
+    <li>Right-clicking (or long-pressing on mobile) a genre frame opens a customization menu</li>
+    <li>You can rename a genre using the context menu</li>
+    <li>You can drag and drop the genre frames to reorder them</li>
+    <li>The reordered layout is remembered if you refresh the page</li>
+    <li>The context menu doesn't get cut off at the edges of the screen</li>
+  </ul>
+
+  <h3>Importing Your Library</h3>
+  <p class="section-intro">Go to ☰ Menu → Platform Connections to test imports. See the platform table on the next page for what each one requires.</p>
+  <ul class="checklist">
+    <li>The Platform Connections page opens when selected from the menu</li>
+    <li>The back button works to return to the home screen</li>
+    <li>Each platform tile shows clear instructions for how to export</li>
+    <li>The drag-and-drop CSV upload zone is visible and works (try dragging a file onto it)</li>
+    <li>Clicking the upload zone also opens a file picker</li>
+    <li>After uploading a CSV, a list of detected books appears</li>
+    <li>Each book shows a genre dropdown you can change before importing</li>
+    <li>Clicking Import adds the books to your library</li>
+    <li>Duplicate books are skipped (try importing the same file twice)</li>
+    <li>Imported books appear on the correct genre shelf</li>
+  </ul>
+
+  <h3>Browsing a Genre Shelf</h3>
+  <ul class="checklist">
+    <li>Clicking a genre frame opens a scrollable shelf of books in that genre</li>
+    <li>Book covers load and display correctly</li>
+    <li>Tapping/clicking a book cover opens its detail view</li>
+    <li>Book details show title, author, and description</li>
+    <li>You can mark a book as "Reading", "Finished", or "Want to Read"</li>
+    <li>The back button returns you to the home screen</li>
+    <li>The shelf scrolls smoothly on your device</li>
+  </ul>
+
+  <h3>Search</h3>
+  <ul class="checklist">
+    <li>The search bar opens from the hamburger menu</li>
+    <li>Typing a title or author returns matching results</li>
+    <li>Clicking a search result opens that book</li>
+    <li>Search works across both eBooks and audiobooks</li>
+  </ul>
+
+  <h3>Library Settings</h3>
+  <ul class="checklist">
+    <li>Library Settings opens from the hamburger menu</li>
+    <li>The Re-detect Genres buttons are visible (eBooks / Audiobooks / All Books)</li>
+    <li>Running re-detect shows a progress bar and updates genre assignments</li>
+  </ul>
+
+  <!-- PLATFORM TABLE -->
+  <div class="page-break"></div>
+  <h2>Platform Import Reference</h2>
+  <p>Use this table to know what you'll need before testing each platform's import.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Platform</th>
+        <th>Export Method</th>
+        <th>Device Required</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>🎧 Audible</strong></td>
+        <td>Chrome extension "Audible Library Extractor" → CSV export</td>
+        <td>Desktop Chrome</td>
+      </tr>
+      <tr>
+        <td><strong>📖 Kindle</strong></td>
+        <td>Console script run in browser DevTools</td>
+        <td>Desktop browser</td>
+      </tr>
+      <tr>
+        <td><strong>🎵 Chirp</strong></td>
+        <td>Console script run in browser DevTools</td>
+        <td>Desktop browser</td>
+      </tr>
+      <tr>
+        <td><strong>🍎 Apple Books</strong></td>
+        <td>Terminal script (provided in app)</td>
+        <td>Mac only</td>
+      </tr>
+      <tr>
+        <td><strong>📗 Goodreads</strong></td>
+        <td>Export from Goodreads website → upload CSV</td>
+        <td>Any device</td>
+      </tr>
+      <tr>
+        <td><strong>📘 Kobo</strong></td>
+        <td>Export from Kobo website → upload CSV</td>
+        <td>Any device</td>
+      </tr>
+      <tr>
+        <td><strong>📚 Libby / Hoopla</strong></td>
+        <td>Coming soon — manual add only for now</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    The app provides step-by-step instructions for each platform inside the Platform Connections page — you don't need to figure it out on your own.
+  </div>
+
+  <!-- WHAT TO LOOK FOR -->
+  <div class="page-break"></div>
+  <h2>What to Look For</h2>
+  <p>As you test, keep an eye out for the following types of issues:</p>
+
+  <h3>Bugs</h3>
+  <ul>
+    <li>Anything that doesn't work as described — buttons that don't respond, pages that don't load, errors that appear</li>
+    <li>Books that import into the wrong genre</li>
+    <li>Data that disappears after refreshing the page</li>
+    <li>Sound that keeps playing after turning it off</li>
+  </ul>
+
+  <h3>Layout &amp; Display Issues</h3>
+  <ul>
+    <li>Text that is cut off, overlapping, or too small to read</li>
+    <li>Buttons or menus that are off-screen or partially hidden</li>
+    <li>Images that don't load or are distorted</li>
+    <li>Anything that looks broken on your screen size or device</li>
+  </ul>
+
+  <h3>Confusion Points</h3>
+  <ul>
+    <li>Instructions that are unclear or hard to follow</li>
+    <li>Features you couldn't figure out how to use without help</li>
+    <li>Anything that felt like it was in the wrong place</li>
+    <li>Steps that felt like too many clicks or too complicated</li>
+  </ul>
+
+  <h3>Your Personal Reaction</h3>
+  <ul>
+    <li>Did the app feel welcoming and cozy, or cold and confusing?</li>
+    <li>Was there anything you wanted to do that you couldn't?</li>
+    <li>What did you genuinely enjoy about the experience?</li>
+    <li>Would you use this to manage your actual book library? Why or why not?</li>
+  </ul>
+
+  <!-- HOW TO REPORT -->
+  <div class="page-break"></div>
+  <h2>How to Share Your Feedback</h2>
+
+  <div class="feedback-box">
+    <h3>📝 When reporting an issue, please include:</h3>
+    <ol>
+      <li><strong>What you were trying to do</strong> — e.g. "I was trying to import my Audible library"</li>
+      <li><strong>What happened</strong> — e.g. "The page went blank after I clicked upload"</li>
+      <li><strong>What you expected to happen</strong> — e.g. "I expected to see a list of my books"</li>
+      <li><strong>Your device and browser</strong> — e.g. "iPhone 14, Safari" or "Windows laptop, Chrome"</li>
+      <li><strong>A screenshot if possible</strong> — even a phone photo of your screen helps!</li>
+    </ol>
+  </div>
+
+  <p style="margin-top: 20px;">Send your feedback to: <strong>[your email or feedback link here]</strong></p>
+
+  <div class="note">
+    No feedback is too small. If something felt slightly off but you can't quite explain it, tell us anyway — that gut reaction is valuable data.
+  </div>
+
+  <!-- KNOWN LIMITATIONS -->
+  <h2>Known Limitations in This Beta</h2>
+  <p>These are things we already know about and are working on — you don't need to report these:</p>
+  <ul>
+    <li>Libby and Hoopla imports are not yet available (coming in a future update)</li>
+    <li>Library data is stored locally in your browser — it will not sync between devices yet</li>
+    <li>Some book covers may not load if the source image is unavailable</li>
+    <li>Genre auto-detection is not perfect — you can always reassign genres manually</li>
+  </ul>
+
+  <footer>
+    StoryKeeper Beta &nbsp;·&nbsp; This document is confidential and intended for invited testers only &nbsp;·&nbsp; Thank you for your time and feedback
+  </footer>
+
+</body>
+</html>

@@ -2,28 +2,45 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#8B5E3C" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="StoryKeeper" />
   <script>
-    // Auto-redirect signed-in users to the app
-    try {
-      const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
-      const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
-      const storageKey = "sb-elmoftpybhfxqzkrhkwe-auth-token";
-      const raw = localStorage.getItem(storageKey);
-      if (raw) {
-        const session = JSON.parse(raw);
-        const expiresAt = session?.expires_at;
-        if (expiresAt && Date.now() / 1000 < expiresAt) {
-          window.location.replace("/app");
+    // Older shared profile links (thestorykeeper.co/#u/username) point at this
+    // marketing page instead of the app — forward them to /app regardless of
+    // login state so they still resolve, and preserve the hash so /app's own
+    // router can render the right profile.
+    if (window.location.hash.startsWith("#u/")) {
+      window.location.replace("/app" + window.location.hash);
+    } else {
+      // Auto-redirect signed-in users to the app
+      try {
+        const SUPABASE_URL = "https://elmoftpybhfxqzkrhkwe.supabase.co";
+        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVsbW9mdHB5YmhmeHF6a3Joa3dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNTAyMDksImV4cCI6MjA5NjYyNjIwOX0.HLHuP1CujyaJLCkpSiW56AHJZyCeFeJyGavQcbUeFOM";
+        const storageKey = "sb-elmoftpybhfxqzkrhkwe-auth-token";
+        const raw = localStorage.getItem(storageKey);
+        if (raw) {
+          const session = JSON.parse(raw);
+          const expiresAt = session?.expires_at;
+          if (expiresAt && Date.now() / 1000 < expiresAt) {
+            window.location.replace("/app");
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   </script>
   <title>StoryKeeper — Your Cozy Reading Home</title>
   <meta name="description" content="One beautiful library for all your books. Import from Kindle, Goodreads, Audible, and more. Join the StoryKeeper community." />
   <meta property="og:title" content="StoryKeeper — Your Cozy Reading Home" />
   <meta property="og:description" content="One beautiful library for all your books across every platform." />
-  <meta property="og:image" content="/logo.png" />
+  <meta property="og:image" content="https://www.thestorykeeper.co/logo.png" />
+  <meta property="og:url" content="https://www.thestorykeeper.co/" />
+  <meta property="og:type" content="website" />
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Palatino+Linotype&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet" />

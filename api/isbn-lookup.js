@@ -8,12 +8,23 @@ export default async function handler(req, res) {
   if (!title || !key) return res.status(400).json({ error: "Missing title or key" });
 
   try {
-    const q = author ? `${title} ${author}` : title;
-    const url = `https://api2.isbndb.com/books/${encodeURIComponent(q)}?page=1&pageSize=1&column=title`;
+    // Search by title only — combining title+author breaks ISBNdb matching
+    const url = `https://api2.isbndb.com/books/${encodeURIComponent(title)}?page=1&pageSize=5`;
     const response = await fetch(url, { headers: { Authorization: key } });
     const json = await response.json();
-    const book = json.books?.[0];
-    const isbn = book?.isbn13 || book?.isbn || null;
+    const books = json.books || [];
+
+    // If author provided, prefer a book whose author matches
+    let match = null;
+    if (author && books.length > 1) {
+      const normAuthor = author.toLowerCase();
+      match = books.find(b =>
+        (b.authors || []).some(a => a.toLowerCase().includes(normAuthor.split(" ").pop()))
+      );
+    }
+    if (!match) match = books[0];
+
+    const isbn = match?.isbn13 || match?.isbn || null;
     res.status(200).json({ isbn });
   } catch (e) {
     res.status(500).json({ error: e.message });

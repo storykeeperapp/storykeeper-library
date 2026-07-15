@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "co.thestorykeeper.app",
+      "sha256_cert_fingerprints": [
+        "A8:0E:A5:EC:27:42:09:B1:5F:6C:FA:37:81:1C:40:C2:EC:FB:6E:40:B4:E4:C7:54:12:70:C5:F3:FD:12:75:56",
+        "59:4F:94:45:7C:F4:56:43:14:B2:2D:55:19:04:60:42:89:A3:1E:CF:D7:CC:94:FE:D5:1B:0E:48:44:D7:D0:10"
+      ]
+    }
+  }
+]

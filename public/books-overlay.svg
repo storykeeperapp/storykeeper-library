@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520">
+  <defs>
+    <linearGradient id="book1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1f2e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d1018;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="book2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1c1c1c;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#111111;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="book3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#2a2520;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a1510;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="book4" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0e1520;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#080d14;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.6)"/>
+    </filter>
+    <filter id="warm">
+      <feColorMatrix type="matrix" values="1.1 0.1 0 0 0.05  0.05 1 0 0 0  0 0 0.85 0 0  0 0 0 1 0"/>
+    </filter>
+  </defs>
+
+  <!-- Warm ambient light overlay to blend with fireplace -->
+  <rect x="0" y="0" width="960" height="520" fill="rgba(120,60,10,0.18)" rx="0"/>
+
+  <!-- Book 3 — dark navy with gold ornate text -->
+  <g filter="url(#shadow)">
+    <rect x="108" y="0" width="752" height="118" rx="2" fill="url(#book1)"/>
+    <!-- spine edge highlight -->
+    <rect x="108" y="0" width="4" height="118" fill="rgba(180,140,60,0.3)"/>
+    <rect x="856" y="0" width="4" height="118" fill="rgba(0,0,0,0.5)"/>
+    <!-- gold rule lines -->
+    <line x1="120" y1="12" x2="848" y2="12" stroke="#8B6914" stroke-width="1" opacity="0.6"/>
+    <line x1="120" y1="106" x2="848" y2="106" stroke="#8B6914" stroke-width="1" opacity="0.6"/>
+    <!-- ornamental corners -->
+    <text x="140" y="22" font-family="Georgia, serif" font-size="14" fill="#8B6914" opacity="0.8">✦</text>
+    <text x="820" y="22" font-family="Georgia, serif" font-size="14" fill="#8B6914" opacity="0.8">✦</text>
+    <text x="140" y="105" font-family="Georgia, serif" font-size="14" fill="#8B6914" opacity="0.8">✦</text>
+    <text x="820" y="105" font-family="Georgia, serif" font-size="14" fill="#8B6914" opacity="0.8">✦</text>
+    <!-- title -->
+    <text x="480" y="52" font-family="Georgia, serif" font-size="22" fill="#C9A84C" text-anchor="middle" letter-spacing="4" font-weight="bold">THE HEDGEROW COMPANION</text>
+    <text x="480" y="82" font-family="Georgia, serif" font-size="13" fill="#8B6914" text-anchor="middle" letter-spacing="6" font-style="italic">A Natural History</text>
+  </g>
+
+  <!-- Book 4 — charcoal with silver/gold text -->
+  <g filter="url(#shadow)">
+    <rect x="90" y="122" width="770" height="100" rx="2" fill="url(#book2)"/>
+    <rect x="90" y="122" width="4" height="100" fill="rgba(160,120,50,0.25)"/>
+    <rect x="856" y="122" width="4" height="100" fill="rgba(0,0,0,0.5)"/>
+    <line x1="102" y1="132" x2="852" y2="132" stroke="#6B5010" stroke-width="1" opacity="0.5"/>
+    <line x1="102" y1="212" x2="852" y2="212" stroke="#6B5010" stroke-width="1" opacity="0.5"/>
+    <text x="480" y="164" font-family="Georgia, serif" font-size="20" fill="#B8922E" text-anchor="middle" letter-spacing="5" font-weight="bold">FLORA OF THE BRITISH ISLES</text>
+    <text x="480" y="192" font-family="Georgia, serif" font-size="12" fill="#7A6020" text-anchor="middle" letter-spacing="4" font-style="italic">Illustrated Edition</text>
+  </g>
+
+  <!-- Book 5 — warm brown/sepia -->
+  <g filter="url(#shadow)">
+    <rect x="75" y="226" width="785" height="90" rx="2" fill="url(#book3)"/>
+    <rect x="75" y="226" width="4" height="90" fill="rgba(140,100,40,0.3)"/>
+    <rect x="856" y="226" width="4" height="90" fill="rgba(0,0,0,0.4)"/>
+    <line x1="88" y1="235" x2="848" y2="235" stroke="#5A4010" stroke-width="1" opacity="0.5"/>
+    <line x1="88" y1="306" x2="848" y2="306" stroke="#5A4010" stroke-width="1" opacity="0.5"/>
+    <text x="480" y="266" font-family="Georgia, serif" font-size="18" fill="#A07828" text-anchor="middle" letter-spacing="4" font-weight="bold">THE ILLUSTRATED GARDEN</text>
+    <text x="480" y="292" font-family="Georgia, serif" font-size="12" fill="#6B5018" text-anchor="middle" letter-spacing="3" font-style="italic">Seasons &amp; Sentiment</text>
+  </g>
+
+  <!-- Book 6 — darkest, bottom -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="320" width="800" height="96" rx="2" fill="url(#book4)"/>
+    <rect x="60" y="320" width="4" height="96" fill="rgba(120,90,30,0.2)"/>
+    <rect x="856" y="320" width="4" height="96" fill="rgba(0,0,0,0.6)"/>
+    <line x1="74" y1="330" x2="848" y2="330" stroke="#4A3808" stroke-width="1" opacity="0.45"/>
+    <line x1="74" y1="406" x2="848" y2="406" stroke="#4A3808" stroke-width="1" opacity="0.45"/>
+    <!-- small ornament -->
+    <text x="480" y="362" font-family="Georgia, serif" font-size="19" fill="#8B6010" text-anchor="middle" letter-spacing="5" font-weight="bold">OBSERVATIONS ON NATURE</text>
+    <text x="480" y="390" font-family="Georgia, serif" font-size="11" fill="#5A4008" text-anchor="middle" letter-spacing="4" font-style="italic">Vol. II — Field Notes &amp; Sketches</text>
+  </g>
+
+  <!-- Bottom ground shadow to blend with floor -->
+  <rect x="0" y="400" width="960" height="120" fill="url(#fadeBottom)" opacity="0.9"/>
+  <defs>
+    <linearGradient id="fadeBottom" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#000000;stop-opacity:0" />
+      <stop offset="100%" style="stop-color:#0a0704;stop-opacity:0.85" />
+    </linearGradient>
+  </defs>
+
+  <!-- Subtle warm vignette to blend edges -->
+  <rect x="0" y="0" width="80" height="520" fill="url(#fadeLeft)" opacity="1"/>
+  <defs>
+    <linearGradient id="fadeLeft" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#080602;stop-opacity:0.95" />
+      <stop offset="100%" style="stop-color:#080602;stop-opacity:0" />
+    </linearGradient>
+  </defs>
+  <rect x="880" y="0" width="80" height="520" fill="url(#fadeRight)" opacity="1"/>
+  <defs>
+    <linearGradient id="fadeRight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#080602;stop-opacity:0" />
+      <stop offset="100%" style="stop-color:#080602;stop-opacity:0.95" />
+    </linearGradient>
+  </defs>
+</svg>

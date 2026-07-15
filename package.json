@@ -5,13 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && cp dist/index.html dist/app.html && cp dist/landing.html dist/index.html",
+    "build:native": "vite build && cp dist/index.html dist/app.html",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
+    "@capgo/capacitor-inappbrowser": "^8.7.5",
     "@stripe/stripe-js": "^9.8.0",
     "@supabase/supabase-js": "^2.108.1",
+    "barcode-detector": "^3.2.0",
+    "idb": "^8.0.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "stripe": "^22.2.1"
@@ -25,6 +35,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "sharp": "^0.35.2",
     "vite": "^8.0.12"
   }
 }

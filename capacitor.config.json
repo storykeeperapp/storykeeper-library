@@ -1,0 +1,20 @@
+{
+  "appId": "co.thestorykeeper.app",
+  "appName": "StoryKeeper",
+  "webDir": "dist",
+  "server": {
+    "allowNavigation": [
+      "*.supabase.co",
+      "*.amazon.com",
+      "read.amazon.com",
+      "*.stripe.com"
+    ]
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "scrollEnabled": true
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

@@ -598,6 +598,23 @@ async function fetchBookSearch(q) {
   } catch { return []; }
 }
 
+async function fetchOpenLibrarySearch(q) {
+  try {
+    const res = await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(q)}&limit=20`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.docs || []).map(item => ({
+      title: item.title || "Unknown",
+      author: item.author_name?.[0] || "",
+      isbn: item.isbn?.[0] || "",
+      cover: item.cover_i ? `https://covers.openlibrary.org/b/id/${item.cover_i}-M.jpg` : null,
+      coverUrl: item.cover_i ? `https://covers.openlibrary.org/b/id/${item.cover_i}-M.jpg` : null,
+      description: "",
+      genre: item.subject?.[0] || "",
+    }));
+  } catch { return []; }
+}
+
 const TIER_BOOK_LIMITS = {
   reluctant: 250,
   storyteller: 2000,
@@ -4193,7 +4210,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
           letterSpacing: "1.5px",
           marginBottom: 6,
         }}>
-          {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {genre}
+          {mediaType === "ebooks" ? "📱" : mediaType === "audiobooks" ? "🎧" : "📚"} {genre} <span style={{ fontSize: 24, color: "#6B4C2A", fontWeight: "normal" }}>({books.length})</span>
         </h1>
         <p style={{
           fontFamily: '"Palatino Linotype", Palatino, serif',
@@ -5299,11 +5316,11 @@ function TBRShelf({ onClose, onOpenSubscription }) {
           !localHits.some(h => h.title === b.title)) localHits.push(b);
     });
 
-    // Always fetch from Google Books in parallel so new books appear too
-    const gResults = await fetchBookSearch(q);
+    // Fetch from Google Books and Open Library in parallel for comprehensive results
+    const [gResults, olResults] = await Promise.all([fetchBookSearch(q), fetchOpenLibrarySearch(q)]);
     const seen = new Set(localHits.map(b => b.title.toLowerCase()));
     const merged = [...localHits];
-    for (const b of gResults) {
+    for (const b of [...gResults, ...olResults]) {
       if (!seen.has(b.title.toLowerCase())) { seen.add(b.title.toLowerCase()); merged.push(b); }
     }
     setSearchResults(merged.slice(0, 12));
@@ -5372,7 +5389,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
         <h1 style={{
           textAlign: "center", fontFamily: '"Baskerville", "Book Antiqua", Georgia, serif',
           fontSize: 28, color: "#3A2A1A", marginBottom: 4, fontStyle: "italic",
-        }}>📚 My TBR Shelf</h1>
+        }}>📚 My TBR Shelf ({tbrBooks.length})</h1>
         <p style={{ textAlign: "center", fontSize: 13, color: "#6B4C2A", marginBottom: 24, fontFamily: "Georgia, serif" }}>
           Books you want to read — your wishlist, all in one place.
         </p>
