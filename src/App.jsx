@@ -7281,28 +7281,33 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         // Status mapping
         let status = null;
         if (isGoodreads) {
-          if (exclusiveShelf === "read") status = "finished";
-          else if (exclusiveShelf === "currently-reading") status = "reading";
-          else if (exclusiveShelf === "to-read") status = "want-to-read";
+          const shelf = (exclusiveShelf || "").toLowerCase().trim().replace(/\s+/g, "-");
+          if (shelf === "read") status = "finished";
+          else if (shelf === "currently-reading" || shelf === "currently reading") status = "reading";
+          else if (shelf === "to-read" || shelf === "toread") status = "want-to-read";
+          else if (shelf === "reading") status = "reading";
+          else if (shelf === "wanttoread") status = "want-to-read";
         } else if (isApple && appleProgress !== null) {
           if (appleProgress >= 0.95) status = "finished";
           else if (appleProgress > 0) status = "reading";
         } else if (isAudible) {
-          const pctRaw = row["percent complete"] || row["percentcomplete"] || row["listening progress"] || row["progress"] || "";
+          const pctRaw = row["percent complete"] || row["percentcomplete"] || row["listening progress"] || row["progress"] || row["percent_complete"] || "";
           const pct = parseFloat(pctRaw);
-          if (!isNaN(pct)) {
+          if (!isNaN(pct) && pct > 0) {
             if (pct >= 95) status = "finished";
             else if (pct > 0) status = "reading";
           }
-          const audibleStatus = (row["status"] || "").toLowerCase();
-          if (audibleStatus === "finished" || audibleStatus === "completed") status = "finished";
-          else if (audibleStatus === "started" || audibleStatus === "in progress") status = "reading";
+          if (!status) {
+            const audibleStatus = (row["status"] || "").toLowerCase().trim();
+            if (audibleStatus === "finished" || audibleStatus === "completed") status = "finished";
+            else if (audibleStatus === "started" || audibleStatus === "in progress" || audibleStatus === "in_progress") status = "reading";
+          }
         } else {
           // Generic fallback for any platform that exports a status column
-          const rawStatus = (row["status"] || row["read status"] || row["reading status"] || "").toLowerCase();
-          if (rawStatus === "read" || rawStatus === "finished" || rawStatus === "completed") status = "finished";
-          else if (rawStatus === "reading" || rawStatus === "in progress" || rawStatus === "currently reading") status = "reading";
-          else if (rawStatus === "to read" || rawStatus === "want to read") status = "want-to-read";
+          const rawStatus = (row["status"] || row["read status"] || row["reading status"] || row["read_status"] || row["reading_status"] || "").toLowerCase().trim().replace(/\s+/g, " ");
+          if (rawStatus === "read" || rawStatus === "finished" || rawStatus === "completed" || rawStatus === "done") status = "finished";
+          else if (rawStatus === "reading" || rawStatus === "in progress" || rawStatus === "in_progress" || rawStatus === "currently reading" || rawStatus === "reading" || rawStatus === "started") status = "reading";
+          else if (rawStatus === "to read" || rawStatus === "to-read" || rawStatus === "toread" || rawStatus === "want to read" || rawStatus === "want-to-read" || rawStatus === "wanttoread" || rawStatus === "unread") status = "want-to-read";
         }
 
         const mediaType = isAudible ? "audiobook" : isChirp ? "audiobook" : isBookFunnel ? (row["mediatype"] || "ebook") : appleMediaType;
