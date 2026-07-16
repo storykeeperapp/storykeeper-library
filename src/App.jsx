@@ -7285,9 +7285,21 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         if (!title) return null;
 
         // Determine this row's effective media type the same way handleConfirmCSV will save it
-        const rawRowMediaType = (isApple || isBookFunnel) ? (row["mediatype"] || "ebook") : null;
+        let rawRowMediaType = (isApple || isBookFunnel) ? (row["mediatype"] || "ebook") : null;
+
+        // Goodreads: detect media type from Edition Format column
+        if (isGoodreads && goodreadsFormat) {
+          if (goodreadsFormat.includes("audible") || goodreadsFormat.includes("audiobook")) {
+            rawRowMediaType = "audiobook";
+          } else if (goodreadsFormat.includes("kindle") || goodreadsFormat.includes("ebook") || goodreadsFormat.includes("e-book")) {
+            rawRowMediaType = "ebook";
+          } else if (goodreadsFormat.includes("hardcover") || goodreadsFormat.includes("paperback") || goodreadsFormat.includes("hardback")) {
+            rawRowMediaType = "physical";
+          }
+        }
+
         const rowEffType = rawRowMediaType
-          ? (rawRowMediaType === "audiobook" ? "audiobooks" : "ebooks")
+          ? (rawRowMediaType === "audiobook" ? "audiobooks" : rawRowMediaType === "physical" ? "physical" : "ebooks")
           : (isAudible || isChirp ? "audiobooks" : importMediaType);
 
         // Duplicate check — fuzzy title match (strips subtitles/series numbering so formatting
@@ -7321,6 +7333,8 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         const exclusiveShelf = isGoodreads ? (row["exclusive shelf"] || "") : "";
         const dateRead = isGoodreads ? (row["date read"] || "") : "";
         const dateAdded = isGoodreads ? (row["date added"] || "") : "";
+        // Goodreads Edition Format detection: "Kindle Edition", "Audible Audiobook", "Hardcover", "Paperback", "eBook", etc.
+        const goodreadsFormat = isGoodreads ? ((row["edition format"] || row["Edition Format"] || "").toLowerCase().trim()) : "";
 
         // Apple Books specific
         const description = isApple ? (row["description"] || "") : (row["blurb"] || "");
@@ -7384,7 +7398,17 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
           else if (rawStatus === "to read" || rawStatus === "to-read" || rawStatus === "toread" || rawStatus === "want to read" || rawStatus === "want-to-read" || rawStatus === "wanttoread" || rawStatus === "unread") status = "want-to-read";
         }
 
-        const mediaType = isAudible ? "audiobook" : isChirp ? "audiobook" : isBookFunnel ? (row["mediatype"] || "ebook") : appleMediaType;
+        let mediaType = isAudible ? "audiobook" : isChirp ? "audiobook" : isBookFunnel ? (row["mediatype"] || "ebook") : appleMediaType;
+        // Goodreads: use detected format for mediaType
+        if (isGoodreads && goodreadsFormat) {
+          if (goodreadsFormat.includes("audible") || goodreadsFormat.includes("audiobook")) {
+            mediaType = "audiobook";
+          } else if (goodreadsFormat.includes("kindle") || goodreadsFormat.includes("ebook") || goodreadsFormat.includes("e-book")) {
+            mediaType = "ebook";
+          } else if (goodreadsFormat.includes("hardcover") || goodreadsFormat.includes("paperback") || goodreadsFormat.includes("hardback")) {
+            mediaType = "physical";
+          }
+        }
         return { _csvIdx: idx, title, author, isbn, asin, coverUrl, readUrl, shelfGenre, status, dateRead, dateAdded, description, mediaType, storeId, narrator, series };
       }).filter(Boolean);
 
@@ -7702,7 +7726,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
       asin: b.asin || "",
       coverUrl: b.coverUrl || "",
       readUrl: b.readUrl || "",
-      type: isApple && b.mediaType ? (b.mediaType === "audiobook" ? "audiobooks" : "ebooks") : mediaType,
+      type: (isApple || isGoodreads) && b.mediaType ? (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks") : mediaType,
       genre: csvGenres[b._csvIdx] || "Fiction & Drama",
       platform: platform.id,
       description: b.description || "",
