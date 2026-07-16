@@ -12198,7 +12198,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   );
 }
 
-function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound, active, customGenreTiles }) {
+function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound, active, customGenreTiles, customHomeBackground }) {
   const [pickerGenre, setPickerGenre] = useState(null);
   const [botanicalOverrides, setBotanicalOverrides] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_mobile_botanicals") || "{}"); } catch { return {}; }
@@ -12419,29 +12419,36 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   const physicalCount = _allBooks.filter(b => b.type === "physical" || b.mediaType === "physical").length;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#1A110A", overflow: "hidden" }}>
-      {/* Full-screen background video */}
-      <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-        <video autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain", filter: "brightness(1)" }}
-          src="/reading-nook.mp4" onError={e => e.target.style.display = "none"}
-          ref={el => {
-            if (!el) return;
-            const resume = () => { if (el.paused) el.play().catch(() => {}); };
-            document.addEventListener("visibilitychange", () => { if (!document.hidden) resume(); }, { once: false });
-            window.addEventListener("pageshow", resume, { once: false });
-            window.addEventListener("focus", resume, { once: false });
-            // Web visibility events aren't reliably fired in a native WebView when the OS
-            // backgrounds/foregrounds the whole app (e.g. tapping "Read" opens the Kindle
-            // app, then returning to StoryKeeper) — Capacitor's own resume event covers that.
-            if (Capacitor.isNativePlatform()) {
-              import('@capacitor/app').then(({ App: CapApp }) => { CapApp.addListener('resume', resume); }).catch(() => {});
-            }
-          }} />
-        {/* Light vignette only at very top and bottom so video stays visible */}
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(10,6,2,0.55) 0%, transparent 30%, transparent 55%, rgba(10,6,2,0.75) 100%)" }} />
-        {/* Lamp damper — softens the bright lamp on the left near the bottom */}
-        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 20% 15% at 12% 78%, rgba(0,0,0,0.45) 0%, transparent 100%)", pointerEvents: "none" }} />
-      </div>
+    <div style={{
+      position: "fixed", inset: 0, overflow: "hidden",
+      background: customHomeBackground ? `url(${customHomeBackground})` : "#1A110A",
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+    }}>
+      {/* Full-screen background video (only show if no custom background) */}
+      {!customHomeBackground && (
+        <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+          <video autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain", filter: "brightness(1)" }}
+            src="/reading-nook.mp4" onError={e => e.target.style.display = "none"}
+            ref={el => {
+              if (!el) return;
+              const resume = () => { if (el.paused) el.play().catch(() => {}); };
+              document.addEventListener("visibilitychange", () => { if (!document.hidden) resume(); }, { once: false });
+              window.addEventListener("pageshow", resume, { once: false });
+              window.addEventListener("focus", resume, { once: false });
+              // Web visibility events aren't reliably fired in a native WebView when the OS
+              // backgrounds/foregrounds the whole app (e.g. tapping "Read" opens the Kindle
+              // app, then returning to StoryKeeper) — Capacitor's own resume event covers that.
+              if (Capacitor.isNativePlatform()) {
+                import('@capacitor/app').then(({ App: CapApp }) => { CapApp.addListener('resume', resume); }).catch(() => {});
+              }
+            }} />
+          {/* Light vignette only at very top and bottom so video stays visible */}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(10,6,2,0.55) 0%, transparent 30%, transparent 55%, rgba(10,6,2,0.75) 100%)" }} />
+          {/* Lamp damper — softens the bright lamp on the left near the bottom */}
+          <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 20% 15% at 12% 78%, rgba(0,0,0,0.45) 0%, transparent 100%)", pointerEvents: "none" }} />
+        </div>
+      )}
 
       {/* Floating header */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2, padding: `${(isPWA && isIOS) || Capacitor.isNativePlatform() ? "calc(env(safe-area-inset-top) + 8px)" : isTablet ? "16px" : "12px"} 20px 8px`, textAlign: "center" }}>
@@ -19253,6 +19260,9 @@ function StoryKeeperApp() {
   const [customGenreTiles, setCustomGenreTiles] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_genre_tiles_custom") || "{}"); } catch { return {}; }
   });
+  const [customHomeBackground, setCustomHomeBackground] = useState(() => {
+    try { return localStorage.getItem("sk_home_background_custom") || ""; } catch { return ""; }
+  });
   const [showRedetect, setShowRedetect] = useState(false);
   const [showFetchDesc, setShowFetchDesc] = useState(false);
   const [showProfile, setShowProfile] = useState(() => {
@@ -19934,6 +19944,7 @@ function StoryKeeperApp() {
             onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
             userTier={userTier}
             customGenreTiles={customGenreTiles}
+            customHomeBackground={customHomeBackground}
             onGenreClick={(g) => {
               window.location.hash = "#genre=" + encodeURIComponent(g);
               setGenre(g);
@@ -20055,6 +20066,22 @@ function StoryKeeperApp() {
             {/* Color Theme */}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Color Theme</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <button onClick={() => applyTheme("firelight", supabaseRef.current)} style={{
+                  flex: 1, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12,
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  background: themeKey === "firelight" ? SK_THEMES.firelight.accent : SK_THEMES.firelight.bgMuted,
+                  color: themeKey === "firelight" ? "#FFF8EE" : SK_THEMES.firelight.text,
+                  border: "none", fontWeight: themeKey === "firelight" ? 600 : 400,
+                }}>☀️ Light</button>
+                <button onClick={() => applyTheme("midnight", supabaseRef.current)} style={{
+                  flex: 1, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12,
+                  fontFamily: '"Palatino Linotype", Palatino, serif',
+                  background: themeKey === "midnight" ? SK_THEMES.midnight.accent : SK_THEMES.midnight.bgMuted,
+                  color: themeKey === "midnight" ? "#FFF8EE" : SK_THEMES.midnight.text,
+                  border: "none", fontWeight: themeKey === "midnight" ? 600 : 400,
+                }}>🌙 Dark</button>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {Object.entries(SK_THEMES).map(([key, t]) => (
                   <button key={key} onClick={() => applyTheme(key, supabaseRef.current)} style={{
@@ -20095,11 +20122,35 @@ function StoryKeeperApp() {
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Library Customization</div>
               <button onClick={() => { setShowSettings(false); setShowCustomizeGenres(true); }} style={{
-                width: "100%", padding: "11px", borderRadius: 8, background: th.accent, border: "none",
+                width: "100%", padding: "11px", marginBottom: 8, borderRadius: 8, background: th.accent, border: "none",
                 cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
                 color: th.bg, fontWeight: 600,
               }}>🎨 Customize Genre Tiles</button>
-              <div style={{ fontSize: 11, color: th.textSoft, marginTop: 6, fontStyle: "italic" }}>Upload custom images and edit your genre shelves (Premium feature)</div>
+              <label style={{ display: "block", width: "100%", padding: "11px", borderRadius: 8, background: th.accent, border: "none", cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', color: th.bg, fontWeight: 600, textAlign: "center", boxSizing: "border-box", marginBottom: 8 }}>
+                🖼️ Set Home Background
+                <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const dataUrl = ev.target.result;
+                    setCustomHomeBackground(dataUrl);
+                    localStorage.setItem("sk_home_background_custom", dataUrl);
+                  };
+                  reader.readAsDataURL(file);
+                }} />
+              </label>
+              {customHomeBackground && (
+                <button onClick={() => {
+                  setCustomHomeBackground("");
+                  localStorage.removeItem("sk_home_background_custom");
+                }} style={{
+                  width: "100%", padding: "9px", marginBottom: 8, borderRadius: 8, background: th.bgMuted, border: "none",
+                  cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+                  color: th.text,
+                }}>Reset Home Background</button>
+              )}
+              <div style={{ fontSize: 11, color: th.textSoft, marginTop: 6, fontStyle: "italic" }}>Customize your genre shelves and home screen (Premium feature)</div>
             </div>
 
             {/* Account Settings */}
