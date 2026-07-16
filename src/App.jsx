@@ -5531,11 +5531,44 @@ function TBRShelf({ onClose, onOpenSubscription }) {
         <BarcodeScannerModal
           onDetected={async (isbn) => {
             setShowScanner(false);
-            setShowSearch(true);
-            setMoveMediaType("physical");
             setMsg(`📷 Barcode scanned! Looking up ISBN ${isbn}…`);
-            await searchBooks(`isbn:${isbn}`);
-            setMsg("");
+            try {
+              const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+              const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+              const res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+              const rows = await res.json();
+              const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+              if (cached) {
+                const userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
+                const bookData = {
+                  title: cached.title || "Unknown",
+                  author: cached.author || "",
+                  isbn: isbn,
+                  coverUrl: cached.cover_url || null,
+                  description: cached.description || "",
+                  genre: cached.genre || "Fiction & Drama",
+                  type: "physical",
+                  mediaType: "physical",
+                  platform: "physical",
+                  status: "unread",
+                  addedAt: Date.now(),
+                };
+                const isDupe = userBooks.some(b => b.isbn === isbn && (b.type === "physical" || b.mediaType === "physical"));
+                if (isDupe) {
+                  setMsg("Already in your Physical Books collection!");
+                } else {
+                  userBooks.push(bookData);
+                  saveUserBooks(userBooks);
+                  window.dispatchEvent(new CustomEvent("sk-books-changed"));
+                  setMsg(`✓ "${cached.title}" added to your Physical Books!`);
+                }
+              } else {
+                setMsg("Book not found. Try adding it manually.");
+              }
+            } catch (e) {
+              setMsg("Error looking up ISBN. Try searching manually.");
+            }
+            setTimeout(() => setMsg(""), 3000);
           }}
           onClose={() => setShowScanner(false)}
         />
