@@ -12198,7 +12198,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   );
 }
 
-function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound, active }) {
+function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound, active, customGenreTiles }) {
   const [pickerGenre, setPickerGenre] = useState(null);
   const [botanicalOverrides, setBotanicalOverrides] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_mobile_botanicals") || "{}"); } catch { return {}; }
@@ -12508,7 +12508,7 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
           onMouseLeave={reorderMode ? handleMouseUp : undefined}>
           <div style={{ display: "flex", gap: 10 }}>
             {allGenres.map(({ genre, image, label }, index) => {
-              const img = botanicalOverrides[genre] || image;
+              const img = customGenreTiles[genre] || botanicalOverrides[genre] || image;
               const isDragging = dragIndex === index;
               return (
                 <div key={genre} data-genre-index={index} style={{ position: "relative", flexShrink: 0, transition: reorderMode ? "transform 0.15s" : "none", transform: isDragging ? "scale(1.08)" : "scale(1)", opacity: isDragging ? 0.85 : 1 }}>
@@ -19248,6 +19248,11 @@ function StoryKeeperApp() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#settings" || localStorage.getItem("sk_current_page") === "settings";
   });
+  const [showCustomizeGenres, setShowCustomizeGenres] = useState(false);
+  const [forceRerender, setForceRerender] = useState(false);
+  const [customGenreTiles, setCustomGenreTiles] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sk_genre_tiles_custom") || "{}"); } catch { return {}; }
+  });
   const [showRedetect, setShowRedetect] = useState(false);
   const [showFetchDesc, setShowFetchDesc] = useState(false);
   const [showProfile, setShowProfile] = useState(() => {
@@ -19928,6 +19933,7 @@ function StoryKeeperApp() {
             toggleSound={toggleSound}
             onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
             userTier={userTier}
+            customGenreTiles={customGenreTiles}
             onGenreClick={(g) => {
               window.location.hash = "#genre=" + encodeURIComponent(g);
               setGenre(g);
@@ -20083,6 +20089,17 @@ function StoryKeeperApp() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Customize Genre Tiles */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Library Customization</div>
+              <button onClick={() => { setShowSettings(false); setShowCustomizeGenres(true); }} style={{
+                width: "100%", padding: "11px", borderRadius: 8, background: th.accent, border: "none",
+                cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif',
+                color: th.bg, fontWeight: 600,
+              }}>🎨 Customize Genre Tiles</button>
+              <div style={{ fontSize: 11, color: th.textSoft, marginTop: 6, fontStyle: "italic" }}>Upload custom images and edit your genre shelves (Premium feature)</div>
             </div>
 
             {/* Account Settings */}
@@ -20365,6 +20382,121 @@ function StoryKeeperApp() {
                 padding: "9px 28px", color: th.bg, fontSize: 14,
                 fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer",
               }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOMIZE GENRE TILES MODAL */}
+      {showCustomizeGenres && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9000,
+          background: "rgba(0,0,0,0.65)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          overflow: "auto"
+        }} onClick={() => { setShowCustomizeGenres(false); setShowSettings(true); }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: th.bg, borderRadius: 14, padding: "36px 28px",
+            width: Math.min(window.innerWidth - 32, 600), boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+            fontFamily: '"Palatino Linotype", Palatino, serif',
+            maxHeight: "90vh", overflowY: "auto"
+          }}>
+            <h2 style={{ margin: "0 0 24px", fontSize: 24, color: th.text, textAlign: "center" }}>
+              🎨 Customize Genre Tiles
+            </h2>
+
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 14, color: th.textMid, margin: 0, lineHeight: 1.6 }}>
+                Upload custom images for your genre shelves. Your subscription tier determines how many genres you can customize:
+              </p>
+              <div style={{ fontSize: 12, color: th.textSoft, marginTop: 12, background: th.bgMuted, padding: 12, borderRadius: 8 }}>
+                <div>• <strong>Reluctant Reader:</strong> 3 genres</div>
+                <div>• <strong>Storyteller:</strong> 10 genres</div>
+                <div>• <strong>Librarian:</strong> All genres</div>
+                <div>• <strong>StoryKeeper:</strong> Unlimited + advanced features</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              {(() => {
+                const tierLimits = { reluctant: 3, storyteller: 10, librarian: 999, storykeeper: 999 };
+                const limit = tierLimits[userTier] || 3;
+
+                return [...DEFAULT_LEFT, ...DEFAULT_RIGHT].map((genreItem, idx) => {
+                  const isEditable = idx < limit;
+                  const customImage = customGenreTiles[genreItem.genre];
+                  const inputId = `genre-input-${idx}`;
+
+                  return (
+                    <div key={genreItem.genre} style={{
+                      marginBottom: 16, padding: 12, background: th.bgMuted, borderRadius: 8,
+                      border: `1px solid ${th.border}`, opacity: isEditable ? 1 : 0.6
+                    }}>
+                      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: th.text, marginBottom: 8 }}>
+                            {genreItem.genre}
+                            {!isEditable && <span style={{ fontSize: 11, color: th.textSoft, marginLeft: 8 }}>(Locked)</span>}
+                          </div>
+                          <div style={{
+                            height: 120, width: 100, borderRadius: 6, background: th.bgDeep,
+                            backgroundImage: customImage ? `url(${customImage})` : `url(${genreItem.image})`,
+                            backgroundSize: "cover", backgroundPosition: "center",
+                            border: `2px solid ${customImage ? th.accent : th.border}`,
+                            marginBottom: 8
+                          }} />
+                          {isEditable && (
+                            <div>
+                              <input
+                                id={inputId}
+                                type="file"
+                                accept="image/*"
+                                style={{ display: "none" }}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    const updated = { ...customGenreTiles, [genreItem.genre]: reader.result };
+                                    localStorage.setItem("sk_genre_tiles_custom", JSON.stringify(updated));
+                                    setCustomGenreTiles(updated);
+                                  };
+                                  reader.readAsDataURL(file);
+                                }}
+                              />
+                              <label htmlFor={inputId} style={{
+                                display: "inline-block", padding: "6px 12px", background: th.accent,
+                                color: th.bg, borderRadius: 6, fontSize: 12, cursor: "pointer",
+                                fontWeight: 600, marginRight: 8
+                              }}>Upload Image</label>
+                              {customImage && (
+                                <button onClick={() => {
+                                  const updated = { ...customGenreTiles };
+                                  delete updated[genreItem.genre];
+                                  localStorage.setItem("sk_genre_tiles_custom", JSON.stringify(updated));
+                                  setCustomGenreTiles(updated);
+                                }} style={{
+                                  padding: "6px 12px", background: th.bgDeep, color: th.text,
+                                  border: `1px solid ${th.border}`, borderRadius: 6, fontSize: 12,
+                                  cursor: "pointer", fontWeight: 600
+                                }}>Reset to Default</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div style={{ textAlign: "center", marginTop: 24 }}>
+              <button onClick={() => { setShowCustomizeGenres(false); setShowSettings(true); }} style={{
+                background: th.accent, border: "none", borderRadius: 8,
+                padding: "11px 28px", color: th.bg, fontSize: 14,
+                fontFamily: '"Palatino Linotype", Palatino, serif', cursor: "pointer", fontWeight: 600
+              }}>Done</button>
             </div>
           </div>
         </div>
