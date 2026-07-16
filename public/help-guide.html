@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StoryKeeper - Help & Learning Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Georgia", "Palatino Linotype", Palatino, serif;
+            background: #F8F1E4 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23F8F1E4' width='100' height='100'/%3E%3Cpath fill='%23E8D5B0' opacity='0.1' d='M0 0h100v100H0z'/%3E%3C/svg%3E");
+            color: #3A2A1A;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+            padding: 40px 20px;
+        }
+
+        h1 {
+            font-size: 48px;
+            color: #3A2A1A;
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+            font-style: italic;
+        }
+
+        .subtitle {
+            font-size: 18px;
+            color: #6B4C2A;
+            font-style: italic;
+        }
+
+        .guide-intro {
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 40px;
+            border: 1px solid #C4A882;
+            text-align: center;
+        }
+
+        .guide-intro p {
+            font-size: 16px;
+            color: #5A3F26;
+            margin-bottom: 15px;
+        }
+
+        .guides-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 50px;
+        }
+
+        .guide-card {
+            background: rgba(255, 255, 255, 0.85);
+            border-radius: 12px;
+            padding: 30px;
+            border: 2px solid #C4A882;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .guide-card:hover {
+            transform: translateY(-5px);
+            border-color: #8B5E3C;
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+            background: rgba(255, 255, 255, 0.95);
+        }
+
+        .guide-card.active {
+            border-color: #8B5E3C;
+            background: rgba(139, 94, 60, 0.08);
+        }
+
+        .guide-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .guide-card h2 {
+            font-size: 22px;
+            color: #3A2A1A;
+            margin-bottom: 10px;
+            font-style: italic;
+        }
+
+        .guide-card p {
+            font-size: 14px;
+            color: #6B4C2A;
+            line-height: 1.5;
+        }
+
+        .content-sections {
+            margin-top: 40px;
+        }
+
+        .section {
+            display: none;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            padding: 40px;
+            border: 1px solid #C4A882;
+            margin-bottom: 30px;
+        }
+
+        .section.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .section h2 {
+            font-size: 32px;
+            color: #3A2A1A;
+            margin-bottom: 25px;
+            font-style: italic;
+            border-bottom: 2px solid #C4A882;
+            padding-bottom: 15px;
+        }
+
+        .section h3 {
+            font-size: 20px;
+            color: #3A2A1A;
+            margin-top: 25px;
+            margin-bottom: 12px;
+            font-style: italic;
+        }
+
+        .section p {
+            margin-bottom: 15px;
+            font-size: 15px;
+            color: #5A3F26;
+            line-height: 1.8;
+        }
+
+        .step {
+            background: #F8F1E4;
+            border-left: 4px solid #8B5E3C;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+
+        .step strong {
+            color: #8B5E3C;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .platform-item {
+            background: #F8F1E4;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            border: 1px solid #D4B896;
+        }
+
+        .platform-item h4 {
+            color: #8B5E3C;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .platform-item ol {
+            margin-left: 20px;
+            color: #5A3F26;
+        }
+
+        .platform-item li {
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .feature-box {
+            background: #F8F1E4;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            border: 1px solid #D4B896;
+        }
+
+        .feature-box h4 {
+            color: #8B5E3C;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .feature-box p {
+            font-size: 14px;
+            color: #5A3F26;
+        }
+
+        .walkthrough-step {
+            background: #F8F1E4;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            border-left: 4px solid #8B5E3C;
+        }
+
+        .walkthrough-step .num {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #8B5E3C;
+            color: #F8F1E4;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .tip {
+            background: rgba(139, 94, 60, 0.08);
+            border-left: 4px solid #8B5E3C;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #5A3F26;
+        }
+
+        .tip strong {
+            color: #8B5E3C;
+        }
+
+        ul {
+            margin-left: 20px;
+            color: #5A3F26;
+            font-size: 15px;
+        }
+
+        li {
+            margin-bottom: 10px;
+            line-height: 1.6;
+        }
+
+        a {
+            color: #8B5E3C;
+            text-decoration: none;
+            border-bottom: 1px solid #8B5E3C;
+        }
+
+        a:hover {
+            color: #6B4C2A;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #8B5E3C;
+            color: #F8F1E4;
+            border-radius: 6px;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            font-family: "Georgia", serif;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            background: #6B4C2A;
+            color: #F8F1E4;
+        }
+
+        .section-nav {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #C4A882;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            padding: 10px 20px;
+            background: #8B5E3C;
+            color: #F8F1E4;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: "Georgia", serif;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .nav-btn:hover {
+            background: #6B4C2A;
+        }
+
+        .nav-btn.inactive {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 32px;
+            }
+
+            .guides-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .section {
+                padding: 20px;
+            }
+
+            .section h2 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 StoryKeeper Help & Learning Guide</h1>
+            <p class="subtitle">Choose your learning path</p>
+        </header>
+
+        <div class="guide-intro">
+            <p>Welcome to StoryKeeper! Whether you're just getting started or diving deeper into features,</p>
+            <p>select the learning path that works best for you:</p>
+        </div>
+
+        <div class="guides-grid">
+            <div class="guide-card active" data-guide="quick-start">
+                <span class="guide-icon">⚡</span>
+                <h2>Quick Start</h2>
+                <p>Get up and running in under 5 minutes. Add your first book and explore the basics.</p>
+            </div>
+
+            <div class="guide-card" data-guide="platform-guides">
+                <span class="guide-icon">🔗</span>
+                <h2>Platform Guides</h2>
+                <p>Step-by-step instructions for importing from Goodreads, Kindle, Audible, and more.</p>
+            </div>
+
+            <div class="guide-card" data-guide="features">
+                <span class="guide-icon">✨</span>
+                <h2>Feature Deep-Dives</h2>
+                <p>Understand each feature: TBR Shelf, Favorites, Book Tracker, and more.</p>
+            </div>
+
+            <div class="guide-card" data-guide="interactive">
+                <span class="guide-icon">👆</span>
+                <h2>Interactive Walkthrough</h2>
+                <p>Learn by doing. A guided tour through StoryKeeper's main features.</p>
+            </div>
+        </div>
+
+        <div class="content-sections">
+            <!-- QUICK START -->
+            <div class="section active" id="quick-start">
+                <h2>⚡ Quick Start (5 minutes)</h2>
+
+                <p>Get started with StoryKeeper in no time!</p>
+
+                <h3>Step 1: Add Your First Book</h3>
+                <p>You have three ways to add books:</p>
+                <div class="step">
+                    <strong>🔍 Search</strong>
+                    Click "Search Library" or use the search icon. Type a title or author and select from the results.
+                </div>
+                <div class="step">
+                    <strong>📷 Scan</strong>
+                    Click the barcode scanner icon (📷). Point your camera at a book's barcode. It will automatically look up the book and add it to the correct shelf.
+                </div>
+                <div class="step">
+                    <strong>✏️ Add Manually</strong>
+                    Click "Add Book to Library" in the sidebar and enter the details yourself.
+                </div>
+
+                <h3>Step 2: Organize Your Books</h3>
+                <p>Your books are automatically organized by genre. You can:</p>
+                <ul>
+                    <li><strong>View by Genre:</strong> Click any genre shelf (Fantasy, Mystery, Romance, etc.)</li>
+                    <li><strong>See Everything:</strong> Go to "Complete Library" to see all your books in one place</li>
+                    <li><strong>Mark Favorites:</strong> Click the heart icon on any book to add it to your favorites</li>
+                </ul>
+
+                <h3>Step 3: Track Your Reading</h3>
+                <p>Click on any book to open its details, then set your reading status:</p>
+                <ul>
+                    <li><strong>Want to Read:</strong> Books on your To-Be-Read (TBR) list</li>
+                    <li><strong>Reading:</strong> Books you're currently reading</li>
+                    <li><strong>Finished:</strong> Books you've completed</li>
+                </ul>
+
+                <div class="tip">
+                    <strong>💡 Tip:</strong> Your reading status is saved to "My Story So Far" where you can see your reading stats and history.
+                </div>
+
+                <h3>That's It!</h3>
+                <p>You're ready to explore. Click on "My Story So Far" to see your reading statistics, or browse the genre shelves to discover more.</p>
+
+                <div class="section-nav">
+                    <button class="nav-btn" onclick="switchGuide('platform-guides')">Next: Platform Guides →</button>
+                </div>
+            </div>
+
+            <!-- PLATFORM GUIDES -->
+            <div class="section" id="platform-guides">
+                <h2>🔗 Platform Import Guides</h2>
+
+                <p>Import your entire library from your favorite reading platforms:</p>
+
+                <div class="platform-item">
+                    <h4>🌸 Goodreads</h4>
+                    <ol>
+                        <li>Go to <a href="https://www.goodreads.com/review/import" target="_blank">Goodreads Export</a></li>
+                        <li>Scroll down to "Export Library"</li>
+                        <li>Click the Export button</li>
+                        <li>A CSV file will download</li>
+                        <li>In StoryKeeper, click "Platform Connections" in the sidebar</li>
+                        <li>Select "Goodreads" and upload your CSV file</li>
+                        <li>Choose the format (eBook, Audiobook, or Physical)</li>
+                        <li>Review and confirm the import</li>
+                    </ol>
+                    <div class="tip">
+                        <strong>📝 Note:</strong> StoryKeeper automatically detects the format from your Goodreads export (Kindle Edition, Audible Audiobook, Hardcover, etc.) so books go to the correct shelf.
+                    </div>
+                </div>
+
+                <div class="platform-item">
+                    <h4>📖 Kindle</h4>
+                    <ol>
+                        <li>Go to <a href="https://read.amazon.com" target="_blank">Kindle Cloud Reader</a></li>
+                        <li>Open Developer Console (F12 or Cmd+Option+J)</li>
+                        <li>Go to the Console tab</li>
+                        <li>Copy and paste the export script (provided in StoryKeeper)</li>
+                        <li>Press Enter and a CSV will download</li>
+                        <li>Upload to StoryKeeper via Platform Connections</li>
+                    </ol>
+                    <div class="tip">
+                        <strong>⏱️ Takes about 2-5 minutes</strong> depending on your library size
+                    </div>
+                </div>
+
+                <div class="platform-item">
+                    <h4>🎧 Audible</h4>
+                    <ol>
+                        <li>Go to <a href="https://www.audible.com/library/titles" target="_blank">Audible Library</a></li>
+                        <li>Open Developer Console (F12 or Cmd+Option+J)</li>
+                        <li>Go to the Console tab</li>
+                        <li>Copy and paste the export script (provided in StoryKeeper)</li>
+                        <li>Press Enter and a CSV will download</li>
+                        <li>Upload to StoryKeeper via Platform Connections</li>
+                    </ol>
+                    <div class="tip">
+                        <strong>✅ Note:</strong> Books automatically import as Audiobooks
+                    </div>
+                </div>
+
+                <div class="platform-item">
+                    <h4>📚 Other Platforms</h4>
+                    <p>Kobo, Apple Books, Chirp, BookFunnel, Google Play, and Nook all have export options. Look for "Export Library" or similar options in your account settings.</p>
+                </div>
+
+                <h3>Importing Your Reading Status</h3>
+                <p>When you import from Goodreads or Audible, your reading status (finished, currently reading, want to read) is automatically imported too!</p>
+
+                <div class="section-nav">
+                    <button class="nav-btn" onclick="switchGuide('quick-start')">← Previous</button>
+                    <button class="nav-btn" onclick="switchGuide('features')">Next: Features →</button>
+                </div>
+            </div>
+
+            <!-- FEATURES -->
+            <div class="section" id="features">
+                <h2>✨ Feature Deep-Dives</h2>
+
+                <h3>📚 My TBR Shelf</h3>
+                <div class="feature-box">
+                    <h4>What is it?</h4>
+                    <p>Your personal "To-Be-Read" list. A wishlist of books you want to read but haven't added to your library yet.</p>
+                </div>
+                <div class="feature-box">
+                    <h4>How to use it:</h4>
+                    <ul>
+                        <li>Click "My TBR Shelf" in the sidebar</li>
+                        <li>Search books by title or author</li>
+                        <li>Click a result to add it to your TBR</li>
+                        <li>When you're ready to read, click "Move to Library" to add it officially</li>
+                    </ul>
+                </div>
+
+                <h3>❤️ My Favorites</h3>
+                <div class="feature-box">
+                    <h4>What is it?</h4>
+                    <p>Your personal collection of beloved books. Click the heart icon on any book to add it to favorites.</p>
+                </div>
+                <div class="feature-box">
+                    <h4>How to use it:</h4>
+                    <ul>
+                        <li>Click any book to open its details</li>
+                        <li>Click the heart icon (♥) to add to favorites</li>
+                        <li>View all favorites in "My Favorites" from the sidebar</li>
+                    </ul>
+                </div>
+
+                <h3>📖 My Story So Far (Book Tracker)</h3>
+                <div class="feature-box">
+                    <h4>What is it?</h4>
+                    <p>Your personal reading dashboard. See how many books you've read, currently reading, and your reading statistics.</p>
+                </div>
+                <div class="feature-box">
+                    <h4>What you can see:</h4>
+                    <ul>
+                        <li><strong>Books Read:</strong> Total finished books (lifetime and this month)</li>
+                        <li><strong>Currently Reading:</strong> Books you're actively reading</li>
+                        <li><strong>Reading Statistics:</strong> Monthly and yearly breakdowns</li>
+                        <li><strong>Reading Streak:</strong> Track your reading consistency</li>
+                    </ul>
+                </div>
+
+                <h3>📚 Complete Library</h3>
+                <div class="feature-box">
+                    <h4>What is it?</h4>
+                    <p>View your entire library in one place without genre filtering.</p>
+                </div>
+                <div class="feature-box">
+                    <h4>How to use it:</h4>
+                    <ul>
+                        <li>Click "Complete Library" in the sidebar</li>
+                        <li>See your total book count and breakdown by format</li>
+                        <li>Search by title or author to find specific books</li>
+                        <li>Click any book to see details</li>
+                    </ul>
+                </div>
+
+                <h3>🎯 Genre Shelves</h3>
+                <div class="feature-box">
+                    <h4>What is it?</h4>
+                    <p>Your books organized by category (Fantasy, Mystery, Romance, etc.)</p>
+                </div>
+                <div class="feature-box">
+                    <h4>How to use it:</h4>
+                    <ul>
+                        <li>Click any genre on the home screen to browse that shelf</li>
+                        <li>Search within a genre to find specific books</li>
+                        <li>Sort by title, author, or series</li>
+                        <li>View counts for eBooks, Audiobooks, and Physical books</li>
+                    </ul>
+                </div>
+
+                <h3>📷 Barcode Scanner</h3>
+                <div class="feature-box">
+                    <h4>What is it?</h4>
+                    <p>Quickly add physical books by scanning their barcodes.</p>
+                </div>
+                <div class="feature-box">
+                    <h4>How to use it:</h4>
+                    <ul>
+                        <li>Click the camera icon (📷) in the TBR shelf or import area</li>
+                        <li>Point at a book's barcode</li>
+                        <li>The book is automatically looked up and added to your Physical Books shelf</li>
+                    </ul>
+                </div>
+
+                <div class="section-nav">
+                    <button class="nav-btn" onclick="switchGuide('platform-guides')">← Previous</button>
+                    <button class="nav-btn" onclick="switchGuide('interactive')">Next: Interactive →</button>
+                </div>
+            </div>
+
+            <!-- INTERACTIVE -->
+            <div class="section" id="interactive">
+                <h2>👆 Interactive Walkthrough</h2>
+
+                <p>Follow these steps to explore StoryKeeper hands-on:</p>
+
+                <div class="walkthrough-step">
+                    <span class="num">1</span>
+                    <strong>Go to Home</strong>
+                    <p>Open StoryKeeper and look at the main screen. You'll see genre shelves on the left and right sides.</p>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">2</span>
+                    <strong>Click on a Genre</strong>
+                    <p>Click "Fantasy" (or any genre that has books). You'll see all books in that category with a filter and sort options.</p>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">3</span>
+                    <strong>Click a Book Cover</strong>
+                    <p>Click any book to see its details: title, author, description, rating, and current reading status.</p>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">4</span>
+                    <strong>Change Reading Status</strong>
+                    <p>In the book details modal, click a status button (Want to Read, Reading, Finished) to track your progress.</p>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">5</span>
+                    <strong>Open the Sidebar</strong>
+                    <p>Click the menu button (☰) to open the sidebar. You'll see all major features:</p>
+                    <ul style="margin-top: 10px;">
+                        <li>My Favorites - your loved books</li>
+                        <li>Complete Library - all books in one view</li>
+                        <li>My TBR Shelf - books to read</li>
+                        <li>My Story So Far - reading stats</li>
+                    </ul>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">6</span>
+                    <strong>Try the Search</strong>
+                    <p>Click "Search Library" and search for a book by title or author. Try adding it to your TBR shelf.</p>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">7</span>
+                    <strong>Import from a Platform</strong>
+                    <p>Click "Platform Connections" to import books from Goodreads, Kindle, Audible, or another platform.</p>
+                </div>
+
+                <div class="walkthrough-step">
+                    <span class="num">8</span>
+                    <strong>Check Your Stats</strong>
+                    <p>Click "My Story So Far" to see your reading statistics and track your progress.</p>
+                </div>
+
+                <div class="tip">
+                    <strong>🎯 Pro Tip:</strong> Try marking a few books as "Finished" and check your stats to see them update in real-time!
+                </div>
+
+                <h3>Common Tasks</h3>
+
+                <div class="feature-box">
+                    <h4>❤️ Add a Book to Favorites</h4>
+                    <ol>
+                        <li>Click on any book</li>
+                        <li>Click the heart icon</li>
+                        <li>It's now in "My Favorites"</li>
+                    </ol>
+                </div>
+
+                <div class="feature-box">
+                    <h4>📚 Move a Book to TBR Shelf</h4>
+                    <ol>
+                        <li>Search for a book</li>
+                        <li>Click it to add to TBR</li>
+                        <li>Later, click "Move to Library" to add it officially</li>
+                    </ol>
+                </div>
+
+                <div class="feature-box">
+                    <h4>📊 See Your Reading Stats</h4>
+                    <ol>
+                        <li>Click "My Story So Far" in the sidebar</li>
+                        <li>Choose your format (eBooks, Audiobooks, Physical)</li>
+                        <li>View lifetime and monthly statistics</li>
+                    </ol>
+                </div>
+
+                <div class="section-nav">
+                    <button class="nav-btn" onclick="switchGuide('features')">← Previous</button>
+                    <button class="nav-btn" onclick="switchGuide('quick-start')">Back to Start</button>
+                </div>
+            </div>
+        </div>
+
+        <footer style="text-align: center; margin-top: 50px; padding-top: 30px; border-top: 1px solid #C4A882; color: #6B4C2A; font-size: 14px;">
+            <p>📚 StoryKeeper - Read here. Listen here. Live here.</p>
+            <p style="font-size: 12px; margin-top: 10px;">Questions? Contact us at <a href="mailto:support@thestorykeeper.app">support@thestorykeeper.app</a></p>
+        </footer>
+    </div>
+
+    <script>
+        function switchGuide(guideId) {
+            // Hide all sections
+            document.querySelectorAll('.section').forEach(section => {
+                section.classList.remove('active');
+            });
+
+            // Remove active state from all cards
+            document.querySelectorAll('.guide-card').forEach(card => {
+                card.classList.remove('active');
+            });
+
+            // Show selected section
+            document.getElementById(guideId).classList.add('active');
+
+            // Add active state to matching card
+            document.querySelector(`[data-guide="${guideId}"]`).classList.add('active');
+
+            // Scroll to top
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Add click handlers to guide cards
+        document.querySelectorAll('.guide-card').forEach(card => {
+            card.addEventListener('click', function() {
+                const guideId = this.getAttribute('data-guide');
+                switchGuide(guideId);
+            });
+        });
+    </script>
+</body>
+</html>
