@@ -5124,6 +5124,156 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected })
   );
 }
 
+function AllBooksShelf({ onClose }) {
+  const isMobile = window.innerWidth < 768;
+  const [selectedBook, setSelectedBook] = useState(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const scrollRef = useRef(null);
+  const [atTop, setAtTop] = useState(true);
+
+  // Collect all books from all sources
+  const allBooks = [];
+  const statuses = (() => {
+    try {
+      const eb = JSON.parse(localStorage.getItem("sk_statuses_ebooks") || "{}");
+      const ab = JSON.parse(localStorage.getItem("sk_statuses_audiobooks") || "{}");
+      const pb = JSON.parse(localStorage.getItem("sk_statuses_physical") || "{}");
+      return { ...eb, ...ab, ...pb };
+    } catch { return {}; }
+  })();
+
+  // Add library books (built-in)
+  Object.entries(library).forEach(([genre, genreBooks]) => {
+    genreBooks.forEach((book) => {
+      allBooks.push({ ...book, _genre: genre });
+    });
+  });
+
+  // Add user-imported books
+  try {
+    const userBooks = getUserBooksSync();
+    userBooks.forEach((book, idx) => {
+      allBooks.push({ ...book, _libIdx: idx });
+    });
+  } catch { /* ignore */ }
+
+  // Filter books
+  const filteredBooks = filterQuery.trim()
+    ? allBooks.filter(b =>
+        b.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+        (b.author || "").toLowerCase().includes(filterQuery.toLowerCase())
+      )
+    : allBooks;
+
+  // Count by media type
+  const countsByType = {
+    ebooks: allBooks.filter(b => !b.type || b.type === "ebooks" || b.mediaType === "ebook").length,
+    audiobooks: allBooks.filter(b => b.type === "audiobooks" || b.mediaType === "audiobook").length,
+    physical: allBooks.filter(b => b.type === "physical" || b.mediaType === "physical").length,
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 550,
+      backgroundColor: "#F8F1E4",
+      backgroundImage: 'url("/parchment.jpg")',
+      backgroundSize: "cover", backgroundPosition: "center",
+      display: "flex", flexDirection: "column",
+    }}>
+      <button onClick={onClose} style={{
+        position: "fixed", top: "calc(20px + env(safe-area-inset-top, 44px))",
+        left: "calc(16px + env(safe-area-inset-left, 0px))",
+        padding: "8px 18px", borderRadius: 10, border: "1px solid rgba(201,169,110,0.35)",
+        cursor: "pointer", background: "rgba(58,34,16,0.72)", backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)", color: "#F5ECD7",
+        fontFamily: '"Baskerville", "Book Antiqua", "Goudy Old Style", Georgia, serif',
+        fontWeight: 700, fontStyle: "italic", fontSize: 15, letterSpacing: "0.5px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.35)", zIndex: 201,
+      }}>← Back</button>
+
+      <button onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })} style={{
+        position: "fixed", bottom: 28, right: 28, width: 48, height: 48,
+        borderRadius: "50%", border: "1px solid #8B5E3C", cursor: "pointer",
+        background: '#F8F1E4 url("/parchment.jpg") center/cover fixed',
+        color: "#3A2A1A", fontSize: 20, boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
+        zIndex: 201, opacity: atTop ? 0 : 1, pointerEvents: atTop ? "none" : "auto",
+        transition: "opacity 0.25s ease", display: "flex", alignItems: "center", justifyContent: "center",
+      }} title="Back to top">↑</button>
+
+      <div ref={scrollRef} onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
+        style={{ position: "absolute", inset: 0, overflowY: "auto", padding: "60px 40px 30px" }}>
+
+        <div style={{ textAlign: "center", marginBottom: 30, paddingTop: 10 }}>
+          <h1 style={{
+            fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A",
+            fontSize: 34, letterSpacing: "1.5px", marginBottom: 6,
+          }}>📚 Complete Library</h1>
+          <p style={{
+            fontFamily: '"Palatino Linotype", Palatino, serif', color: "#4B3A2A",
+            fontStyle: "italic", fontSize: 15,
+          }}>
+            {filterQuery ? `${filteredBooks.length} of ${allBooks.length}` : allBooks.length} total books
+          </p>
+          <p style={{ fontSize: 13, color: "#6B4C2A", marginTop: 8, fontFamily: "Georgia, serif" }}>
+            📱 {countsByType.ebooks} eBooks | 🎧 {countsByType.audiobooks} Audiobooks | 📚 {countsByType.physical} Physical
+          </p>
+
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, marginTop: 16, justifyContent: "center",
+            flexWrap: "wrap",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.7)",
+              border: "1px solid #C4A882", borderRadius: 20, padding: "5px 14px", flex: "1 1 220px",
+              maxWidth: 340,
+            }}>
+              <span style={{ fontSize: 13, opacity: 0.5, color: "#5a3a1a" }}>🔍</span>
+              <input type="text" value={filterQuery} onChange={e => setFilterQuery(e.target.value)}
+                placeholder="Filter by title or author…"
+                style={{
+                  flex: 1, background: "transparent", border: "none", outline: "none",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13,
+                  color: "#3A2A1A", fontStyle: filterQuery ? "normal" : "italic",
+                }} />
+              {filterQuery && (
+                <button onMouseDown={() => setFilterQuery("")} style={{
+                  background: "none", border: "none", cursor: "pointer", color: "#8B5E3C",
+                  fontSize: 14, padding: 0, lineHeight: 1,
+                }}>✕</button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {filteredBooks.length === 0 && (
+          <div style={{ textAlign: "center", paddingTop: 40, color: "#6B4E32", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 16, fontStyle: "italic" }}>
+            No books match your search.
+          </div>
+        )}
+
+        {filteredBooks.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 20, maxWidth: 1200, margin: "0 auto" }}>
+            {filteredBooks.map((book, i) => (
+              <div key={i} onClick={() => setSelectedBook(book)} style={{
+                cursor: "pointer", textAlign: "center", transition: "transform 0.2s",
+              }} onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.05)"} onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}>
+                <img src={book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg` : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='180'%3E%3Crect fill='%23C4A882' width='120' height='180'/%3E%3C/svg%3E")}
+                  alt={book.title} style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }} />
+                <div style={{ marginTop: 8, fontSize: 13, color: "#3A2A1A", fontWeight: 600, fontFamily: "Georgia, serif", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {book.title}
+                </div>
+                {book.author && <div style={{ fontSize: 11, color: "#6B4C2A", fontStyle: "italic" }}>{book.author}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedBook && <BookModal book={selectedBook} allBooks={allBooks} onClose={() => setSelectedBook(null)} />}
+    </div>
+  );
+}
+
 function TBRShelf({ onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const isMobile = window.innerWidth < 768;
@@ -19049,6 +19199,12 @@ function StoryKeeperApp() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#favorites" || localStorage.getItem("sk_current_page") === "favorites";
   });
+  const [showAllBooks, setShowAllBooks] = useState(() => {
+    const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
+    if (navType !== "reload") return false;
+    const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
+    return h === "#allbooks" || localStorage.getItem("sk_current_page") === "allbooks";
+  });
   const [showTBR, setShowTBR] = useState(() => {
     const navType = performance.getEntriesByType?.("navigation")?.[0]?.type;
     if (navType !== "reload") return false;
@@ -19157,11 +19313,11 @@ function StoryKeeperApp() {
 
   // Safety net: if nothing is visible, snap back to home
   useEffect(() => {
-    const anyPageOpen = genre || showFavorites || showTBR || showStats || showSettings ||
+    const anyPageOpen = genre || showFavorites || showAllBooks || showTBR || showStats || showSettings ||
       showProfile || showCommunity || showPlatforms || showAddToLibrary || showSubscription ||
       showGroup || showBookClub || showGlobalSearch || showMyClubs;
     if (!anyPageOpen && !showHome) setShowHome(true);
-  }, [genre, showFavorites, showTBR, showStats, showSettings, showProfile, showCommunity,
+  }, [genre, showFavorites, showAllBooks, showTBR, showStats, showSettings, showProfile, showCommunity,
       showPlatforms, showAddToLibrary, showSubscription, showGroup, showBookClub, showGlobalSearch, showMyClubs, showHome]);
 
   // Persist current page to localStorage so refresh (including iOS pull-to-refresh) restores position
@@ -19174,13 +19330,14 @@ function StoryKeeperApp() {
     else if (showStats) page = "stats";
     else if (showPlatforms) page = "platforms";
     else if (showFavorites) page = "favorites";
+    else if (showAllBooks) page = "allbooks";
     else if (showTBR) page = "tbr";
     else if (showSubscription) page = "subscription";
     else if (showProfile) page = "profile";
     else if (showSettings) page = "settings";
     localStorage.setItem("sk_current_page", page);
     localStorage.setItem("sk_last_hash", window.location.hash);
-  }, [genre, showStats, showPlatforms, showFavorites, showTBR, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre, showCommunity]);
+  }, [genre, showStats, showPlatforms, showFavorites, showAllBooks, showTBR, showSubscription, showProfile, showSettings, showBookClub, bookClubGenre, showGroup, groupGenre, showCommunity]);
 
   // Save hash right before unload (catches pull-to-refresh on iOS)
   useEffect(() => {
@@ -19298,6 +19455,11 @@ function StoryKeeperApp() {
       {/* FAVORITES SHELF PAGE */}
       {showFavorites && (
         <FavoritesShelf onClose={() => { setShowFavorites(false); window.location.hash = ""; setShowSidebar(true); }} />
+      )}
+
+      {/* ALL BOOKS LIBRARY PAGE */}
+      {showAllBooks && (
+        <AllBooksShelf onClose={() => { setShowAllBooks(false); window.location.hash = ""; setShowSidebar(true); }} />
       )}
 
       {/* TBR SHELF PAGE */}
@@ -19630,6 +19792,7 @@ function StoryKeeperApp() {
             <>
               {sectionLabel("Your Library")}
               {item("favorites", "❤️ My Favorites",        () => { setShowSidebar(false); setShowFavorites(true); window.location.hash = "#favorites"; })}
+              {item("allbooks",  "📚 Complete Library",     () => { setShowSidebar(false); setShowAllBooks(true); window.location.hash = "#allbooks"; })}
               {item("tbr",       "📚 My TBR Shelf",         () => { setShowSidebar(false); setShowTBR(true); window.location.hash = "#tbr"; })}
               {item("addbook",   "➕ Add Book to Library",   () => { setShowSidebar(false); setShowAddToLibrary(true); })}
               {item("stats",     "📖 My Story So Far",       () => { setShowSidebar(false); setShowStats(true); window.location.hash = "#stats"; })}
