@@ -5130,21 +5130,104 @@ function AllBooksShelf({ onClose }) {
   const [filterQuery, setFilterQuery] = useState("");
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Books can be any media type here, so favorites/statuses/progress are
+  // merged across all three per-type stores for display, and writes go back
+  // to whichever bucket the currently open book actually belongs to.
+  const loadMerged = (prefix) => {
+    try {
+      const eb = JSON.parse(localStorage.getItem(`${prefix}_ebooks`) || "{}");
+      const ab = JSON.parse(localStorage.getItem(`${prefix}_audiobooks`) || "{}");
+      const pb = JSON.parse(localStorage.getItem(`${prefix}_physical`) || "{}");
+      return { ...eb, ...ab, ...pb };
+    } catch { return {}; }
+  };
+  const [favorites, setFavoritesState] = useState(() => loadMerged("sk_favorites"));
+  const [statuses, setStatusesState] = useState(() => loadMerged("sk_statuses"));
+  const [progress, setProgressState] = useState(() => loadMerged("sk_progress"));
+
+  const getBucket = (book) => {
+    if (!book) return "ebooks";
+    if (book.type === "audiobooks" || book.mediaType === "audiobook") return "audiobooks";
+    if (book.type === "physical" || book.mediaType === "physical") return "physical";
+    return "ebooks";
+  };
+  const patchBucket = (prefix, bucket, key, value) => {
+    const lsKey = `${prefix}_${bucket}`;
+    let bucketObj = {};
+    try { bucketObj = JSON.parse(localStorage.getItem(lsKey) || "{}"); } catch {}
+    localStorage.setItem(lsKey, JSON.stringify({ ...bucketObj, [key]: value }));
+  };
+  const setFavorites = (updater) => setFavoritesState(prev => {
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    if (selectedBook) patchBucket("sk_favorites", getBucket(selectedBook), selectedBook.isbn || selectedBook.title, next[selectedBook.isbn || selectedBook.title]);
+    return next;
+  });
+  const setStatuses = (updater) => setStatusesState(prev => {
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    if (selectedBook) patchBucket("sk_statuses", getBucket(selectedBook), selectedBook.isbn || selectedBook.title, next[selectedBook.isbn || selectedBook.title]);
+    return next;
+  });
+  const setProgress = (updater) => setProgressState(prev => {
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    if (selectedBook) patchBucket("sk_progress", getBucket(selectedBook), selectedBook.isbn || selectedBook.title, next[selectedBook.isbn || selectedBook.title]);
+    return next;
+  });
+
+  const handleDelete = (book) => {
+    const bookKey = book.isbn || book.title;
+    const userBooksAll = getUserBooksSync();
+    if (typeof book._libIdx === "number" && userBooksAll[book._libIdx] &&
+        ((book.isbn && userBooksAll[book._libIdx].isbn === book.isbn) || userBooksAll[book._libIdx].title === book.title)) {
+      saveUserBooks(userBooksAll.filter((_, idx) => idx !== book._libIdx));
+    } else {
+      const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
+      if (isUser) {
+        saveUserBooks(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
+      } else {
+        const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
+        if (!hidden.includes(bookKey)) hidden.push(bookKey);
+        localStorage.setItem("sk_hidden_books", JSON.stringify(hidden));
+      }
+    }
+    setRefreshKey(k => k + 1);
+  };
+
+  const hiddenBooks = (() => { try { return new Set(JSON.parse(localStorage.getItem("sk_hidden_books") || "[]")); } catch { return new Set(); } })();
+
+  // Platform badge + quick "read/listen on X" redirect for imported books
+  const platformInfo = Object.fromEntries([...EBOOK_PLATFORMS, ...AUDIO_PLATFORMS].map(p => [p.id, p]));
+  const getPlatformUrl = (b) => {
+    if (!b.platform) return null;
+    const urls = {
+      kindle:    b.readUrl || (b.asin ? `https://read.amazon.com/?asin=${b.asin}` : b.isbn ? `https://read.amazon.com/reader?asin=${b.isbn}` : "https://read.amazon.com"),
+      audible:   b.readUrl || (b.asin ? `https://www.audible.com/pd/${b.asin}` : b.isbn ? `https://www.audible.com/pd/${b.isbn}` : "https://www.audible.com/library/titles"),
+      chirp:     b.readUrl || "https://www.chirpbooks.com/library",
+      apple:     b.storeId ? `https://books.apple.com/us/book/id${b.storeId}` : b.readUrl || "https://books.apple.com/library",
+      kobo:      b.readUrl || "https://www.kobo.com/us/en/library/books",
+      nook:      b.readUrl || "https://nook.barnesandnoble.com/my_library",
+      libby:     b.readUrl || "https://libbyapp.com/shelf",
+      hoopla:    b.readUrl || "https://www.hoopladigital.com/my/borrowed",
+    };
+    return urls[b.platform] || b.readUrl || null;
+  };
+  const openOnPlatform = (e, book) => {
+    e.stopPropagation();
+    const url = getPlatformUrl(book);
+    if (!url) return;
+    const isMobileDevice = window.innerWidth < 768 || navigator.maxTouchPoints > 1;
+    if (isMobileDevice) { window.location.href = url; return; }
+    window.open(url, "sk_reader", "width=1200,height=800,noopener");
+  };
 
   // Collect all books from all sources
   const allBooks = [];
-  const statuses = (() => {
-    try {
-      const eb = JSON.parse(localStorage.getItem("sk_statuses_ebooks") || "{}");
-      const ab = JSON.parse(localStorage.getItem("sk_statuses_audiobooks") || "{}");
-      const pb = JSON.parse(localStorage.getItem("sk_statuses_physical") || "{}");
-      return { ...eb, ...ab, ...pb };
-    } catch { return {}; }
-  })();
 
   // Add library books (built-in)
   Object.entries(library).forEach(([genre, genreBooks]) => {
     genreBooks.forEach((book) => {
+      if (hiddenBooks.has(book.isbn || book.title)) return;
       allBooks.push({ ...book, _genre: genre });
     });
   });
@@ -5253,23 +5336,59 @@ function AllBooksShelf({ onClose }) {
 
         {filteredBooks.length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 20, maxWidth: 1200, margin: "0 auto" }}>
-            {filteredBooks.map((book, i) => (
-              <div key={i} onClick={() => setSelectedBook(book)} style={{
-                cursor: "pointer", textAlign: "center", transition: "transform 0.2s",
-              }} onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.05)"} onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}>
-                <img src={book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg` : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='180'%3E%3Crect fill='%23C4A882' width='120' height='180'/%3E%3C/svg%3E")}
-                  alt={book.title} style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }} />
-                <div style={{ marginTop: 8, fontSize: 13, color: "#3A2A1A", fontWeight: 600, fontFamily: "Georgia, serif", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {book.title}
+            {filteredBooks.map((book, i) => {
+              const platform = book.platform ? platformInfo[book.platform] : null;
+              const platformUrl = platform ? getPlatformUrl(book) : null;
+              return (
+                <div key={i} onClick={() => setSelectedBook(book)} style={{
+                  cursor: "pointer", textAlign: "center", transition: "transform 0.2s",
+                }} onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.05)"} onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}>
+                  <div style={{ position: "relative" }}>
+                    <img src={book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg` : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='180'%3E%3Crect fill='%23C4A882' width='120' height='180'/%3E%3C/svg%3E")}
+                      alt={book.title} style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }} />
+                    {platform && (
+                      <button
+                        onClick={(e) => openOnPlatform(e, book)}
+                        title={platformUrl ? `Open in ${platform.name}` : platform.name}
+                        style={{
+                          position: "absolute", top: 6, right: 6, width: 28, height: 28,
+                          borderRadius: "50%", border: "1px solid rgba(255,255,255,0.6)",
+                          background: "rgba(20,14,8,0.78)", color: "#fff", fontSize: 14,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          cursor: platformUrl ? "pointer" : "default",
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.35)", padding: 0,
+                        }}>
+                        {platform.emoji}
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 13, color: "#3A2A1A", fontWeight: 600, fontFamily: "Georgia, serif", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {book.title}
+                  </div>
+                  {book.author && <div style={{ fontSize: 11, color: "#6B4C2A", fontStyle: "italic" }}>{book.author}</div>}
+                  {platform && <div style={{ fontSize: 10, color: "#8B7355", marginTop: 2 }}>via {platform.name}</div>}
                 </div>
-                {book.author && <div style={{ fontSize: 11, color: "#6B4C2A", fontStyle: "italic" }}>{book.author}</div>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
-      {selectedBook && <BookModal book={selectedBook} allBooks={allBooks} onClose={() => setSelectedBook(null)} />}
+      {selectedBook && (
+        <BookModal
+          book={selectedBook}
+          allBooks={allBooks}
+          onClose={() => setSelectedBook(null)}
+          favorites={favorites}
+          setFavorites={setFavorites}
+          statuses={statuses}
+          setStatuses={setStatuses}
+          progress={progress}
+          setProgress={setProgress}
+          mediaType={getBucket(selectedBook)}
+          onDelete={handleDelete}
+        />
+      )}
     </div>
   );
 }
@@ -12199,6 +12318,23 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
 }
 
 function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSettings, onOpenStats, onOpenProfile, onOpenSearch, isTablet, isPWA, isIOS, userTier, soundOn, toggleSound, active, customGenreTiles, customHomeBackground }) {
+  const DEFAULT_LEFT = [
+    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+    { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
+    { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
+    { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
+    { genre: "Self Help",          image: "/botanicals/selfhelp-daisies.png" },
+    { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
+  ];
+  const DEFAULT_RIGHT = [
+    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
+    { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+    { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
+    { genre: "True Crime",             image: "/botanicals/truecrime-purple-dahlia.jpg" },
+    { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
+    { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+  ];
+
   const [pickerGenre, setPickerGenre] = useState(null);
   const [botanicalOverrides, setBotanicalOverrides] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sk_mobile_botanicals") || "{}"); } catch { return {}; }
@@ -12384,23 +12520,6 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
     setDragIndex(null);
     dragOverIndexRef.current = null;
   };
-
-  const DEFAULT_LEFT = [
-    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
-    { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
-    { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
-    { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
-    { genre: "Self Help",          image: "/botanicals/selfhelp-daisies.png" },
-    { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
-  ];
-  const DEFAULT_RIGHT = [
-    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
-    { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
-    { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
-    { genre: "True Crime",             image: "/botanicals/truecrime-purple-dahlia.jpg" },
-    { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
-    { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
-  ];
 
   const defaultGenreOrder = [...DEFAULT_LEFT, ...DEFAULT_RIGHT].map(g => g.genre);
   const [genreOrder, setGenreOrder] = useState(() => {
@@ -12742,6 +12861,23 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
 }
 
 function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, onOpenSearch, soundOn, toggleSound }) {
+  const DEFAULT_LEFT = [
+    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+    { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
+    { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
+    { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
+    { genre: "Self Help",          image: "/botanicals/selfhelp-daisies.png" },
+    { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
+  ];
+  const DEFAULT_RIGHT = [
+    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
+    { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+    { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
+    { genre: "True Crime",             image: "/botanicals/truecrime-purple-dahlia.jpg" },
+    { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
+    { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+  ];
+
   const [hovered, setHovered] = useState(null);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customName, setCustomName] = useState("");
@@ -12770,23 +12906,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
     onGenreClick(name);
   };
 
-  const DEFAULT_LEFT = [
-    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
-    { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
-    { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
-    { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
-    { genre: "Self Help",          image: "/botanicals/selfhelp-daisies.png" },
-    { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
-  ];
-  const DEFAULT_RIGHT = [
-    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
-    { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
-    { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
-    { genre: "True Crime",              image: "/botanicals/truecrime-purple-dahlia.jpg" },
-    { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
-    { genre: "Classics",                image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
-    { genre: "_custom",                 image: null },
-  ];
+  const defaultRightWithCustom = [...DEFAULT_RIGHT, { genre: "_custom", image: null }];
 
   const loadOrder = (key, defaults) => {
     try {
@@ -12798,7 +12918,7 @@ function HomeView({ onGenreClick, mediaType, onToggleMediaType, onSetMediaType, 
   };
 
   const [leftGenres, setLeftGenres] = useState(() => loadOrder("sk_left_order", DEFAULT_LEFT));
-  const [rightGenres, setRightGenres] = useState(() => loadOrder("sk_right_order", DEFAULT_RIGHT));
+  const [rightGenres, setRightGenres] = useState(() => loadOrder("sk_right_order", defaultRightWithCustom));
 
   const handleDragStart = (e, side, index) => {
     dragItem.current = { side, index };
@@ -18333,6 +18453,23 @@ function getSharedAudioContext() {
 }
 
 function StoryKeeperApp() {
+  const DEFAULT_LEFT = [
+    { genre: "Fantasy & Romantasy",            image: "/botanicals/fantasy-iridescent-hibiscus.jpg" },
+    { genre: "Mystery & Thriller", image: "/botanicals/mystery-red-poppy.jpg" },
+    { genre: "Sci-Fi",             image: "/botanicals/scifi-tropical-bloom.jpg" },
+    { genre: "Romance",            image: "/botanicals/romance-peach-rose.jpg" },
+    { genre: "Self Help",          image: "/botanicals/selfhelp-daisies.png" },
+    { genre: "Dark Romance",       image: "/botanicals/dark-romance-black-hibiscus.jpg" },
+  ];
+  const DEFAULT_RIGHT = [
+    { genre: "Fiction & Drama",                 image: "/botanicals/fiction-watercolor-bouquet.jpg" },
+    { genre: "Historical Fiction",      image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+    { genre: "Cookbooks",              image: "/botanicals/cookbooks-rosemary.png" },
+    { genre: "True Crime",             image: "/botanicals/truecrime-purple-dahlia.jpg" },
+    { genre: "Gardening & Landscaping", image: "/botanicals/gardening-caladium-leaf.jpg" },
+    { genre: "Classics",               image: "/botanicals/historical-fiction-watercolor-bouquet.jpg" },
+  ];
+
   const [soundOn, setSoundOn] = useState(false);
   const audioRef = useRef(null);
   const pendingResumeRef = useRef(null);
@@ -20066,22 +20203,6 @@ function StoryKeeperApp() {
             {/* Color Theme */}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Color Theme</div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <button onClick={() => applyTheme("firelight", supabaseRef.current)} style={{
-                  flex: 1, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12,
-                  fontFamily: '"Palatino Linotype", Palatino, serif',
-                  background: themeKey === "firelight" ? SK_THEMES.firelight.accent : SK_THEMES.firelight.bgMuted,
-                  color: themeKey === "firelight" ? "#FFF8EE" : SK_THEMES.firelight.text,
-                  border: "none", fontWeight: themeKey === "firelight" ? 600 : 400,
-                }}>☀️ Light</button>
-                <button onClick={() => applyTheme("midnight", supabaseRef.current)} style={{
-                  flex: 1, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12,
-                  fontFamily: '"Palatino Linotype", Palatino, serif',
-                  background: themeKey === "midnight" ? SK_THEMES.midnight.accent : SK_THEMES.midnight.bgMuted,
-                  color: themeKey === "midnight" ? "#FFF8EE" : SK_THEMES.midnight.text,
-                  border: "none", fontWeight: themeKey === "midnight" ? 600 : 400,
-                }}>🌙 Dark</button>
-              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {Object.entries(SK_THEMES).map(([key, t]) => (
                   <button key={key} onClick={() => applyTheme(key, supabaseRef.current)} style={{
