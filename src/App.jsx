@@ -5345,7 +5345,9 @@ function AllBooksShelf({ onClose }) {
                 }} onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.05)"} onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}>
                   <div style={{ position: "relative" }}>
                     <img src={book.coverUrl || (book.isbn ? `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg` : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='180'%3E%3Crect fill='%23C4A882' width='120' height='180'/%3E%3C/svg%3E")}
-                      alt={book.title} style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }} />
+                      alt={book.title} loading="lazy" decoding="async"
+                      onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='180'%3E%3Crect fill='%23C4A882' width='120' height='180'/%3E%3C/svg%3E"; }}
+                      style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6, boxShadow: "0 2px 8px rgba(0,0,0,0.2)", background: "#E8DCC4" }} />
                     {platform && (
                       <button
                         onClick={(e) => openOnPlatform(e, book)}
