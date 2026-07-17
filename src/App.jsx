@@ -6850,7 +6850,25 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
       const resp = await fetch(url, { credentials: 'include' });
       const data = await resp.json();
       (data.itemsList || []).forEach(b => {
-        books.push({ title: b.title || '', author: (b.authors || []).join(', '), coverUrl: b.productUrl || '', readUrl: b.webReaderUrl || '', asin: b.asin || '' });
+        // Amazon's Kindle Library API doesn't document a stable field name for
+        // reading progress — try the handful of shapes it's known to sometimes
+        // return and normalize to our own status vocabulary. Any of these being
+        // absent/undefined is expected and just means no signal for that book.
+        let status = '';
+        const pct = (typeof b.percentageRead === 'number' ? b.percentageRead
+          : typeof b.readingProgress === 'number' ? b.readingProgress
+          : (b.readingProgress && typeof b.readingProgress.percentage === 'number') ? b.readingProgress.percentage
+          : typeof b.furthestPageRead === 'number' ? b.furthestPageRead
+          : null);
+        if (pct !== null) {
+          if (pct >= 95) status = 'finished';
+          else if (pct > 0) status = 'reading';
+        } else {
+          const rs = (b.readStatus || b.readingStatus || '').toString().toLowerCase();
+          if (rs === 'read' || rs === 'finished') status = 'finished';
+          else if (rs === 'reading' || rs === 'started' || rs === 'in_progress' || rs === 'in progress') status = 'reading';
+        }
+        books.push({ title: b.title || '', author: (b.authors || []).join(', '), coverUrl: b.productUrl || '', readUrl: b.webReaderUrl || '', asin: b.asin || '', status });
       });
       window._skSetStatus && window._skSetStatus('StoryKeeper: Fetched ' + books.length + ' books…');
       token = data.paginationToken || null;
@@ -6889,7 +6907,22 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
       const textDivs = [...row.querySelectorAll('.bc-text')];
       const byIdx = textDivs.findIndex(el => /^by:?$/i.test((el.textContent || '').trim()));
       if (byIdx !== -1 && textDivs[byIdx + 1]) author = textDivs[byIdx + 1].textContent.trim();
-      books.push({ title, author, coverUrl, asin });
+      // Best-effort progress signal — Audible's library page usually shows either
+      // a progressbar (aria-valuenow) or a "Finished"-style text badge per row.
+      // Exact markup isn't confirmed against a live page, so this checks broadly
+      // and simply finds nothing if none of these patterns match.
+      let status = '';
+      const bar = row.querySelector('[role="progressbar"]');
+      const pctAttr = bar ? parseFloat(bar.getAttribute('aria-valuenow') || '') : NaN;
+      if (!isNaN(pctAttr)) {
+        if (pctAttr >= 95) status = 'finished';
+        else if (pctAttr > 0) status = 'reading';
+      } else {
+        const rowText = (row.textContent || '').toLowerCase();
+        if (/\bfinished\b/.test(rowText)) status = 'finished';
+        else if (/\bin progress\b|\bstarted\b/.test(rowText)) status = 'reading';
+      }
+      books.push({ title, author, coverUrl, asin, status });
     });
     const nextEl = document.querySelector('span.nextButton a.bc-button-text');
     const nextWrapper = nextEl ? nextEl.closest('.bc-button') : null;
@@ -7028,9 +7061,10 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
     const books = [];
     items.forEach(li => {
       let title = '';
+      let trackInfo = {};
       try {
-        const info = JSON.parse(li.getAttribute('data-track-info') || '{}');
-        title = info.title || '';
+        trackInfo = JSON.parse(li.getAttribute('data-track-info') || '{}');
+        title = trackInfo.title || '';
       } catch (e) {}
       if (!title) {
         const titleLink = li.querySelector('h2.title a, .title a');
@@ -7042,7 +7076,29 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
       const img = li.querySelector('img.cover-image, img');
       let coverUrl = img ? (img.getAttribute('src') || '') : '';
       if (coverUrl.startsWith('//')) coverUrl = 'https:' + coverUrl;
-      books.push({ title, author, coverUrl });
+      // Best-effort progress signal — check the already-parsed data-track-info JSON
+      // for a percent/status-shaped field first, then fall back to scanning for a
+      // progress bar or "Finished" badge within this list item. Neither is confirmed
+      // against a live Kobo page, so finding nothing here is expected/safe.
+      let status = '';
+      const pct = (typeof trackInfo.percentRead === 'number' ? trackInfo.percentRead
+        : typeof trackInfo.readingProgress === 'number' ? trackInfo.readingProgress
+        : null);
+      if (pct !== null) {
+        if (pct >= 95) status = 'finished';
+        else if (pct > 0) status = 'reading';
+      } else {
+        const bar = li.querySelector('[role="progressbar"], .progress-bar, progress');
+        const pctAttr = bar ? parseFloat(bar.getAttribute('aria-valuenow') || bar.getAttribute('value') || '') : NaN;
+        if (!isNaN(pctAttr)) {
+          if (pctAttr >= 95) status = 'finished';
+          else if (pctAttr > 0) status = 'reading';
+        } else {
+          const liText = (li.textContent || '').toLowerCase();
+          if (/\bfinished\b/.test(liText)) status = 'finished';
+        }
+      }
+      books.push({ title, author, coverUrl, status });
     });
     window._skSetStatus && window._skSetStatus('StoryKeeper: Found ' + books.length + ' books…');
     if (books.length === 0) {
@@ -7277,14 +7333,17 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
         let header, rows;
         if (plt.id === 'kindle') {
-          header = 'title,author,coverUrl,readUrl,asin';
-          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl), esc(b.asin)].join(','));
+          header = 'title,author,coverUrl,readUrl,asin,status';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl), esc(b.asin), esc(b.status || '')].join(','));
         } else if (plt.id === 'audible') {
-          header = 'title,author,coverUrl,asin';
-          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.asin)].join(','));
+          header = 'title,author,coverUrl,asin,status';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.asin), esc(b.status || '')].join(','));
         } else if (plt.id === 'chirp') {
           header = 'title,author,coverUrl,description,mediaType';
           rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.description), esc('audiobook')].join(','));
+        } else if (plt.id === 'kobo') {
+          header = 'title,author,coverUrl,status';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.status || '')].join(','));
         } else {
           header = 'title,author,coverUrl,readUrl';
           rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl || '')].join(','));
@@ -7610,7 +7669,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         // Apple Books specific
         const description = isApple ? (row["description"] || "") : (row["blurb"] || "");
         const appleMediaType = isApple ? (row["mediatype"] || "ebook") : null;
-        const appleProgress = isApple ? parseFloat(row["readingprogress"] || "0") : null;
+        const appleProgress = isApple ? parseFloat(row["readingprogress"] || row["reading progress"] || row["progress"] || row["read percentage"] || "0") : null;
 
         // Audible specific — strip leading apostrophe ALE adds to prevent Excel auto-formatting
         const stripAle = (v) => (v || "").replace(/^'+/, "").trim();
@@ -7646,9 +7705,13 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
           else if (shelf === "to-read" || shelf === "toread") status = "want-to-read";
           else if (shelf === "reading") status = "reading";
           else if (shelf === "wanttoread") status = "want-to-read";
-        } else if (isApple && appleProgress !== null) {
-          if (appleProgress >= 0.95) status = "finished";
-          else if (appleProgress > 0) status = "reading";
+        } else if (isApple && appleProgress !== null && !isNaN(appleProgress)) {
+          // Normalize to a 0-1 fraction — "readingprogress" is typically already
+          // 0-1, but the broader fallback columns (progress/read percentage) may
+          // instead be expressed as 0-100.
+          const appleFrac = appleProgress > 1 ? appleProgress / 100 : appleProgress;
+          if (appleFrac >= 0.95) status = "finished";
+          else if (appleFrac > 0) status = "reading";
         } else if (isAudible) {
           const pctRaw = row["percent complete"] || row["percentcomplete"] || row["listening progress"] || row["progress"] || row["percent_complete"] || "";
           const pct = parseFloat(pctRaw);
@@ -7659,7 +7722,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
           if (!status) {
             const audibleStatus = (row["status"] || "").toLowerCase().trim();
             if (audibleStatus === "finished" || audibleStatus === "completed") status = "finished";
-            else if (audibleStatus === "started" || audibleStatus === "in progress" || audibleStatus === "in_progress") status = "reading";
+            else if (audibleStatus === "started" || audibleStatus === "in progress" || audibleStatus === "in_progress" || audibleStatus === "reading") status = "reading";
           }
         } else {
           // Generic fallback for any platform that exports a status column
