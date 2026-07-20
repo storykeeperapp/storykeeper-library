@@ -7199,7 +7199,13 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
     if (!title || title.length < 2 || seen.has(title)) return;
     const author = (authorEl?.innerText || lines[1] || '').replace(/^by\\s+/i, '').trim();
     seen.add(title);
-    books.push({ title, author, coverUrl: img?.src || '' });
+    // Best-effort format detection from card text + download links — BookFunnel
+    // doesn't expose a structured format field, so this scans for keywords.
+    const linkHrefs = Array.from(card.querySelectorAll('a')).map(a => (a.href || '').toLowerCase()).join(' ');
+    const formatText = ((card.innerText || '').toLowerCase() + ' ' + linkHrefs);
+    let mediaType = 'ebook';
+    if (/audiobook|audio book|narrated by|\\.mp3|\\.m4b/.test(formatText)) mediaType = 'audiobook';
+    books.push({ title, author, coverUrl: img?.src || '', mediaType });
   });
   if (books.length === 0) {
     window._skRunning = false;
@@ -7341,6 +7347,9 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         } else if (plt.id === 'chirp') {
           header = 'title,author,coverUrl,description,mediaType';
           rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.description), esc('audiobook')].join(','));
+        } else if (plt.id === 'bookfunnel') {
+          header = 'title,author,coverUrl,mediatype';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.mediaType || 'ebook')].join(','));
         } else if (plt.id === 'kobo') {
           header = 'title,author,coverUrl,status';
           rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.status || '')].join(','));
@@ -8282,7 +8291,13 @@ exportAudible();`;
     const coverUrl = img?.src || '';
     const readUrl = card.querySelector('a[href*="download"], a[href*="read"]')?.href || card.querySelector('a')?.href || '';
     seen.add(title);
-    books.push({ title, author, coverUrl, readUrl });
+    // Best-effort format detection from card text + download links — BookFunnel
+    // doesn't expose a structured format field, so this scans for keywords.
+    const linkHrefs = Array.from(card.querySelectorAll('a')).map(a => (a.href || '').toLowerCase()).join(' ');
+    const formatText = ((card.innerText || '').toLowerCase() + ' ' + linkHrefs);
+    let mediaType = 'ebook';
+    if (/audiobook|audio book|narrated by|\\.mp3|\\.m4b/.test(formatText)) mediaType = 'audiobook';
+    books.push({ title, author, coverUrl, readUrl, mediaType });
   });
   if (skipped.length) console.log('Skipped (' + skipped.length + '):', skipped);
   console.log('Found ' + books.length + ' books (from ' + cardSet.size + ' card elements)');
@@ -8291,8 +8306,8 @@ exportAudible();`;
     return;
   }
   const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
-  const csv = ['title,author,coverUrl,readUrl',
-    ...books.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl)].join(','))
+  const csv = ['title,author,coverUrl,readUrl,mediatype',
+    ...books.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl), esc(b.mediaType)].join(','))
   ].join('\\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
