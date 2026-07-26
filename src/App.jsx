@@ -19165,6 +19165,7 @@ function StoryKeeperApp() {
           "steph.spone@gmail.com",
           "weezie918@gmail.com",
           "yankeesgirl1974@gmail.com",
+          "rinaldisab@gmail.com",
         ];
         if (LIFETIME_EMAILS.includes(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
