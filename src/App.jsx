@@ -4851,10 +4851,19 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected })
     setVisibleCount(15);
     if (localMatches.length > 0) { setAllResults(localMatches); setResults(localMatches.slice(0, 15)); }
     try {
-      const gResults = await fetchBookSearch(q);
+      // Query Google Books and Open Library in parallel — Open Library has no
+      // request quota, so it keeps search working even when Google Books'
+      // shared free-tier quota (~100 requests/day) is exhausted.
+      const [gSettled, olSettled] = await Promise.allSettled([fetchBookSearch(q), fetchOpenLibrarySearch(q)]);
       if (activeQuery.current !== q) return;
+      const gResults = gSettled.status === "fulfilled" ? gSettled.value : [];
+      const olResults = olSettled.status === "fulfilled" ? olSettled.value : [];
       const seen = new Set(localMatches.map(b => b.title?.toLowerCase()));
-      const external = gResults.filter(b => !seen.has((b.title || "").toLowerCase()));
+      const external = [];
+      for (const b of [...gResults, ...olResults]) {
+        const key = (b.title || "").toLowerCase();
+        if (key && !seen.has(key)) { seen.add(key); external.push(b); }
+      }
       const localCapped = localMatches.slice(0, 5);
       const merged = [...localCapped, ...external];
       setAllResults(merged);
