@@ -9145,6 +9145,21 @@ function PlatformCard({ platform, connected, onConnect, onDisconnect, onImportCl
 
 const STRIPE_PUBLISHABLE_KEY = "pk_live_51ThDnUAr0payYLN5haFZlPikNJXl6vQ1QHBKK0oax17Iv1OFteQkre7atkcf9U6ZaWW5l3G2oYPk5t5qBTTLbKgZ00qnBR9Y3I";
 
+// RevenueCat public SDK keys — safe to embed client-side, same as the Stripe key above.
+const REVENUECAT_IOS_API_KEY = "appl_JKdqN0GElHCYZrSnqXgasahfUSq";
+const REVENUECAT_ANDROID_API_KEY = "goog_iFnsKFhHjgpFhiDARLmgjQycDfq";
+
+// Maps tier id + billing period to the RevenueCat offering package identifier.
+// Note: librarian's yearly package identifier ended up with a hyphen (librarian-yearly)
+// instead of the underscore convention used everywhere else — a one-off naming slip
+// when it was created in the RevenueCat dashboard. Package identifiers can't be edited
+// after creation, so this map exists specifically to paper over that inconsistency.
+const RC_PACKAGE_IDS = {
+  storyteller: { monthly: "storyteller_monthly", yearly: "storyteller_yearly" },
+  librarian:   { monthly: "librarian_monthly",   yearly: "librarian-yearly" },
+  storykeeper: { monthly: "storykeeper_monthly", yearly: "storykeeper_yearly" },
+};
+
 const TIERS = [
   {
     id: "reluctant",
@@ -9304,12 +9319,67 @@ async function redirectToStripeCheckout(priceId) {
   }
 }
 
-function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
+function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurchaseComplete }) {
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
   const [billing, setBilling] = useState("monthly");
   const [hoveredTier, setHoveredTier] = useState(null);
   const [loadingTier, setLoadingTier] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+  const isNativeApp = Capacitor.isNativePlatform();
+
+  // Reads RevenueCat's active entitlements and returns our highest matching tier id,
+  // since a customer could theoretically hold more than one (e.g. mid-upgrade).
+  const tierFromEntitlements = (entitlements) => {
+    const active = Object.keys(entitlements?.active || {});
+    if (active.includes("storykeeper")) return "storykeeper";
+    if (active.includes("librarian")) return "librarian";
+    if (active.includes("storyteller")) return "storyteller";
+    return "reluctant";
+  };
+
+  const purchaseNative = async (tier) => {
+    setLoadingTier(tier.id);
+    try {
+      const { Purchases } = await import("@revenuecat/purchases-capacitor");
+      const packageId = RC_PACKAGE_IDS[tier.id]?.[billing];
+      const { offerings } = await Purchases.getOfferings();
+      const pkg = offerings.current?.availablePackages?.find(p => p.identifier === packageId);
+      if (!pkg) {
+        alert("This plan isn't available right now. Please try again shortly.");
+        return;
+      }
+      const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
+      const newTier = tierFromEntitlements(customerInfo.entitlements);
+      onPurchaseComplete?.(newTier);
+      onClose();
+    } catch (err) {
+      if (!err?.userCancelled) {
+        alert("Purchase couldn't be completed. Please try again.");
+      }
+    } finally {
+      setLoadingTier(null);
+    }
+  };
+
+  const restorePurchases = async () => {
+    setRestoring(true);
+    try {
+      const { Purchases } = await import("@revenuecat/purchases-capacitor");
+      const { customerInfo } = await Purchases.restorePurchases();
+      const restoredTier = tierFromEntitlements(customerInfo.entitlements);
+      if (restoredTier === "reluctant") {
+        alert("No previous purchases found for this account.");
+      } else {
+        onPurchaseComplete?.(restoredTier);
+        alert(`Restored your ${TIERS.find(t => t.id === restoredTier)?.name || restoredTier} subscription.`);
+      }
+    } catch {
+      alert("Couldn't restore purchases. Please try again.");
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const isUK = (() => {
     try {
@@ -9517,13 +9587,23 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
 
                 {/* CTA Button */}
                 <button
-                  disabled={isActive}
+                  disabled={isActive || loadingTier === tier.id}
                   onClick={() => {
-                    if (isActive || !tier.stripeLinks) return;
-                    const gbpLinks = tier.stripeLinksGBP;
-                    const gbpLink = isUK && gbpLinks ? (billing === "yearly" ? gbpLinks.yearly : gbpLinks.monthly) : null;
-                    const link = gbpLink || (billing === "yearly" ? tier.stripeLinks.yearly : tier.stripeLinks.monthly);
-                    window.open(link, "_blank");
+                    if (isActive) return;
+                    if (isNativeApp) {
+                      if (!RC_PACKAGE_IDS[tier.id]) return;
+                      if (!authUser) {
+                        alert("Please sign in to subscribe.");
+                        return;
+                      }
+                      purchaseNative(tier);
+                    } else {
+                      if (!tier.stripeLinks) return;
+                      const gbpLinks = tier.stripeLinksGBP;
+                      const gbpLink = isUK && gbpLinks ? (billing === "yearly" ? gbpLinks.yearly : gbpLinks.monthly) : null;
+                      const link = gbpLink || (billing === "yearly" ? tier.stripeLinks.yearly : tier.stripeLinks.monthly);
+                      window.open(link, "_blank");
+                    }
                   }}
                   style={{
                     width: "100%", padding: "10px 0",
@@ -9538,14 +9618,14 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
                     border: isActive
                       ? `1px solid ${tier.highlight ? "#C9A96E" : "#3A2A1A"}`
                       : "none",
-                    borderRadius: 8, cursor: isActive ? "default" : "pointer",
+                    borderRadius: 8, cursor: isActive ? "default" : loadingTier === tier.id ? "wait" : "pointer",
                     fontFamily: '"Palatino Linotype", Palatino, serif',
                     fontSize: 13, fontWeight: 700,
                     transition: "all 0.2s",
-                    opacity: 1,
+                    opacity: loadingTier === tier.id ? 0.7 : 1,
                   }}
                 >
-                  {isActive ? "Current Plan" : tier.price === "Free" ? "Get Started" : "Upgrade"}
+                  {isActive ? "Current Plan" : loadingTier === tier.id ? "Processing…" : tier.price === "Free" ? "Get Started" : "Upgrade"}
                 </button>
               </div>
             );
@@ -9559,16 +9639,37 @@ function SubscriptionPage({ onClose, currentTier = "reluctant" }) {
         }}>
           Cancel anytime. No hidden fees. Your library data is always yours. 🗝️
         </p>
-        {isUK && (
+        {isUK && !isNativeApp && (
           <p style={{ textAlign: "center", fontSize: 11, color: "#8B6A50", marginTop: 4 }}>
             🇬🇧 Prices shown in GBP. UK VAT may apply at checkout.
+          </p>
+        )}
+
+        {isNativeApp && (
+          <p style={{ textAlign: "center", marginTop: 10 }}>
+            <button
+              onClick={restorePurchases}
+              disabled={restoring}
+              style={{
+                background: "none", border: "none", cursor: restoring ? "wait" : "pointer",
+                fontFamily: '"Palatino Linotype", Palatino, serif',
+                fontSize: 12, color: "#6B4E32", textDecoration: "underline",
+                opacity: restoring ? 0.6 : 1,
+              }}
+            >
+              {restoring ? "Restoring…" : "Restore Purchases"}
+            </button>
           </p>
         )}
 
         {/* Secure payment badge */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 }}>
           <span style={{ fontSize: 16 }}>🔒</span>
-          <span style={{ fontSize: 12, color: "#8B6A50" }}>Payments are secure and encrypted via Stripe. We never store your card details.</span>
+          <span style={{ fontSize: 12, color: "#8B6A50" }}>
+            {isNativeApp
+              ? "Payments are securely processed by the App Store or Google Play. We never store your card details."
+              : "Payments are secure and encrypted via Stripe. We never store your card details."}
+          </span>
         </div>
       </div>
     </div>
@@ -19256,6 +19357,28 @@ function StoryKeeperApp() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // RevenueCat native purchase SDK — configured once we know who's signed in (or signed
+  // out), since RevenueCat needs the Supabase user id as appUserID so the webhook can
+  // correlate a purchase back to the same user_subscriptions row Stripe already writes to.
+  const revenueCatConfiguredRef = useRef(false);
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    (async () => {
+      const { Purchases } = await import("@revenuecat/purchases-capacitor");
+      if (authUser) {
+        if (!revenueCatConfiguredRef.current) {
+          const apiKey = Capacitor.getPlatform() === "ios" ? REVENUECAT_IOS_API_KEY : REVENUECAT_ANDROID_API_KEY;
+          await Purchases.configure({ apiKey, appUserID: authUser.id });
+          revenueCatConfiguredRef.current = true;
+        } else {
+          await Purchases.logIn({ appUserID: authUser.id });
+        }
+      } else if (revenueCatConfiguredRef.current) {
+        await Purchases.logOut();
+      }
+    })();
+  }, [authUser]);
+
   // Handle native OAuth callback (Capacitor deep link) — covers both platforms:
   // iOS returns via the custom URI scheme, Android via the verified App Link.
   useEffect(() => {
@@ -19719,7 +19842,7 @@ function StoryKeeperApp() {
       {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
 
       {/* SUBSCRIPTION PAGE */}
-      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} />}
+      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} authUser={authUser} onPurchaseComplete={(tier) => { setUserTier(tier); localStorage.setItem("sk_user_tier", tier); }} />}
 
       {/* MY CLUBS & GROUPS PAGE */}
       {showMyClubs && (
