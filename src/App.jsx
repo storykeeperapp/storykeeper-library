@@ -9343,7 +9343,7 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurc
     try {
       const { Purchases } = await import("@revenuecat/purchases-capacitor");
       const packageId = RC_PACKAGE_IDS[tier.id]?.[billing];
-      const { offerings } = await Purchases.getOfferings();
+      const offerings = await Purchases.getOfferings();
       const pkg = offerings.current?.availablePackages?.find(p => p.identifier === packageId);
       if (!pkg) {
         alert("This plan isn't available right now. Please try again shortly.");
