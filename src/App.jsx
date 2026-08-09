@@ -9863,8 +9863,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
   };
   const [googleApiKey, setGoogleApiKey] = useState(() => localStorage.getItem("sk_google_api_key") || "");
   const [apiKeyInput, setApiKeyInput] = useState(() => localStorage.getItem("sk_google_api_key") || "");
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [isbndbKey, setIsbndbKey] = useState(() => localStorage.getItem("sk_isbndb_key") || "");
   const [isbndbKeyInput, setIsbndbKeyInput] = useState(() => localStorage.getItem("sk_isbndb_key") || "");
+  const [showIsbndbKeyInput, setShowIsbndbKeyInput] = useState(false);
 
   // Re-read API keys from localStorage after a cloud sync pulls them down from another device
   useEffect(() => {
@@ -10488,13 +10490,19 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                 Used for covers, descriptions, page counts, and genres during Enrich Now. Without a key: ~100 requests/day. With a key: 1,000+/day. Request a higher quota at console.cloud.google.com → Books API → Quotas.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <input
-                  type="password"
-                  placeholder="Paste Google Books API key…"
-                  value={apiKeyInput}
-                  onChange={e => setApiKeyInput(e.target.value)}
-                  style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
-                />
+                <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+                  <input
+                    type={showApiKeyInput ? "text" : "password"}
+                    placeholder="Paste Google Books API key…"
+                    value={apiKeyInput}
+                    onChange={e => setApiKeyInput(e.target.value)}
+                    autoComplete="off"
+                    style={{ width: "100%", padding: "5px 40px 5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text, boxSizing: "border-box" }}
+                  />
+                  <button type="button" onClick={() => setShowApiKeyInput(v => !v)} aria-label={showApiKeyInput ? "Hide key" : "Show key"} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 11, color: th.textSoft, padding: 4 }}>
+                    {showApiKeyInput ? "Hide" : "Show"}
+                  </button>
+                </div>
                 <button
                   onClick={() => { localStorage.setItem("sk_google_api_key", apiKeyInput); setGoogleApiKey(apiKeyInput); window.dispatchEvent(new CustomEvent("sk-books-changed")); }}
                   style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
@@ -10514,13 +10522,19 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
                 Used by Find ISBNs (first priority). Finds ISBNs by title + author, especially for audiobooks and titles Google Books misses. Get a key at isbndb.com.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <input
-                  type="password"
-                  placeholder="Paste ISBNdb API key…"
-                  value={isbndbKeyInput}
-                  onChange={e => setIsbndbKeyInput(e.target.value)}
-                  style={{ flex: 1, minWidth: 200, padding: "5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text }}
-                />
+                <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+                  <input
+                    type={showIsbndbKeyInput ? "text" : "password"}
+                    placeholder="Paste ISBNdb API key…"
+                    value={isbndbKeyInput}
+                    onChange={e => setIsbndbKeyInput(e.target.value)}
+                    autoComplete="off"
+                    style={{ width: "100%", padding: "5px 40px 5px 10px", fontFamily: "Georgia, serif", fontSize: 12, border: `1px solid ${th.border}`, borderRadius: 5, background: th.bgDeep, color: th.text, boxSizing: "border-box" }}
+                  />
+                  <button type="button" onClick={() => setShowIsbndbKeyInput(v => !v)} aria-label={showIsbndbKeyInput ? "Hide key" : "Show key"} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 11, color: th.textSoft, padding: 4 }}>
+                    {showIsbndbKeyInput ? "Hide" : "Show"}
+                  </button>
+                </div>
                 <button
                   onClick={() => { localStorage.setItem("sk_isbndb_key", isbndbKeyInput); setIsbndbKey(isbndbKeyInput); window.dispatchEvent(new CustomEvent("sk-books-changed")); }}
                   style={{ padding: "5px 14px", background: th.accent, color: th.bg, border: "none", borderRadius: 5, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
@@ -17397,6 +17411,8 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
   const [editingPassword, setEditingPassword] = React.useState(false);
   const [newPassword, setNewPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [showNewPassword, setShowNewPassword] = React.useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
   const [accountMsg, setAccountMsg] = React.useState("");
   const [bio, setBio] = React.useState(() => authUser?.user_metadata?.bio || "");
   const [editingBio, setEditingBio] = React.useState(false);
@@ -18042,11 +18058,23 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
             }}>🔒 Update Password</button>
           ) : (
             <div style={{ marginBottom: 8, background: th.bgMuted, borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6 }}>New password</div>
-              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box", marginBottom: 6 }} />
-              <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box", marginBottom: 8 }} />
+              <div style={{ fontSize: 12, color: th.textSoft, marginBottom: 6 }}>New password (at least 6 characters)</div>
+              <div style={{ position: "relative", marginBottom: 6 }}>
+                <input type={showNewPassword ? "text" : "password"} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
+                  autoComplete="new-password"
+                  style={{ width: "100%", padding: "8px 36px 8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box" }} />
+                <button type="button" onClick={() => setShowNewPassword(v => !v)} aria-label={showNewPassword ? "Hide password" : "Show password"} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 12, color: th.textSoft, padding: 4 }}>
+                  {showNewPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div style={{ position: "relative", marginBottom: 8 }}>
+                <input type={showConfirmPassword ? "text" : "password"} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm password"
+                  autoComplete="new-password"
+                  style={{ width: "100%", padding: "8px 36px 8px 10px", borderRadius: 6, border: `1px solid ${th.border}`, background: th.bg, color: th.text, fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', boxSizing: "border-box" }} />
+                <button type="button" onClick={() => setShowConfirmPassword(v => !v)} aria-label={showConfirmPassword ? "Hide password" : "Show password"} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 12, color: th.textSoft, padding: 4 }}>
+                  {showConfirmPassword ? "Hide" : "Show"}
+                </button>
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setEditingPassword(false)} style={{ flex: 1, padding: "8px", borderRadius: 6, background: "none", border: `1px solid ${th.border}`, color: th.textSoft, cursor: "pointer", fontSize: 12, fontFamily: '"Palatino Linotype", Palatino, serif' }}>Cancel</button>
                 <button onClick={async () => {
@@ -18839,11 +18867,13 @@ function StoryKeeperApp() {
   const [authMode, setAuthMode] = useState("signin"); // "signin" | "signup" | "forgot"
   const [showPasswordRecovery, setShowPasswordRecovery] = useState(false);
   const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [showRecoveryPassword, setShowRecoveryPassword] = useState(false);
   const [recoveryError, setRecoveryError] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryDone, setRecoveryDone] = useState(false);
   const [authEmail, setAuthEmail] = useState(() => localStorage.getItem("sk_saved_email") || "");
   const [authPassword, setAuthPassword] = useState("");
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authSuccess, setAuthSuccess] = useState("");
@@ -21098,15 +21128,25 @@ function StoryKeeperApp() {
               type="email" placeholder="Email address" value={authEmail}
               onChange={e => setAuthEmail(e.target.value)}
               onKeyDown={e => e.key === "Enter" && authMode === "forgot" && handleAuthSubmit()}
+              autoComplete="email"
               style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
             />
             {authMode !== "forgot" && (
-              <input
-                type="password" placeholder="Password" value={authPassword}
-                onChange={e => setAuthPassword(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
-                style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
-              />
+              <div style={{ position: "relative", marginBottom: authMode === "signup" ? 4 : 10 }}>
+                <input
+                  type={showAuthPassword ? "text" : "password"} placeholder="Password" value={authPassword}
+                  onChange={e => setAuthPassword(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleAuthSubmit()}
+                  autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+                  style={{ width: "100%", padding: "10px 44px 10px 12px", border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
+                />
+                <button type="button" onClick={() => setShowAuthPassword(v => !v)} aria-label={showAuthPassword ? "Hide password" : "Show password"} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 12, color: th.textSoft, padding: 4 }}>
+                  {showAuthPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            )}
+            {authMode === "signup" && (
+              <div style={{ fontSize: 11, color: th.textSoft, marginBottom: 10 }}>At least 6 characters</div>
             )}
             {authMode === "signin" && (
               <div style={{ textAlign: "right", marginBottom: 10, marginTop: -4 }}>
@@ -21197,12 +21237,19 @@ function StoryKeeperApp() {
                 <p style={{ margin: "0 0 20px", fontSize: 12, color: th.textSoft, textAlign: "center", fontStyle: "italic" }}>
                   Choose a new password for your account.
                 </p>
-                <input
-                  type="password" placeholder="New password" value={recoveryPassword}
-                  onChange={e => setRecoveryPassword(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && handleSetNewPassword()}
-                  style={{ width: "100%", padding: "10px 12px", marginBottom: 10, border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
-                />
+                <div style={{ position: "relative", marginBottom: 4 }}>
+                  <input
+                    type={showRecoveryPassword ? "text" : "password"} placeholder="New password" value={recoveryPassword}
+                    onChange={e => setRecoveryPassword(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSetNewPassword()}
+                    autoComplete="new-password"
+                    style={{ width: "100%", padding: "10px 44px 10px 12px", border: `1px solid ${th.border}`, borderRadius: 7, fontSize: 14, boxSizing: "border-box", fontFamily: "Georgia, serif", background: th.bgDeep, color: th.text }}
+                  />
+                  <button type="button" onClick={() => setShowRecoveryPassword(v => !v)} aria-label={showRecoveryPassword ? "Hide password" : "Show password"} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 12, color: th.textSoft, padding: 4 }}>
+                    {showRecoveryPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: th.textSoft, marginBottom: 10 }}>At least 6 characters</div>
                 {recoveryError && <div style={{ fontSize: 12, color: "#B94A4A", marginBottom: 10, textAlign: "center" }}>{recoveryError}</div>}
                 <button onClick={handleSetNewPassword} disabled={recoveryLoading || !recoveryPassword} style={{
                   width: "100%", padding: "11px", background: th.accent, border: "none", borderRadius: 8,
