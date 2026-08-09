@@ -9146,7 +9146,7 @@ function PlatformCard({ platform, connected, onConnect, onDisconnect, onImportCl
 const STRIPE_PUBLISHABLE_KEY = "pk_live_51ThDnUAr0payYLN5haFZlPikNJXl6vQ1QHBKK0oax17Iv1OFteQkre7atkcf9U6ZaWW5l3G2oYPk5t5qBTTLbKgZ00qnBR9Y3I";
 
 // RevenueCat public SDK keys — safe to embed client-side, same as the Stripe key above.
-const REVENUECAT_IOS_API_KEY = "appl_JKdqN0GElHCYZrSnqXgasahfUSq";
+const REVENUECAT_IOS_API_KEY = "appl_JKdqNOGElHCYZrSnqXgasahfUSq";
 const REVENUECAT_ANDROID_API_KEY = "goog_iFnsKFhHjgpFhiDARLmgjQycDfq";
 
 // Maps tier id + billing period to the RevenueCat offering package identifier.
