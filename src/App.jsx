@@ -7620,7 +7620,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA })
         const rawCoverForIsbn = row["coverurl"] || row["cover_url"] || "";
         const chirpIsbnMatch = isChirp ? rawCoverForIsbn.match(/\/(\d{13})(?:\.jpg|$)/) : null;
         const chirpIsbn = chirpIsbnMatch ? chirpIsbnMatch[1] : "";
-        const isbn = (row["isbn13"] || row["isbn"] || chirpIsbn || rawAsin || "").replace(/[="]/g, "").replace(/\s/g, "");
+        const isbn = (row["isbn13"] || row["isbn"] || chirpIsbn || "").replace(/[="]/g, "").replace(/\s/g, "");
         const asin = rawAsin;
         const storeId = row["storeid"] || "";
         // ALE wraps cover in =HYPERLINK(...; IMAGE("url")) — extract the image URL
