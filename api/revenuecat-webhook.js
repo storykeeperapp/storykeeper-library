@@ -31,12 +31,16 @@ export default async function handler(req, res) {
 
   if (["INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION"].includes(event.type)) {
     if (!userId || !tier) return res.status(200).json({ received: true });
-    await adminClient.from("user_subscriptions").upsert({
+    const { error } = await adminClient.from("user_subscriptions").upsert({
       user_id: userId,
       tier,
       status: "active",
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
+    if (error) {
+      console.error("Supabase upsert failed", error);
+      return res.status(500).json({ error: error.message });
+    }
   }
 
   // CANCELLATION means the customer turned off auto-renew but keeps access until the
@@ -44,9 +48,13 @@ export default async function handler(req, res) {
   // EXPIRATION is the actual end of access.
   if (event.type === "EXPIRATION") {
     if (!userId) return res.status(200).json({ received: true });
-    await adminClient.from("user_subscriptions")
+    const { error } = await adminClient.from("user_subscriptions")
       .update({ tier: "reluctant", status: "cancelled", updated_at: new Date().toISOString() })
       .eq("user_id", userId);
+    if (error) {
+      console.error("Supabase update failed", error);
+      return res.status(500).json({ error: error.message });
+    }
   }
 
   return res.status(200).json({ received: true });
