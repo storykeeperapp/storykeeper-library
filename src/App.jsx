@@ -3160,7 +3160,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                       onClick={createOpenHandler(p.platform, p.url, p.book)}
                       style={{ ...btnStyle, flex: platformUrls.length === 1 ? "1" : "auto" }}
                     >
-                      {`${isAudio ? "🎧" : "📖"} ${isAudio ? "Listen" : "Read"} on ${platformNames[p.platform] || p.platform}`}
+                      {p.platform === "goodreads"
+                        ? `🔗 View on Goodreads`
+                        : `${isAudio ? "🎧" : "📖"} ${isAudio ? "Listen" : "Read"} on ${platformNames[p.platform] || p.platform}`}
                     </button>
                   ))}
                 </div>
@@ -5915,7 +5917,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
                   display: "block", width: "100%", padding: "11px", borderRadius: 8, marginBottom: 8, boxSizing: "border-box",
                   background: "#4A7C59", border: "none", color: "#fff", textDecoration: "none",
                   textAlign: "center", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
-                }}>📖 Read in {name}</a>
+                }}>{b.platform === "goodreads" ? "🔗 View on Goodreads" : `📖 Read in ${name}`}</a>
               );
             })()}
             <button onClick={() => { setMoveTarget({ book: tbrActionTarget.book, index: tbrActionTarget.index }); setMoveMediaType("ebooks"); setMoveGenre(""); setTbrActionTarget(null); }} style={{
