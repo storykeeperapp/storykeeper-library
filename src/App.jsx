@@ -616,11 +616,15 @@ async function fetchOpenLibrarySearch(q) {
 }
 
 const TIER_BOOK_LIMITS = {
-  reluctant: 250,
-  storyteller: 2000,
-  librarian: 5000,
+  reluctant: 100,
+  storyteller: 250,
+  librarian: 500,
   storykeeper: Infinity,
 };
+
+function getEffectiveBookLimit(tier) {
+  return TIER_BOOK_LIMITS[tier] ?? 250;
+}
 
 const ALL_GENRES = [
   "Classics", "Cookbooks", "Cozy Mystery", "Dark Romance",
@@ -628,7 +632,7 @@ const ALL_GENRES = [
   "History & Biography", "Historical Fiction",
   "Home & DIY", "Horror", "Miscellaneous",
   "Mystery & Thriller", "Romance", "Sci-Fi", "Self Help",
-  "Sewing & Crafts", "True Crime",
+  "Sewing & Crafts", "Supernatural/Paranormal", "True Crime",
 ];
 
 const genreOptions = (currentGenre) => {
@@ -4809,7 +4813,8 @@ function BarcodeScannerModal({ onDetected, onClose }) {
   );
 }
 
-function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected }) {
+function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, userTier }) {
+  const isFreeTier = (userTier || "reluctant") === "reluctant";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [allResults, setAllResults] = useState([]);
@@ -4899,7 +4904,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected })
       }
     }
     const tier = localStorage.getItem("sk_user_tier") || "reluctant";
-    const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+    const limit = getEffectiveBookLimit(tier);
     if (userBooks.length >= limit) {
       setMsg(`You've reached your ${limit.toLocaleString()}-book limit. Upgrade to add more.`);
       return;
@@ -5069,15 +5074,19 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected })
               {/* Format */}
               <div style={{ fontSize: 11, fontWeight: 700, color: thm.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
               <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audio" }, { id: "physical", label: "📚 Physical" }].map(opt => (
-                  <button key={opt.id} onClick={() => setMediaType(opt.id)} style={{
-                    flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, cursor: "pointer",
-                    fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
-                    background: mediaType === opt.id ? thm.accent : thm.bgMuted,
-                    color: mediaType === opt.id ? thm.bg : thm.text,
-                    border: `1px solid ${mediaType === opt.id ? thm.accent : thm.border}`,
-                  }}>{opt.label}</button>
-                ))}
+                {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audio" }, { id: "physical", label: "📚 Physical" }].map(opt => {
+                  const locked = opt.id === "physical" && isFreeTier;
+                  return (
+                    <button key={opt.id} onClick={() => locked ? onOpenSubscription?.() : setMediaType(opt.id)} style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                      fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                      background: mediaType === opt.id ? thm.accent : thm.bgMuted,
+                      color: mediaType === opt.id ? thm.bg : thm.text,
+                      border: `1px solid ${mediaType === opt.id ? thm.accent : thm.border}`,
+                      opacity: locked ? 0.55 : 1,
+                    }}>{locked ? `${opt.label} 🔒` : opt.label}</button>
+                  );
+                })}
               </div>
 
               {/* Genre */}
@@ -5120,7 +5129,7 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected })
       </div>
       {showLimitWarning && (() => {
         const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
-        const wLimit = TIER_BOOK_LIMITS[wTier] ?? 250;
+        const wLimit = getEffectiveBookLimit(wTier);
         const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
         const wBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
         return <LimitWarningModal
@@ -5406,8 +5415,9 @@ function AllBooksShelf({ onClose }) {
   );
 }
 
-function TBRShelf({ onClose, onOpenSubscription }) {
+function TBRShelf({ onClose, onOpenSubscription, userTier }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
+  const isFreeTier = (userTier || "reluctant") === "reluctant";
   const isMobile = window.innerWidth < 768;
   const canFitFourBooks = window.innerWidth >= 420;
   const [tbrBooks, setTbrBooks] = useState(() => {
@@ -5532,7 +5542,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
     });
     if (!already) {
       const tier = localStorage.getItem("sk_user_tier") || "reluctant";
-      const limit = TIER_BOOK_LIMITS[tier] ?? 250;
+      const limit = getEffectiveBookLimit(tier);
       if (userBooks.length >= limit) {
         setMsg(`You've reached your ${limit.toLocaleString()}-book limit. Upgrade to add more.`);
         setTimeout(() => setMsg(""), 3000);
@@ -5576,7 +5586,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
       writeToCommunityCache(enriched.isbn, enriched.title, enriched.author, enriched.description, enriched.coverUrl, moveGenre || enriched.genre);
       // Warn at 90% of limit
       const tier2 = localStorage.getItem("sk_user_tier") || "reluctant";
-      const limit2 = TIER_BOOK_LIMITS[tier2] ?? 250;
+      const limit2 = getEffectiveBookLimit(tier2);
       if (limit2 !== Infinity && userBooks.length >= Math.floor(limit2 * 0.9)) {
         setTimeout(() => setShowLimitWarning(true), 800);
       }
@@ -5954,15 +5964,19 @@ function TBRShelf({ onClose, onOpenSubscription }) {
             {/* eBook or Audiobook */}
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audiobook" }, { id: "physical", label: "📚 Physical" }].map(opt => (
-                <button key={opt.id} onClick={() => setMoveMediaType(opt.id)} style={{
-                  flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, cursor: "pointer",
-                  fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
-                  background: moveMediaType === opt.id ? "#8B5E3C" : "rgba(255,255,255,0.6)",
-                  color: moveMediaType === opt.id ? "#fff" : "#3A2A1A",
-                  border: `1px solid ${moveMediaType === opt.id ? "#8B5E3C" : "#C4A882"}`,
-                }}>{opt.label}</button>
-              ))}
+              {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audiobook" }, { id: "physical", label: "📚 Physical" }].map(opt => {
+                const locked = opt.id === "physical" && isFreeTier;
+                return (
+                  <button key={opt.id} onClick={() => locked ? onOpenSubscription?.() : setMoveMediaType(opt.id)} style={{
+                    flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, cursor: "pointer",
+                    fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
+                    background: moveMediaType === opt.id ? "#8B5E3C" : "rgba(255,255,255,0.6)",
+                    color: moveMediaType === opt.id ? "#fff" : "#3A2A1A",
+                    border: `1px solid ${moveMediaType === opt.id ? "#8B5E3C" : "#C4A882"}`,
+                    opacity: locked ? 0.55 : 1,
+                  }}>{locked ? `${opt.label} 🔒` : opt.label}</button>
+                );
+              })}
             </div>
 
             {/* Genre picker */}
@@ -6020,7 +6034,7 @@ function TBRShelf({ onClose, onOpenSubscription }) {
       )}
       {showLimitWarning && (() => {
         const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
-        const wLimit = TIER_BOOK_LIMITS[wTier] ?? 250;
+        const wLimit = getEffectiveBookLimit(wTier);
         const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
         const wBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
         return <LimitWarningModal
@@ -6800,10 +6814,39 @@ function BookmarkletCopyButton({ code, label, isScript }) {
   );
 }
 
-function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA }) {
+function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, userTier, onOpenSubscription }) {
   const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel", "googleplay", "nook"];
   const showCSV = csvPlatforms.includes(platform.id);
   const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
+  const isFreeTier = !isAdmin && (userTier || "reluctant") === "reluctant";
+
+  if (isFreeTier) {
+    return (
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.65)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+      }} onClick={onClose}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: "#F8F1E4", borderRadius: 14, padding: "32px 28px", maxWidth: 420,
+          textAlign: "center", fontFamily: '"Palatino Linotype", Palatino, serif',
+        }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>🗝️</div>
+          <h2 style={{ margin: "0 0 10px", fontSize: 20, color: "#3A2A1A" }}>Platform imports are a paid feature</h2>
+          <p style={{ fontSize: 14, color: "#6B4E32", lineHeight: 1.6, margin: "0 0 22px" }}>
+            Importing your {platform.name} library is available on The Storyteller plan and up. Upgrade to bring your whole library in automatically.
+          </p>
+          <button onClick={() => { onClose(); onOpenSubscription?.(); }} style={{
+            padding: "10px 24px", background: "#8C5E6B", color: "#F8F1E4", border: "none",
+            borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 700, marginRight: 10,
+          }}>See Plans</button>
+          <button onClick={onClose} style={{
+            padding: "10px 24px", background: "transparent", color: "#6B4E32",
+            border: "1px solid #D8C3A5", borderRadius: 8, cursor: "pointer", fontSize: 14,
+          }}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
 
   // CSV tab state
   const [csvBooks, setCsvBooks] = useState([]);
@@ -9173,7 +9216,7 @@ const TIERS = [
     highlight: false,
     stripePrices: null,
     features: [
-      "Up to 100 eBooks + 100 Audiobooks",
+      "Up to 100 books total (eBooks + Audiobooks)",
       "All genre shelves",
       "eBooks & Audiobooks toggle",
       "Manual book adding",
@@ -9215,7 +9258,7 @@ const TIERS = [
       yearly:  "https://buy.stripe.com/4gM28qfrrdrWgkag2FeQM09",
     },
     features: [
-      "Up to 500 eBooks + 500 Audiobooks",
+      "Up to 250 books total (eBooks + Audiobooks + Physical)",
       "Physical book shelf",
       "All genre shelves",
       "eBooks, Audiobooks & Physical toggle",
@@ -9256,7 +9299,7 @@ const TIERS = [
       yearly:  "https://buy.stripe.com/4gM5kCcff0Fa6JA17LeQM08",
     },
     features: [
-      "Up to 2,000 books total",
+      "Up to 500 books total",
       "Physical book shelf",
       "All genre shelves",
       "Unlimited platform imports",
@@ -9809,7 +9852,7 @@ function PushToCacheButton({ th }) {
   );
 }
 
-function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin, isPWA }) {
+function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin, isPWA, userTier, onOpenSubscription }) {
   const scrollRef = useRef(null);
   const isNativeApp = Capacitor.isNativePlatform();
   const isMobile = useIsMobile();
@@ -11903,6 +11946,8 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         <ImportModal
           isAdmin={isAdmin}
           isPWA={isPWA}
+          userTier={userTier}
+          onOpenSubscription={onOpenSubscription}
           platform={importingPlatform}
           mediaType={AUDIO_PLATFORMS.some(p => p.id === importingPlatform.id) ? "audiobooks" : "ebooks"}
           onClose={() => setImportingPlatform(null)}
@@ -19861,7 +19906,7 @@ function StoryKeeperApp() {
 
       {/* TBR SHELF PAGE */}
       {showTBR && (
-        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; setShowSidebar(true); }} onOpenSubscription={() => { setShowTBR(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />
+        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; setShowSidebar(true); }} userTier={userTier} onOpenSubscription={() => { setShowTBR(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />
       )}
 
       {/* ADMIN DASHBOARD */}
@@ -19870,8 +19915,8 @@ function StoryKeeperApp() {
       )}
 
       {/* PLATFORMS PAGE */}
-      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; setShowSidebar(true); }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} />}
-      {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
+      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; setShowSidebar(true); }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} userTier={userTier} onOpenSubscription={() => { setShowPlatforms(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
+      {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} userTier={userTier} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
 
       {/* SUBSCRIPTION PAGE */}
       {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} authUser={authUser} onPurchaseComplete={(tier) => { setUserTier(tier); localStorage.setItem("sk_user_tier", tier); }} />}
@@ -20828,7 +20873,7 @@ function StoryKeeperApp() {
               </p>
               <div style={{ fontSize: 12, color: th.textSoft, marginTop: 12, background: th.bgMuted, padding: 12, borderRadius: 8 }}>
                 <div>• <strong>Reluctant Reader:</strong> 3 genres</div>
-                <div>• <strong>Storyteller:</strong> 10 genres</div>
+                <div>• <strong>Storyteller:</strong> 3 genres (upgrade to Librarian for more)</div>
                 <div>• <strong>Librarian:</strong> All genres</div>
                 <div>• <strong>StoryKeeper:</strong> Unlimited + advanced features</div>
               </div>
@@ -20836,7 +20881,7 @@ function StoryKeeperApp() {
 
             <div style={{ marginBottom: 20 }}>
               {(() => {
-                const tierLimits = { reluctant: 3, storyteller: 10, librarian: 999, storykeeper: 999 };
+                const tierLimits = { reluctant: 3, storyteller: 3, librarian: 999, storykeeper: 999 };
                 const limit = tierLimits[userTier] || 3;
 
                 return [...DEFAULT_LEFT, ...DEFAULT_RIGHT].map((genreItem, idx) => {
