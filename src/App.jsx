@@ -15159,9 +15159,13 @@ function BookOfTheMonthPage({ onClose }) {
   const [added, setAdded] = useState(false);
 
   useEffect(() => {
-    fetch("/book-of-the-month.json?t=" + Date.now())
+    const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+    const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+    fetch(`${url}/rest/v1/book_of_the_month?select=month,title,author,isbn,cover,genre,note,goodreadsUrl:goodreads_url&order=month.desc&limit=1`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    })
       .then(r => r.json())
-      .then(data => { setBotm(data); setLoading(false); })
+      .then(rows => { setBotm(Array.isArray(rows) && rows.length > 0 ? rows[0] : null); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
