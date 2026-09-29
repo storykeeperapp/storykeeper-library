@@ -333,6 +333,20 @@ function getSupabase() {
   return _supabaseInstance;
 }
 
+// Fire-and-forget funnel/analytics logging. Never awaited by callers and never
+// throws — a failed insert (offline, RLS issue, etc.) must not block or break
+// the UI flow it's instrumenting. Pass the signed-in user's id when known so
+// funnel drop-off can be tied back to a specific account.
+function trackEvent(eventName, properties = {}, userId = null) {
+  try {
+    getSupabase().from("analytics_events").insert({
+      event_name: eventName,
+      user_id: userId || null,
+      properties,
+    }).then(() => {}, () => {});
+  } catch {}
+}
+
 // Reads the session directly from localStorage, bypassing the supabase-js client
 // entirely — used as a fallback when the SDK's own getSession()/refreshSession()
 // hangs (a known supabase-js v2 issue: its cross-tab Web Locks API coordination can
@@ -4705,16 +4719,21 @@ function FavoritesShelf({ onClose }) {
   );
 }
 
-function BarcodeScannerModal({ onDetected, onClose }) {
+function BarcodeScannerModal({ onDetected, onDetectedMultiple, onClose }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const videoRef = React.useRef(null);
   const streamRef = React.useRef(null);
+  const [mode, setMode] = React.useState(onDetectedMultiple ? null : "single"); // null | "single" | "multi"
   const [status, setStatus] = React.useState("starting"); // starting | scanning | unsupported | error
-  const [lastScan, setLastScan] = React.useState("");
+  const lastScanRef = React.useRef("");
+  const lastScanAtRef = React.useRef(0);
+  const [scannedIsbns, setScannedIsbns] = React.useState([]);
   const detectorRef = React.useRef(null);
   const scanningRef = React.useRef(true);
+  const scannedIsbnsRef = React.useRef([]);
 
   React.useEffect(() => {
+    if (!mode) return; // wait for the user to pick single vs. multi first
     const Detector = ("BarcodeDetector" in window) ? window.BarcodeDetector : BarcodeDetectorPolyfill;
     detectorRef.current = new Detector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
 
@@ -4743,12 +4762,24 @@ function BarcodeScannerModal({ onDetected, onClose }) {
         const barcodes = await detectorRef.current.detect(video);
         for (const b of barcodes) {
           const raw = b.rawValue.replace(/[^0-9]/g, "");
-          if ((raw.length === 13 || raw.length === 10) && raw !== lastScan) {
-            setLastScan(raw);
+          if (raw.length !== 13 && raw.length !== 10) continue;
+          // Debounce the exact same barcode staying in frame — but still allow
+          // re-scanning it later (e.g. two copies of the same book) after a pause.
+          const now = Date.now();
+          if (raw === lastScanRef.current && now - lastScanAtRef.current < 2500) continue;
+          lastScanRef.current = raw;
+          lastScanAtRef.current = now;
+          if (mode === "single") {
             scanningRef.current = false;
             onDetected(raw);
             return;
+          } else {
+            if (!scannedIsbnsRef.current.includes(raw)) {
+              scannedIsbnsRef.current = [...scannedIsbnsRef.current, raw];
+              setScannedIsbns(scannedIsbnsRef.current);
+            }
           }
+          break;
         }
       } catch {}
       if (scanningRef.current) requestAnimationFrame(scanLoop);
@@ -4759,7 +4790,7 @@ function BarcodeScannerModal({ onDetected, onClose }) {
       scanningRef.current = false;
       streamRef.current?.getTracks().forEach(t => t.stop());
     };
-  }, []);
+  }, [mode]);
 
   const close = () => {
     scanningRef.current = false;
@@ -4767,11 +4798,38 @@ function BarcodeScannerModal({ onDetected, onClose }) {
     onClose();
   };
 
+  const finishMulti = () => {
+    scanningRef.current = false;
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    onDetectedMultiple(scannedIsbnsRef.current);
+  };
+
+  if (!mode) {
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 9999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
+          <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, fontWeight: 700, color: "#fff", marginBottom: 24 }}>
+            📷 Scan Book Barcode(s)
+          </div>
+          <button onClick={() => setMode("single")} style={{ width: "100%", padding: "16px", borderRadius: 12, border: "none", background: th.accent, color: "#fff", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, marginBottom: 12 }}>
+            📖 Scan One Book
+          </button>
+          <button onClick={() => setMode("multi")} style={{ width: "100%", padding: "16px", borderRadius: 12, border: `1px solid ${th.accent}`, background: "transparent", color: "#fff", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, marginBottom: 20 }}>
+            📚 Scan Multiple Books
+          </button>
+          <button onClick={close} style={{ width: "100%", padding: "12px 0", background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 10, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 9999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
       <div style={{ position: "relative", width: "100%", maxWidth: 680, padding: "0 16px" }}>
         <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 20, fontWeight: 700, color: "#fff", textAlign: "center", marginBottom: 16 }}>
-          📷 Scan Book Barcode
+          {mode === "multi" ? `📚 Scanning Books (${scannedIsbns.length} so far)` : "📷 Scan Book Barcode"}
         </div>
 
         {status === "unsupported" && (
@@ -4799,13 +4857,24 @@ function BarcodeScannerModal({ onDetected, onClose }) {
             </div>
             {status === "scanning" && (
               <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", fontFamily: "Georgia, serif", fontSize: 13, color: "rgba(255,255,255,0.85)" }}>
-                Point the barcode at the yellow box
+                {mode === "multi" ? "Scan the next book — or tap Done when finished" : "Point the barcode at the yellow box"}
               </div>
             )}
           </div>
         )}
 
-        <button onClick={close} style={{ marginTop: 20, width: "100%", padding: "12px 0", background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 10, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700 }}>
+        {mode === "multi" && (
+          <button onClick={finishMulti} disabled={scannedIsbns.length === 0} style={{
+            marginTop: 20, width: "100%", padding: "14px 0", borderRadius: 10, border: "none",
+            background: scannedIsbns.length === 0 ? "rgba(255,255,255,0.2)" : th.accent,
+            color: "#fff", cursor: scannedIsbns.length === 0 ? "default" : "pointer",
+            fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700,
+          }}>
+            ✅ Done — Review {scannedIsbns.length} Book{scannedIsbns.length !== 1 ? "s" : ""}
+          </button>
+        )}
+
+        <button onClick={close} style={{ marginTop: 12, width: "100%", padding: "12px 0", background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 10, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700 }}>
           Cancel
         </button>
       </div>
@@ -4829,11 +4898,114 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
   const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scannedIsbn, setScannedIsbn] = useState("");
+  const [choiceBook, setChoiceBook] = useState(null);
+  const [multiScanBooks, setMultiScanBooks] = useState(null); // array while reviewing, null when closed
+  const [multiScanLoading, setMultiScanLoading] = useState(false);
+  const [multiScanBusy, setMultiScanBusy] = useState(false);
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
   const activeQuery = useRef("");
 
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 100); }, []);
+
+  const addToTBR = async (book) => {
+    const tbrBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; } })();
+    const already = tbrBooks.some(b => (b.isbn && book.isbn && b.isbn === book.isbn) || b.title === book.title);
+    if (already) { setChoiceBook(null); setMsg("Already on your TBR!"); return; }
+    let enriched = { ...book };
+    if (!enriched.description || !enriched.coverUrl || !enriched.isbn) {
+      try {
+        const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
+        const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
+        let res;
+        if (enriched.isbn) {
+          res = await fetch(`${url}/rest/v1/book_cache?isbn=eq.${encodeURIComponent(enriched.isbn)}&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        } else {
+          const t = encodeURIComponent((enriched.title || "").toLowerCase());
+          res = await fetch(`${url}/rest/v1/book_cache?title=ilike.*${t}*&limit=1&select=*`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+        }
+        const rows = await res.json();
+        const cached = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+        if (cached) {
+          if (!enriched.isbn && cached.isbn) enriched.isbn = cached.isbn;
+          if (!enriched.description && cached.description) enriched.description = cached.description;
+          if (!enriched.coverUrl && cached.cover_url && !cached.cover_url.includes("covers.openlibrary.org/b/isbn/")) enriched.coverUrl = cached.cover_url;
+          if (!enriched.author && cached.author) enriched.author = cached.author;
+        }
+      } catch { /* proceed with what we have */ }
+    }
+    writeToCommunityCache(enriched.isbn, enriched.title, enriched.author, enriched.description, enriched.coverUrl, enriched.genre);
+    const updated = [...tbrBooks, { ...enriched, addedAt: Date.now() }];
+    localStorage.setItem("sk_tbr_books", JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent("sk-tbr-changed"));
+    setChoiceBook(null);
+    setQuery(""); setResults([]); setAllResults([]);
+    setMsg(`"${enriched.title}" added to your TBR!`);
+    setTimeout(() => setMsg(""), 2500);
+  };
+
+  const addMultiScanToLibrary = async () => {
+    const toAdd = multiScanBooks.filter(b => b._include);
+    if (toAdd.length === 0) return;
+    if (!window.confirm(`Please confirm that you want to add ${toAdd.length} book${toAdd.length !== 1 ? "s" : ""} to your physical books list.`)) return;
+    setMultiScanBusy(true);
+    const tier = localStorage.getItem("sk_user_tier") || "reluctant";
+    const limit = getEffectiveBookLimit(tier);
+    let userBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
+    // A barcode scan is always a physical book, regardless of whatever format
+    // toggle the modal happened to be on when the scanner was opened.
+    let addedCount = 0, skippedCount = 0;
+    for (const b of toAdd) {
+      if (userBooks.length >= limit) break;
+      const titleKey = cleanTitle(b.title || "").toLowerCase().trim();
+      const dup = userBooks.some(ub => {
+        const same = (ub.isbn && b.isbn && ub.isbn === b.isbn) || cleanTitle(ub.title || "").toLowerCase().trim() === titleKey;
+        if (!same) return false;
+        const ubType = ub.mediaType || (ub.type === "audiobooks" ? "audiobook" : ub.type === "physical" ? "physical" : "ebook");
+        return ubType === "physical";
+      });
+      if (dup) { skippedCount++; continue; }
+      userBooks = [...userBooks, {
+        title: b.title, author: b.author || "", isbn: b.isbn || "",
+        cover: b.coverUrl || null, coverUrl: b.coverUrl || null, description: b.description || "",
+        type: "physical", mediaType: "physical",
+        genre: b.genre || "Fiction & Drama", status: "unread", addedAt: Date.now(),
+      }];
+      writeToCommunityCache(b.isbn, b.title, b.author, b.description, b.coverUrl, b.genre);
+      addedCount++;
+    }
+    saveUserBooks(userBooks);
+    window.dispatchEvent(new CustomEvent("sk-books-changed"));
+    setMultiScanBusy(false);
+    setMultiScanBooks(null);
+    setMsg(`Added ${addedCount} book${addedCount !== 1 ? "s" : ""} to your library${skippedCount ? ` (${skippedCount} already had a copy)` : ""}.`);
+    setTimeout(() => setMsg(""), 3500);
+  };
+
+  const addMultiScanToTBR = () => {
+    const toAdd = multiScanBooks.filter(b => b._include);
+    if (toAdd.length === 0) return;
+    setMultiScanBusy(true);
+    let tbrBooks = (() => { try { return JSON.parse(localStorage.getItem("sk_tbr_books") || "[]"); } catch { return []; } })();
+    let addedCount = 0, skippedCount = 0;
+    for (const b of toAdd) {
+      const dup = tbrBooks.some(tb => (tb.isbn && b.isbn && tb.isbn === b.isbn) || tb.title === b.title);
+      if (dup) { skippedCount++; continue; }
+      tbrBooks = [...tbrBooks, {
+        title: b.title, author: b.author || "", isbn: b.isbn || "",
+        cover: b.coverUrl || null, coverUrl: b.coverUrl || null, description: b.description || "",
+        genre: b.genre || "", addedAt: Date.now(),
+      }];
+      writeToCommunityCache(b.isbn, b.title, b.author, b.description, b.coverUrl, b.genre);
+      addedCount++;
+    }
+    localStorage.setItem("sk_tbr_books", JSON.stringify(tbrBooks));
+    window.dispatchEvent(new CustomEvent("sk-tbr-changed"));
+    setMultiScanBusy(false);
+    setMultiScanBooks(null);
+    setMsg(`Added ${addedCount} book${addedCount !== 1 ? "s" : ""} to your TBR${skippedCount ? ` (${skippedCount} already there)` : ""}.`);
+    setTimeout(() => setMsg(""), 3500);
+  };
 
   const thm = th || SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
 
@@ -4954,7 +5126,18 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
     if (limit !== Infinity && userBooks.length >= Math.floor(limit * 0.9)) {
       setTimeout(() => setShowLimitWarning(true), 1000);
     } else {
-      setTimeout(() => onClose(), 1800);
+      setTimeout(() => {
+        setSelected(null);
+        setQuery("");
+        setResults([]);
+        setAllResults([]);
+        setGenre("");
+        setStatus("unread");
+        setAdded(false);
+        setMsg("");
+        setScannedIsbn("");
+        inputRef.current?.focus();
+      }, 1400);
     }
   };
 
@@ -4999,6 +5182,8 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
                 }
               </div>
 
+              {msg && <div style={{ textAlign: "center", fontSize: 13, color: "#4a7a4a", marginBottom: 12, fontStyle: "italic" }}>{msg}</div>}
+
               {showScanner && (
                 <BarcodeScannerModal
                   onDetected={async (isbn) => {
@@ -5013,6 +5198,24 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
                     } catch { setResults([]); }
                     setSearching(false);
                   }}
+                  onDetectedMultiple={async (isbns) => {
+                    setShowScanner(false);
+                    setMultiScanLoading(true);
+                    setMultiScanBooks([]);
+                    const found = [];
+                    for (const isbn of isbns) {
+                      try {
+                        const res = await fetchBookSearch(isbn);
+                        const match = res[0] || { title: `ISBN ${isbn}`, author: "", isbn, coverUrl: null };
+                        const genre = detectGenreFromTitle(match.title || "") || getAuthorGenre(match.author || "") || match.genre || "";
+                        found.push({ ...match, isbn: match.isbn || isbn, genre, _include: true });
+                      } catch {
+                        found.push({ title: `ISBN ${isbn}`, author: "", isbn, coverUrl: null, genre: "", _include: true });
+                      }
+                    }
+                    setMultiScanBooks(found);
+                    setMultiScanLoading(false);
+                  }}
                   onClose={() => setShowScanner(false)}
                 />
               )}
@@ -5020,7 +5223,12 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
               {searching && <div style={{ textAlign: "center", fontSize: 12, color: thm.accent, fontStyle: "italic", padding: "8px 0" }}>⟳ Searching online…</div>}
 
               {results.map((b, i) => (
-                <div key={i} onClick={() => { setSelected(b); setGenre(b.genre || ""); }}
+                <div key={i} onClick={() => {
+                  // A scanned barcode is always a physical book — skip the
+                  // Library/TBR choice popup and go straight to the add flow.
+                  if (scannedIsbn) { setSelected(b); setGenre(b.genre || ""); setMediaType("physical"); }
+                  else setChoiceBook(b);
+                }}
                   style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${thm.border}`, cursor: "pointer", alignItems: "center" }}>
                   {b.coverUrl
                     ? <img src={b.coverUrl} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
@@ -5049,7 +5257,11 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
                   <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic", marginBottom: 10, textAlign: "center" }}>
                     {scannedIsbn ? "Couldn't find that ISBN online. You can still add it manually:" : "Can't find it? Add it manually:"}
                   </div>
-                  <button onClick={() => setSelected({ title: scannedIsbn ? "" : query, author: "", coverUrl: null, isbn: scannedIsbn, genre: "" })}
+                  <button onClick={() => {
+                    const manualBook = { title: scannedIsbn ? "" : query, author: "", coverUrl: null, isbn: scannedIsbn, genre: "" };
+                    if (scannedIsbn) { setSelected(manualBook); setGenre(""); setMediaType("physical"); }
+                    else setChoiceBook(manualBook);
+                  }}
                     style={{ width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${thm.accent}`, background: "transparent", color: thm.accent, cursor: "pointer", fontSize: 13, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600 }}>
                     {scannedIsbn ? `+ Add manually (ISBN ${scannedIsbn})` : `+ Add "${query}" manually`}
                   </button>
@@ -5140,6 +5352,87 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
           onDismiss={() => { setShowLimitWarning(false); onClose(); }}
         />;
       })()}
+      {choiceBook && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 800, background: "rgba(20,10,4,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) setChoiceBook(null); }}>
+          <div style={{ background: thm.bg, borderRadius: 16, width: "min(360px, calc(100vw - 32px))", padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.5)", fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "center" }}>
+            <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "center" }}>
+              {choiceBook.coverUrl
+                ? <img src={choiceBook.coverUrl} alt="" style={{ width: 44, height: 64, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+                : <div style={{ width: 44, height: 64, background: thm.bgMuted, borderRadius: 4, flexShrink: 0 }} />
+              }
+              <div style={{ textAlign: "left", minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: thm.text }}>{choiceBook.title || "Untitled"}</div>
+                {choiceBook.author && <div style={{ fontSize: 12, color: thm.textSoft, fontStyle: "italic" }}>{choiceBook.author}</div>}
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: thm.textSoft, marginBottom: 16 }}>Where should this book go?</div>
+            {msg && <div style={{ fontSize: 12, color: "#4a7a4a", fontStyle: "italic", marginBottom: 12 }}>{msg}</div>}
+            <button onClick={() => { setSelected(choiceBook); setGenre(choiceBook.genre || ""); setChoiceBook(null); }} style={{
+              width: "100%", padding: "12px", borderRadius: 10, border: "none", marginBottom: 10,
+              background: thm.accent, color: thm.bg, cursor: "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700,
+            }}>📖 Add to Library</button>
+            <button onClick={() => addToTBR(choiceBook)} style={{
+              width: "100%", padding: "12px", borderRadius: 10, border: `1px solid ${thm.accent}`,
+              background: "transparent", color: thm.accent, cursor: "pointer",
+              fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, marginBottom: 10,
+            }}>📚 Add to TBR</button>
+            <button onClick={() => setChoiceBook(null)} style={{
+              width: "100%", padding: "8px", border: "none", background: "transparent",
+              color: thm.textSoft, cursor: "pointer", fontSize: 12, fontFamily: "Georgia, serif",
+            }}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {multiScanBooks && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 800, background: "rgba(20,10,4,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget && !multiScanBusy) setMultiScanBooks(null); }}>
+          <div style={{ background: thm.bg, borderRadius: 16, width: "min(440px, calc(100vw - 32px))", maxHeight: "85vh", overflowY: "auto", padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.5)", fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+            <h3 style={{ margin: "0 0 4px", fontSize: 18, color: thm.text, textAlign: "center" }}>📚 Scanned Books</h3>
+            {multiScanLoading ? (
+              <div style={{ textAlign: "center", padding: "30px 0", color: thm.textSoft, fontStyle: "italic" }}>⟳ Looking up {multiScanBooks.length ? "remaining" : "scanned"} books…</div>
+            ) : (
+              <>
+                <p style={{ textAlign: "center", fontSize: 12, color: thm.textSoft, margin: "0 0 16px" }}>
+                  {multiScanBooks.filter(b => b._include).length} of {multiScanBooks.length} selected — uncheck any you don't want
+                </p>
+                {multiScanBooks.map((b, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: `1px solid ${thm.border}`, alignItems: "center", opacity: b._include ? 1 : 0.45 }}>
+                    <input type="checkbox" checked={b._include} onChange={() => {
+                      const next = [...multiScanBooks];
+                      next[i] = { ...next[i], _include: !next[i]._include };
+                      setMultiScanBooks(next);
+                    }} style={{ flexShrink: 0 }} />
+                    {b.coverUrl
+                      ? <img src={b.coverUrl} alt="" style={{ width: 32, height: 46, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
+                      : <div style={{ width: 32, height: 46, background: thm.bgMuted, borderRadius: 3, flexShrink: 0 }} />
+                    }
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: thm.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.title}</div>
+                      <div style={{ fontSize: 11, color: thm.textSoft, fontStyle: "italic" }}>{b.author}</div>
+                    </div>
+                  </div>
+                ))}
+                <button onClick={addMultiScanToLibrary} disabled={multiScanBusy || multiScanBooks.filter(b => b._include).length === 0} style={{
+                  width: "100%", padding: "12px", borderRadius: 10, border: "none", marginTop: 18, marginBottom: 10,
+                  background: thm.accent, color: thm.bg, cursor: "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700,
+                }}>📚 Add All to Library (Physical)</button>
+                <button onClick={addMultiScanToTBR} disabled={multiScanBusy || multiScanBooks.filter(b => b._include).length === 0} style={{
+                  width: "100%", padding: "12px", borderRadius: 10, border: `1px solid ${thm.accent}`, marginBottom: 10,
+                  background: "transparent", color: thm.accent, cursor: "pointer",
+                  fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700,
+                }}>📚 Add All to TBR</button>
+                <button onClick={() => setMultiScanBooks(null)} disabled={multiScanBusy} style={{
+                  width: "100%", padding: "8px", border: "none", background: "transparent",
+                  color: thm.textSoft, cursor: "pointer", fontSize: 12, fontFamily: "Georgia, serif",
+                }}>Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6819,6 +7112,14 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
   const showCSV = csvPlatforms.includes(platform.id);
   const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
   const isFreeTier = !isAdmin && (userTier || "reluctant") === "reluctant";
+
+  useEffect(() => {
+    if (isFreeTier) {
+      trackEvent("paywall_gate_shown", { source: "platform_import", platform: platform.id });
+    }
+    // Runs once per mount (each time this gate is opened), not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (isFreeTier) {
     return (
@@ -9364,7 +9665,7 @@ async function redirectToStripeCheckout(priceId) {
   }
 }
 
-function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurchaseComplete }) {
+function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurchaseComplete, source = "direct" }) {
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
   const [billing, setBilling] = useState("monthly");
@@ -9372,6 +9673,12 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurc
   const [loadingTier, setLoadingTier] = useState(null);
   const [restoring, setRestoring] = useState(false);
   const isNativeApp = Capacitor.isNativePlatform();
+
+  useEffect(() => {
+    trackEvent("paywall_viewed", { source, current_tier: currentTier, platform: isNativeApp ? "native" : "web" }, authUser?.id);
+    // Runs once per mount (each time the paywall is opened), not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reads RevenueCat's active entitlements and returns our highest matching tier id,
   // since a customer could theoretically hold more than one (e.g. mid-upgrade).
@@ -9396,9 +9703,11 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurc
       }
       const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
       const newTier = tierFromEntitlements(customerInfo.entitlements);
+      trackEvent("purchase_completed", { source, tier: newTier, billing, platform: "native" }, authUser?.id);
       onPurchaseComplete?.(newTier);
       onClose();
     } catch (err) {
+      trackEvent(err?.userCancelled ? "purchase_cancelled" : "purchase_failed", { source, tier: tier.id, billing, platform: "native", error: err?.userCancelled ? undefined : String(err?.message || err) }, authUser?.id);
       if (!err?.userCancelled) {
         alert("Purchase couldn't be completed. Please try again.");
       }
@@ -9635,6 +9944,7 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurc
                   disabled={isActive || loadingTier === tier.id}
                   onClick={() => {
                     if (isActive) return;
+                    trackEvent("upgrade_cta_clicked", { source, tier: tier.id, billing, platform: isNativeApp ? "native" : "web" }, authUser?.id);
                     if (isNativeApp) {
                       if (!RC_PACKAGE_IDS[tier.id]) return;
                       if (!authUser) {
@@ -14609,6 +14919,10 @@ function FetchDescriptionsModal({ onClose, th }) {
 function LimitWarningModal({ currentCount, limit, tierName, onUpgrade, onDismiss }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const pct = Math.round((currentCount / limit) * 100);
+  useEffect(() => {
+    trackEvent("book_limit_hit", { current_count: currentCount, limit, tier_name: tierName });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{ background: th.bg, borderRadius: 16, padding: 32, maxWidth: 420, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.25)", fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "center" }}>
@@ -15386,6 +15700,14 @@ function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose,
   const canViewCommunity = canRead;
   const [showBotm, setShowBotm] = React.useState(false);
 
+  React.useEffect(() => {
+    if (authUser && !canViewCommunity) {
+      trackEvent("paywall_gate_shown", { source: "community" }, authUser?.id);
+    }
+    // Runs once per mount (each time this gate is opened), not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [memberCounts, setMemberCounts]   = React.useState({});
   const [socialLinks, setSocialLinks]     = React.useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
   const [socialEditing, setSocialEditing] = React.useState(false);
@@ -15577,6 +15899,14 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
   const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
   const canRead  = ["storyteller", "librarian", "storykeeper"].includes(userTier);
   const canPost  = ["librarian", "storykeeper"].includes(userTier);
+
+  React.useEffect(() => {
+    if (authUser && !canRead && !canPost) {
+      trackEvent("paywall_gate_shown", { source: "genre_group", genre }, authUser?.id);
+    }
+    // Runs once per mount (each time this gate is opened), not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [username, setUsername]         = React.useState("");
   const [isMember, setIsMember]         = React.useState(false);
@@ -16309,6 +16639,14 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
   const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
   const hasAccess = authUser && ["librarian", "storykeeper"].includes(userTier);
   const canPost = hasAccess;
+
+  React.useEffect(() => {
+    if (authUser && !hasAccess) {
+      trackEvent("paywall_gate_shown", { source: "book_club", genre }, authUser?.id);
+    }
+    // Runs once per mount (each time this gate is opened), not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const now = new Date();
   const year = now.getFullYear();
@@ -18436,14 +18774,11 @@ function AdminDashboard({ authUser, supabaseRef, onClose }) {
   );
 }
 
-function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBook }) {
+function GlobalSearchOverlay({ onClose, onSelectBook, onOpenAddToLibrary }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
-  const [externalResults, setExternalResults] = useState([]);
-  const [externalSearching, setExternalSearching] = useState(false);
   const debounceRef = useRef(null);
   const inputRef = useRef(null);
-  const externalReqRef = useRef(0);
 
   useEffect(() => {
     const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
@@ -18452,8 +18787,7 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBo
 
   const runSearch = (q) => {
     const trimmed = q.toLowerCase().trim();
-    if (trimmed.length < 2) { setResults([]); setExternalResults([]); externalReqRef.current++; return; }
-    let localKeys = new Set();
+    if (trimmed.length < 2) { setResults([]); return; }
     try {
       const userBooks = getUserBooksSync()
         .map((b, idx) => ({ ...b, _libIdx: idx }));
@@ -18465,7 +18799,6 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBo
         .filter(b => !userKeys.has(b.isbn || b.title))
         .map(b => ({ ...b, _isTBR: true }));
       const allBooks = [...userBooks, ...builtInBooks, ...tbrBooks];
-      localKeys = new Set(allBooks.map(b => (b.isbn || b.title || "").toLowerCase()));
       // Also check the author normalized to "First Last" order, so a query like
       // "Maas, Sarah" matches a book stored as "Sarah J. Maas" and vice versa.
       const normalizedTrimmed = normalizeAuthor(trimmed).toLowerCase().trim();
@@ -18478,22 +18811,6 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBo
           b.genre?.toLowerCase().includes(trimmed);
       }).slice(0, 50));
     } catch { setResults([]); }
-
-    // Also check Google Books/Open Library for anything not already in your
-    // library/catalog/TBR — the local filter above only ever matches what's
-    // already stored on-device, so without this a typo-free search for a real
-    // book you don't own yet would come back empty with no way to find it.
-    if (trimmed.length < 3) { setExternalResults([]); return; }
-    const reqId = ++externalReqRef.current;
-    setExternalSearching(true);
-    fetchBookSearch(trimmed).then(res => {
-      if (externalReqRef.current !== reqId) return; // a newer search superseded this one
-      const filtered = res.filter(b => !localKeys.has((b.isbn || b.title || "").toLowerCase())).slice(0, 15);
-      setExternalResults(filtered);
-      setExternalSearching(false);
-    }).catch(() => {
-      if (externalReqRef.current === reqId) setExternalSearching(false);
-    });
   };
 
   const handleChange = (e) => {
@@ -18551,35 +18868,10 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBo
                 </div>
               )}
 
-              {(externalSearching || externalResults.length > 0) && (
-                <>
-                  <div style={{ padding: "8px 14px", fontFamily: "Georgia, serif", fontSize: 11, color: "#8B5E3C", fontStyle: "italic", textAlign: "center", borderTop: results.length > 0 ? "1px solid #E8D5B0" : "none", background: "#EFE2C6" }}>
-                    Not in your library — from Google Books
-                  </div>
-                  {externalSearching && (
-                    <div style={{ padding: "14px 16px", fontFamily: "Georgia, serif", fontSize: 12, color: "#8B5E3C", textAlign: "center", fontStyle: "italic" }}>⟳ Searching online…</div>
-                  )}
-                  {externalResults.map((book, i) => (
-                    <div key={"ext" + i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid #E8D5B0", cursor: "pointer" }}
-                      onClick={() => { onAddExternalBook(book); handleClose(); }}>
-                      {book.coverUrl
-                        ? <img src={book.coverUrl} alt="" style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, flexShrink: 0 }} />
-                        : <div style={{ width: 36, height: 52, background: "#D8C3A5", borderRadius: 3, flexShrink: 0 }} />
-                      }
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, color: "#3A2A1A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{book.title}</div>
-                        <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32", fontStyle: "italic" }}>{book.author}</div>
-                      </div>
-                      <div style={{ fontSize: 11, flexShrink: 0, color: "#8B5E3C", fontFamily: "Georgia, serif", fontWeight: 600, background: "#E8D5B0", borderRadius: 4, padding: "2px 6px" }}>+ Add</div>
-                    </div>
-                  ))}
-                </>
-              )}
-
-              {results.length === 0 && !externalSearching && externalResults.length === 0 && (
+              {results.length === 0 && (
                 <div style={{ padding: "20px 16px", fontFamily: "Georgia, serif", fontSize: 13, color: "#8B5E3C", textAlign: "center" }}>
                   <div style={{ fontStyle: "italic", marginBottom: 12 }}>No books found for "{query}"</div>
-                  <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#8B5E3C", color: "#F8F1E4", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                  <button onClick={() => { handleClose(); onOpenAddToLibrary(); }} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#8B5E3C", color: "#F8F1E4", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
                     📚 Add it manually
                   </button>
                 </div>
@@ -18587,7 +18879,7 @@ function GlobalSearchOverlay({ onClose, onSelectBook, onOpenTBR, onAddExternalBo
 
               {results.length > 0 && (
                 <div style={{ padding: "10px 14px", borderTop: "1px solid #E8D5B0", textAlign: "center" }}>
-                  <button onClick={() => { handleClose(); onOpenTBR(); }} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: "transparent", color: "#8B5E3C", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600 }}>
+                  <button onClick={() => { handleClose(); onOpenAddToLibrary(); }} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #8B5E3C", background: "transparent", color: "#8B5E3C", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, fontWeight: 600 }}>
                     + Add a new book to your library
                   </button>
                 </div>
@@ -19345,18 +19637,13 @@ function StoryKeeperApp() {
           "amandagray03@yahoo.com", // her Play Store/tester account email
           "amandagray03@gmail.com", // the email she actually signed into StoryKeeper with
           "beautifulangel1209@gmail.com",
-          "bingochops1980@gmail.com",
           "brandyreneebrady@gmail.com",
           "forseee1991@gmail.com",
           "heather.roo1980@gmail.com",
-          "katrinasmommy513@gmail.com",
           "kebrownrn@gmail.com",
-          "kristinjcole@gmail.com",
           "mrsfortin17@gmail.com",
           "steph.spone@gmail.com",
           "weezie918@gmail.com",
-          "yankeesgirl1974@gmail.com",
-          "rinaldisab@gmail.com",
         ];
         if (LIFETIME_EMAILS.includes(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
@@ -19664,6 +19951,27 @@ function StoryKeeperApp() {
     const h = window.location.hash || localStorage.getItem("sk_last_hash") || "";
     return h === "#subscription" || localStorage.getItem("sk_current_page") === "subscription";
   });
+  // Tracks which locked feature/CTA sent the user to the paywall, read once by
+  // SubscriptionPage on mount to log a "paywall_viewed" funnel event with source.
+  const subscriptionSourceRef = useRef("direct");
+  const openSubscription = React.useCallback((source) => {
+    subscriptionSourceRef.current = source || "unknown";
+    setShowSubscription(true);
+    window.location.hash = "#subscription";
+  }, []);
+
+  // Stripe's checkout successUrl redirects back with ?subscribed=true — there's no
+  // client-side confirmation of *which* tier otherwise (that's inferred later from
+  // the account's synced tier), but this at least closes the web-purchase funnel loop.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("subscribed") === "true") {
+      trackEvent("purchase_completed", { source: subscriptionSourceRef.current, platform: "web", tier: "unknown" }, authUser?.id);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("subscribed");
+      window.history.replaceState({}, "", url);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showAbout, setShowAbout] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -19910,7 +20218,7 @@ function StoryKeeperApp() {
 
       {/* TBR SHELF PAGE */}
       {showTBR && (
-        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; setShowSidebar(true); }} userTier={userTier} onOpenSubscription={() => { setShowTBR(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />
+        <TBRShelf onClose={() => { setShowTBR(false); window.location.hash = ""; setShowSidebar(true); }} userTier={userTier} onOpenSubscription={() => { setShowTBR(false); openSubscription("tbr_shelf"); }} />
       )}
 
       {/* ADMIN DASHBOARD */}
@@ -19919,11 +20227,11 @@ function StoryKeeperApp() {
       )}
 
       {/* PLATFORMS PAGE */}
-      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; setShowSidebar(true); }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} userTier={userTier} onOpenSubscription={() => { setShowPlatforms(false); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
-      {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} userTier={userTier} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); setShowSubscription(true); window.location.hash = "#subscription"; }} />}
+      {showPlatforms && <PlatformPage onClose={() => { setShowPlatforms(false); window.location.hash = ""; setShowSidebar(true); }} onAddManually={() => { setShowAddToLibrary(true); }} mediaType={mediaType} th={th} themeKey={themeKey} isAdmin={isAdmin} isPWA={isPWA} userTier={userTier} onOpenSubscription={() => { setShowPlatforms(false); openSubscription("platform_import"); }} />}
+      {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} userTier={userTier} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); openSubscription("add_to_library"); }} />}
 
       {/* SUBSCRIPTION PAGE */}
-      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} authUser={authUser} onPurchaseComplete={(tier) => { setUserTier(tier); localStorage.setItem("sk_user_tier", tier); }} />}
+      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} authUser={authUser} source={subscriptionSourceRef.current} onPurchaseComplete={(tier) => { setUserTier(tier); localStorage.setItem("sk_user_tier", tier); }} />}
 
       {/* MY CLUBS & GROUPS PAGE */}
       {showMyClubs && (
@@ -19945,7 +20253,7 @@ function StoryKeeperApp() {
           onClose={() => { setShowCommunity(false); window.location.hash = ""; setShowSidebar(true); }}
           onOpenGroup={(g) => { setShowCommunity(false); setGroupPrevPage("community"); setGroupGenre(g); setShowGroup(true); window.location.hash = "#group=" + encodeURIComponent(g); }}
           onOpenBookClub={(g) => { setShowCommunity(false); setBookClubPrevPage("community"); setBookClubGenre(g); setShowBookClub(true); window.location.hash = "#bookclub=" + encodeURIComponent(g); }}
-          onOpenSubscription={() => { setShowCommunity(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
+          onOpenSubscription={() => { setShowCommunity(false); openSubscription("community"); }}
         />
       )}
 
@@ -19964,7 +20272,7 @@ function StoryKeeperApp() {
             else { window.location.hash = ""; }
             setGroupPrevPage(null);
           }}
-          onOpenSubscription={() => { setShowGroup(false); setGroupGenre(null); setShowSubscription(true); window.location.hash = "#subscription"; }}
+          onOpenSubscription={() => { setShowGroup(false); setGroupGenre(null); openSubscription("genre_group"); }}
         />
       )}
 
@@ -19983,7 +20291,7 @@ function StoryKeeperApp() {
             else { window.location.hash = ""; }
             setBookClubPrevPage(null);
           }}
-          onOpenSubscription={() => { setShowBookClub(false); setBookClubGenre(null); setShowSubscription(true); window.location.hash = "#subscription"; }}
+          onOpenSubscription={() => { setShowBookClub(false); setBookClubGenre(null); openSubscription("book_club"); }}
         />
       )}
 
@@ -20077,8 +20385,7 @@ function StoryKeeperApp() {
         <GlobalSearchOverlay
           onClose={() => setShowGlobalSearch(false)}
           onSelectBook={(book) => setGlobalSearchOpenBook(book)}
-          onOpenTBR={() => { setShowTBR(true); setShowHome(false); }}
-          onAddExternalBook={(book) => { setAddToLibraryPrefill(book); setShowAddToLibrary(true); }}
+          onOpenAddToLibrary={() => { setShowAddToLibrary(true); setShowHome(false); }}
         />
       )}
 
@@ -20976,7 +21283,7 @@ function StoryKeeperApp() {
             supabaseRef={supabaseRef}
             onClose={() => { setShowProfile(false); window.location.hash = ""; setShowSidebar(true); }}
             onSignOut={handleSignOut}
-            onOpenSubscription={() => { setShowProfile(false); setShowSubscription(true); window.location.hash = "#subscription"; }}
+            onOpenSubscription={() => { setShowProfile(false); openSubscription("profile"); }}
             currentTier={userTier}
             initialSocialLinks={appSocialLinks}
             onSocialLinksChange={setAppSocialLinks}
