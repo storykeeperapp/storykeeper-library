@@ -1,5 +1,22 @@
 apply plugin: 'com.android.application'
 
+// Release builds sign themselves with the Play upload key. Its password is read from the
+// macOS Keychain (a password item named "storykeeper-android-upload"), so it never has to
+// be typed or kept in this project. Without that item the release bundle comes out unsigned.
+def uploadKeystore = file("${System.getProperty('user.home')}/storykeeper-signing/storykeeper-upload-key.jks")
+def keychainPassword = { String name ->
+    for (String kind : ['find-generic-password', 'find-internet-password']) {
+        try {
+            def proc = ['security', kind, '-s', name, '-w'].execute()
+            def out = proc.text.trim()
+            proc.waitFor()
+            if (proc.exitValue() == 0 && out) return out
+        } catch (Exception ignored) { }
+    }
+    return null
+}
+def uploadKeyPassword = uploadKeystore.exists() ? keychainPassword('storykeeper-android-upload') : null
+
 android {
     namespace = "co.thestorykeeper.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,7 +24,7 @@ android {
         applicationId "co.thestorykeeper.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 35
+        versionCode 36
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -16,8 +33,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (uploadKeyPassword) {
+            upload {
+                storeFile uploadKeystore
+                storePassword uploadKeyPassword
+                keyAlias 'storykeeper-upload'
+                keyPassword uploadKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (uploadKeyPassword) {
+                signingConfig signingConfigs.upload
+            } else {
+                logger.warn("StoryKeeper: no 'storykeeper-android-upload' Keychain item, so the release bundle will be unsigned.")
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

@@ -1,18 +1,20 @@
 import { createClient } from "@supabase/supabase-js";
 import Stripe from "stripe";
 
-const PRICE_TO_TIER = {
-  499:   "storyteller",
-  4999:  "storyteller",
-  999:   "librarian",
-  9999:  "librarian",
-  1499:  "storykeeper",
-  14999: "storykeeper",
+// Monthly and yearly list prices in cents (the same numbers in USD and GBP) for each tier.
+const TIER_AMOUNTS = {
+  storyteller: [499, 4999],
+  librarian: [999, 9999],
+  storykeeper: [1499, 14999],
 };
 
+// An unrecognized amount gets The StoryKeeper rather than less than the reader paid for.
 function tierFromAmount(amount) {
-  return PRICE_TO_TIER[amount] || "storyteller";
+  return Object.keys(TIER_AMOUNTS).find(t => TIER_AMOUNTS[t].includes(amount)) || "storykeeper";
 }
+
+// A subscription in its free trial reports "trialing"; it has full access just like "active".
+const HAS_ACCESS = ["active", "trialing"];
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
@@ -74,7 +76,7 @@ export default async function handler(req, res) {
     const customerId = subscription.customer;
     const amount = subscription.items.data[0]?.price?.unit_amount || 0;
     const tier = tierFromAmount(amount);
-    const status = subscription.status === "active" ? "active" : "inactive";
+    const status = HAS_ACCESS.includes(subscription.status) ? "active" : "inactive";
 
     await adminClient.from("user_subscriptions")
       .update({ tier, status, updated_at: new Date().toISOString() })

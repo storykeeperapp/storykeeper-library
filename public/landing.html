@@ -206,7 +206,7 @@
     .pricing-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 20px; max-width: 960px; margin: 0 auto;
+      gap: 20px; max-width: 1040px; margin: 0 auto;
     }
     .pricing-card {
       background: #FBF6EE; border-radius: 16px; padding: 28px 24px;
@@ -395,14 +395,14 @@
   <section class="pricing center" id="pricing">
     <p class="section-label">Pricing</p>
     <h2 class="section-title">Start free. Upgrade when you're ready.</h2>
-    <p class="section-sub">No credit card required to get started.</p>
+    <p class="section-sub">Every new account gets The StoryKeeper free for 30 days. No credit card needed.</p>
 
     <div class="pricing-toggle">
       <span class="toggle-label">Monthly</span>
       <div class="toggle-switch" id="billingToggle" onclick="toggleBilling()">
         <div class="toggle-knob"></div>
       </div>
-      <span class="toggle-label">Yearly <span class="save-badge">Save up to 17%</span></span>
+      <span class="toggle-label">Yearly <span class="save-badge">2 months free</span></span>
     </div>
 
     <div class="pricing-grid">
@@ -413,66 +413,58 @@
         <div class="tier-price">Free</div>
         <div class="tier-period">forever</div>
         <ul class="tier-features">
-          <li>Up to 100 books total (eBooks + Audiobooks)</li>
-          <li>All genre shelves</li>
-          <li>eBooks & Audiobooks toggle</li>
-          <li>Basic reading status tracking</li>
-          <li>TBR shelf</li>
-          <li>Book of the Month pick</li>
+          <li>Up to 25 books: ebooks, audiobooks and physical</li>
+          <li>1 platform import</li>
+          <li>Ratings, reading status and reading stats</li>
+          <li>Unlimited TBR shelf</li>
+          <li>Genre discussions and Book of the Month</li>
         </ul>
         <a href="/app" class="tier-btn outline">Get Started Free</a>
       </div>
 
-      <!-- Storyteller -->
+      <!-- The Storyteller -->
       <div class="pricing-card">
-        <div class="tier-icon">✍️</div>
+        <div class="tier-icon">☕</div>
         <div class="tier-name">The Storyteller</div>
         <div class="tier-price" id="price-storyteller">$4.99</div>
         <div class="tier-period" id="period-storyteller">per month</div>
         <ul class="tier-features">
-          <li>Up to 250 books total (eBooks + Audiobooks + Physical)</li>
-          <li>Physical book shelf</li>
-          <li>2 platform imports</li>
-          <li>Genre drag-and-drop reordering</li>
-          <li>View community discussions</li>
-          <li>Connect social accounts</li>
-          <li>TBR shelf, bio & top books</li>
+          <li>Up to 250 books in every format</li>
+          <li>2 platform imports, kept up to date</li>
+          <li>Drag-and-drop genre ordering</li>
+          <li>Cloud sync across your devices</li>
         </ul>
-        <a href="https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00" id="link-storyteller" class="tier-btn">Get Storyteller</a>
+        <a href="/app" class="tier-btn outline">Try it free for 30 days</a>
       </div>
 
-      <!-- Librarian -->
+      <!-- The Librarian -->
       <div class="pricing-card">
         <div class="tier-icon">📚</div>
         <div class="tier-name">The Librarian</div>
         <div class="tier-price" id="price-librarian">$9.99</div>
         <div class="tier-period" id="period-librarian">per month</div>
         <ul class="tier-features">
-          <li>Up to 500 books total</li>
-          <li>Unlimited platform imports</li>
-          <li>Full genre customization</li>
-          <li>Reading stats & story calendar</li>
-          <li>Post in community discussions</li>
-          <li>Book club access</li>
-          <li>Cloud sync across up to 2 devices</li>
+          <li>Up to 500 books in every format</li>
+          <li>All 14 platform imports, kept up to date</li>
+          <li>Rename genres and custom genre images</li>
+          <li>Everything in The Storyteller</li>
         </ul>
-        <a href="https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02" id="link-librarian" class="tier-btn">Get Librarian</a>
+        <a href="/app" class="tier-btn outline">Try it free for 30 days</a>
       </div>
 
-      <!-- StoryKeeper -->
+      <!-- The StoryKeeper -->
       <div class="pricing-card popular">
-        <div class="popular-badge">Most Popular</div>
+        <div class="popular-badge">Most complete</div>
         <div class="tier-icon">🗝️</div>
         <div class="tier-name">The StoryKeeper</div>
         <div class="tier-price" id="price-storykeeper">$14.99</div>
         <div class="tier-period" id="period-storykeeper">per month</div>
         <ul class="tier-features">
-          <li>Unlimited books</li>
+          <li>Unlimited books in every format</li>
+          <li>Join genre book clubs and their monthly video meetings</li>
           <li>Everything in The Librarian</li>
-          <li>Cloud sync across unlimited devices</li>
-          <li>Priority support</li>
         </ul>
-        <a href="https://buy.stripe.com/bJe9AS5QRew04BscQteQM04" id="link-storykeeper" class="tier-btn">Get StoryKeeper</a>
+        <a href="/app" class="tier-btn">Try it free for 30 days</a>
       </div>
     </div>
   </section>
@@ -507,37 +499,23 @@
   <script>
     let yearly = false;
 
-    // Currency detection based on browser locale
+    // Prices per currency. The app stores and Stripe set the real local price; these are
+    // the list prices. Currencies without an entry fall back to USD.
     const currencyPrices = {
       GBP: {
-        storyteller:  { monthly: "£3.99",  yearly: "£39.99", mperiod: "per month", yperiod: "per year — save £7.89"  },
-        librarian:    { monthly: "£7.99",  yearly: "£79.99", mperiod: "per month", yperiod: "per year — save £15.89" },
-        storykeeper:  { monthly: "£11.99", yearly: "£119.99", mperiod: "per month", yperiod: "per year — save £23.89" },
-      },
-      EUR: {
-        storyteller:  { monthly: "€4.99",  yearly: "€49.99", mperiod: "per month", yperiod: "per year — save €9.89"  },
-        librarian:    { monthly: "€9.99",  yearly: "€99.99", mperiod: "per month", yperiod: "per year — save €19.89" },
-        storykeeper:  { monthly: "€13.99", yearly: "€139.99", mperiod: "per month", yperiod: "per year — save €27.89" },
-      },
-      CAD: {
-        storyteller:  { monthly: "CA$6.99",  yearly: "CA$69.99", mperiod: "per month", yperiod: "per year — save CA$13.89"  },
-        librarian:    { monthly: "CA$13.99", yearly: "CA$139.99", mperiod: "per month", yperiod: "per year — save CA$27.89" },
-        storykeeper:  { monthly: "CA$19.99", yearly: "CA$199.99", mperiod: "per month", yperiod: "per year — save CA$39.89" },
-      },
-      AUD: {
-        storyteller:  { monthly: "AU$7.99",  yearly: "AU$79.99", mperiod: "per month", yperiod: "per year — save AU$15.89"  },
-        librarian:    { monthly: "AU$15.99", yearly: "AU$159.99", mperiod: "per month", yperiod: "per year — save AU$31.89" },
-        storykeeper:  { monthly: "AU$22.99", yearly: "AU$229.99", mperiod: "per month", yperiod: "per year — save AU$45.89" },
+        storyteller: { monthly: "£4.99", yearly: "£49.99", mperiod: "per month", yperiod: "per year — 2 months free" },
+        librarian: { monthly: "£9.99", yearly: "£99.99", mperiod: "per month", yperiod: "per year — 2 months free" },
+        storykeeper: { monthly: "£14.99", yearly: "£149.99", mperiod: "per month", yperiod: "per year — 2 months free" },
       },
       USD: {
-        storyteller:  { monthly: "$4.99",  yearly: "$49.99", mperiod: "per month", yperiod: "per year — save $9.89"  },
-        librarian:    { monthly: "$9.99",  yearly: "$99.99", mperiod: "per month", yperiod: "per year — save $19.89" },
-        storykeeper:  { monthly: "$14.99", yearly: "$149.99", mperiod: "per month", yperiod: "per year — save $29.89" },
+        storyteller: { monthly: "$4.99", yearly: "$49.99", mperiod: "per month", yperiod: "per year — 2 months free" },
+        librarian: { monthly: "$9.99", yearly: "$99.99", mperiod: "per month", yperiod: "per year — 2 months free" },
+        storykeeper: { monthly: "$14.99", yearly: "$149.99", mperiod: "per month", yperiod: "per year — 2 months free" },
       },
     };
 
-    const localeToCurrency = { 'en-GB': 'GBP', 'en-AU': 'AUD', 'en-CA': 'CAD' };
-    const countryToCurrency = { GB: 'GBP', AU: 'AUD', CA: 'CAD', IE: 'EUR', DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', NL: 'EUR', PT: 'EUR', BE: 'EUR', AT: 'EUR', FI: 'EUR', GR: 'EUR' };
+    const localeToCurrency = { 'en-GB': 'GBP' };
+    const countryToCurrency = { GB: 'GBP' };
 
     function detectCurrency() {
       const locale = navigator.language || navigator.languages?.[0] || 'en-US';
@@ -550,36 +528,26 @@
     const currency = detectCurrency();
     const prices = currencyPrices[currency] || currencyPrices.USD;
 
-    // Show currency indicator if not USD
     if (currency !== 'USD') {
       const note = document.createElement('p');
       note.style.cssText = 'text-align:center;font-size:13px;color:#8B6A4A;margin-top:-16px;margin-bottom:24px;';
-      note.textContent = 'Prices shown in ' + currency + '. Final charge processed in your local currency by Stripe.';
+      note.textContent = 'Prices shown in ' + currency + '. Your app store charges in your local currency.';
       const pricingSection = document.querySelector('.pricing-grid');
       if (pricingSection) pricingSection.parentNode.insertBefore(note, pricingSection);
     }
 
-    const links = {
-      storyteller:  { monthly: "https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00", yearly: "https://buy.stripe.com/3cI00ia772Ni5Fw4jXeQM01" },
-      librarian:    { monthly: "https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02", yearly: "https://buy.stripe.com/aFa3cu4MN5Zu6JAdUxeQM03" },
-      storykeeper:  { monthly: "https://buy.stripe.com/bJe9AS5QRew04BscQteQM04", yearly: "https://buy.stripe.com/4gMeVca7773y6JA7w9eQM05" },
-    };
-
-    // Apply detected currency prices on load
-    ['storyteller','librarian','storykeeper'].forEach(t => {
-      const priceEl = document.getElementById('price-' + t);
-      const periodEl = document.getElementById('period-' + t);
-      if (priceEl) priceEl.textContent = prices[t].monthly;
-      if (periodEl) periodEl.textContent = prices[t].mperiod;
+    // The 30 days of full access start in the app, so every button opens it.
+    ['storyteller', 'librarian', 'storykeeper'].forEach(t => {
+      document.getElementById('price-' + t).textContent = prices[t].monthly;
+      document.getElementById('period-' + t).textContent = prices[t].mperiod;
     });
 
     function toggleBilling() {
       yearly = !yearly;
       document.getElementById('billingToggle').classList.toggle('yearly', yearly);
-      ['storyteller','librarian','storykeeper'].forEach(t => {
+      ['storyteller', 'librarian', 'storykeeper'].forEach(t => {
         document.getElementById('price-' + t).textContent = yearly ? prices[t].yearly : prices[t].monthly;
         document.getElementById('period-' + t).textContent = yearly ? prices[t].yperiod : prices[t].mperiod;
-        document.getElementById('link-' + t).href = yearly ? links[t].yearly : links[t].monthly;
       });
     }
 

@@ -162,6 +162,50 @@ function saveUserBooks(updatedArray) {
   });
 }
 
+// Books beyond a free account's limit are saved here rather than deleted, and move back
+// into the library as soon as the account upgrades. Kept in IndexedDB alongside the
+// library, since one import can easily put thousands of books here.
+async function getLockedBooks() {
+  try {
+    if (_booksIdbAvailable && _booksDB) return (await _booksDB.get("books", "locked")) || [];
+  } catch { /* fall back to localStorage */ }
+  return safeParseLS("sk_locked_books", []);
+}
+
+// Returns false if the write failed, so callers never take books out of the library
+// unless they were saved here first.
+async function saveLockedBooks(books) {
+  try {
+    if (_booksIdbAvailable && _booksDB) {
+      await _booksDB.put("books", books, "locked");
+      const verify = await _booksDB.get("books", "locked");
+      if ((verify || []).length !== books.length) throw new Error("locked books did not verify");
+    } else {
+      localStorage.setItem("sk_locked_books", JSON.stringify(books));
+    }
+  } catch (e) {
+    console.warn("Failed to save locked books:", e);
+    return false;
+  }
+  window.dispatchEvent(new CustomEvent("sk-locked-books-changed"));
+  return true;
+}
+
+const isSameBook = (a, b) =>
+  (a.isbn && b.isbn && a.isbn === b.isbn) ||
+  ((a.title || "").toLowerCase().trim() === (b.title || "").toLowerCase().trim() && (a.author || "") === (b.author || ""));
+
+// Puts any locked books back into the library. Called once the account is on a paid tier.
+async function unlockLockedBooks() {
+  const locked = await getLockedBooks();
+  if (locked.length === 0) return 0;
+  const library = getUserBooksSync();
+  const toAdd = locked.filter(b => !library.some(l => isSameBook(l, b)));
+  saveUserBooks([...library, ...toAdd]);
+  await saveLockedBooks([]);
+  return toAdd.length;
+}
+
 // Genre name migrations — old name → new name
 const GENRE_MIGRATIONS = {
   "Fantasy": "Fantasy & Romantasy",
@@ -338,6 +382,9 @@ function getSupabase() {
 // the UI flow it's instrumenting. Pass the signed-in user's id when known so
 // funnel drop-off can be tied back to a specific account.
 function trackEvent(eventName, properties = {}, userId = null) {
+  // Local development (the Vite dev server) shares the production Supabase project, so
+  // skip logging there to keep test clicks out of the real funnel numbers.
+  if (import.meta.env.DEV) return;
   try {
     getSupabase().from("analytics_events").insert({
       event_name: eventName,
@@ -526,6 +573,27 @@ function normalizeAuthor(author) {
 }
 
 const ADMIN_EMAIL = "msbratt23@gmail.com";
+// Lifetime free StoryKeeper access for whitelisted emails. These accounts get the paid tier
+// without a subscription, so the free book limit, import gate and book-club gate never apply.
+const LIFETIME_EMAILS = [
+  "msbratt23@gmail.com",
+  "ebratt13@yahoo.com",
+  "mbrady991@gmail.com",
+  "ceb5891@snet.net",
+  "mamadub83@yahoo.com",
+  "msbratt23@yahoo.com",
+  // Founding beta testers — lifetime top-tier access (added 2026-07-12)
+  "amandagray03@gmail.com",
+  "beautifulangel1209@gmail.com",
+  "brandyreneebrady@gmail.com",
+  "forseee1991@gmail.com",
+  "heather.roo1980@gmail.com",
+  "kebrownrn@gmail.com",
+  "mrsfortin17@gmail.com",
+  "steph.spone@gmail.com",
+  "weezie918@gmail.com",
+];
+function isLifetimeEmail(email) { return !!email && LIFETIME_EMAILS.includes(email.trim().toLowerCase()); }
 
 const COMMUNITY_RULES = [
   { emoji: "🤝", title: "Be kind & respectful", body: "Treat every reader the way you'd want to be treated. Disagreements about books are welcome; personal attacks are not." },
@@ -629,15 +697,63 @@ async function fetchOpenLibrarySearch(q) {
   } catch { return []; }
 }
 
+// One free tier and three paid ones, lowest to highest. Anything unrecognized (a missing
+// or stale cached value) is treated as free.
+const TIER_ORDER = ["reluctant", "storyteller", "librarian", "storykeeper"];
+function normalizeTier(tier) { return TIER_ORDER.includes(tier) ? tier : "reluctant"; }
+function isPaidTier(tier) { return normalizeTier(tier) !== "reluctant"; }
+function tierAtLeast(tier, min) { return TIER_ORDER.indexOf(normalizeTier(tier)) >= TIER_ORDER.indexOf(min); }
+
+// Every signed-in account gets The StoryKeeper free for this many days, with no card:
+// counted from sign-up, or for accounts that existed before build 36, from the first time
+// they open it. Afterwards a free account chooses its FREE_BOOK_LIMIT books to keep.
+const FULL_ACCESS_DAYS = 30;
+
+const FREE_BOOK_LIMIT = 25;
+const TIER_PLATFORM_IMPORTS = { reluctant: 1, storyteller: 2, librarian: Infinity, storykeeper: Infinity };
+const FREE_PLATFORM_IMPORTS = TIER_PLATFORM_IMPORTS.reluctant;
+// Readers who were already over the free limit when build 36 arrived get this long, from
+// the first time they open the update, before they have to choose their books.
+const FREE_LIMIT_GRACE_DAYS = 14;
+
+// Platforms this account has imported from, oldest first. They're remembered in their own
+// key, since sk_connections is set by the Connect button before any import runs and
+// cleared again by Disconnect. Imports from before build 36 are recognized by their books,
+// whose ids the import handler builds as "<platform>-<timestamp>-...".
+function getImportedPlatforms() {
+  const list = safeParseLS("sk_imported_platforms", []);
+  const legacy = localStorage.getItem("sk_free_import_platform");
+  if (legacy && !list.includes(legacy)) list.unshift(legacy);
+  getUserBooksSync().forEach(b => {
+    if (b.platform && !list.includes(b.platform) && typeof b.id === "string" && b.id.startsWith(`${b.platform}-`) && /^[a-z]+-\d{13}-/.test(b.id)) list.push(b.platform);
+  });
+  return list;
+}
+
+function recordImportedPlatform(platformId) {
+  const list = getImportedPlatforms();
+  if (!list.includes(platformId)) localStorage.setItem("sk_imported_platforms", JSON.stringify([...list, platformId]));
+}
+
+// Library loans and subscription titles count as borrowed; everything else defaults to
+// owned. Kindle says per book through originType (PURCHASE vs KINDLE_UNLIMITED, etc.).
+// Audible and Kobo expose no ownership signal, so their books default to owned.
+const BORROWED_PLATFORMS = ["libby", "hoopla", "scribd"];
+function inferOwnership(platformId, book) {
+  if (BORROWED_PLATFORMS.includes(platformId)) return "borrowed";
+  if (book.originType && book.originType !== "PURCHASE") return "borrowed";
+  return "owned";
+}
+
 const TIER_BOOK_LIMITS = {
-  reluctant: 100,
+  reluctant: FREE_BOOK_LIMIT,
   storyteller: 250,
   librarian: 500,
   storykeeper: Infinity,
 };
 
 function getEffectiveBookLimit(tier) {
-  return TIER_BOOK_LIMITS[tier] ?? 250;
+  return TIER_BOOK_LIMITS[normalizeTier(tier)];
 }
 
 const ALL_GENRES = [
@@ -3007,12 +3123,12 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
             {/* Read / Listen button */}
             {(() => {
+              // Books imported before the Goodreads id was saved only have StoryKeeper's own
+              // "goodreads-<timestamp>-..." id, so those fall back to a Goodreads search.
               const getGoodreadsUrl = (b) => {
-                if (b.id && b.id.startsWith('goodreads-')) {
-                  const goodreadsId = b.id.split('-')[1];
-                  return `https://www.goodreads.com/book/show/${goodreadsId}`;
-                }
-                return null;
+                if (b.goodreadsId) return `https://www.goodreads.com/book/show/${b.goodreadsId}`;
+                const q = b.isbn || [b.title, b.author].filter(Boolean).join(" ");
+                return q ? `https://www.goodreads.com/search?q=${encodeURIComponent(q)}` : null;
               };
               const getPlatformUrl = (b) => {
                 const PLATFORM_URLS = {
@@ -3170,19 +3286,49 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 );
               }
 
+              // A Goodreads export doesn't say where the reader owns a book, so Goodreads-only
+              // ebooks and audiobooks get store searches instead, with the likely store first.
+              const goodreadsOnly = platformUrls.every(p => p.platform === "goodreads");
+              const findQuery = encodeURIComponent([book.title, book.author].filter(Boolean).join(" "));
+              const FIND_STORES = [
+                { id: "kindle",  label: "Kindle",      url: `https://www.amazon.com/s?k=${findQuery}&i=digital-text` },
+                { id: "audible", label: "Audible",     url: `https://www.audible.com/search?keywords=${findQuery}` },
+                { id: "apple",   label: "Apple Books", url: `https://books.apple.com/us/search?term=${findQuery}` },
+                { id: "kobo",    label: "Kobo",        url: `https://www.kobo.com/us/en/search?query=${findQuery}` },
+              ];
+              const findStores = goodreadsOnly && mediaType !== "physical" && findQuery
+                ? (isAudio ? [FIND_STORES[1], FIND_STORES[0], FIND_STORES[2], FIND_STORES[3]] : FIND_STORES)
+                : [];
+              const openFind = (url) => () => { window.open(url, "_blank", "noopener,noreferrer"); };
+
               return (
-                <div style={{ display: "flex", gap: 8, margin: "10px 0 12px", flexWrap: "wrap" }}>
-                  {platformUrls.map((p, i) => (
-                    <button
-                      key={i}
-                      onClick={createOpenHandler(p.platform, p.url, p.book)}
-                      style={{ ...btnStyle, flex: platformUrls.length === 1 ? "1" : "auto" }}
-                    >
-                      {p.platform === "goodreads"
-                        ? `🔗 View on Goodreads`
-                        : `${isAudio ? "🎧" : "📖"} ${isAudio ? "Listen" : "Read"} on ${platformNames[p.platform] || p.platform}`}
-                    </button>
-                  ))}
+                <div style={{ margin: "10px 0 12px" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {platformUrls.map((p, i) => (
+                      <button
+                        key={i}
+                        onClick={createOpenHandler(p.platform, p.url, p.book)}
+                        style={{ ...btnStyle, flex: platformUrls.length === 1 ? "1" : "auto" }}
+                      >
+                        {p.platform === "goodreads"
+                          ? `🔗 View on Goodreads`
+                          : `${isAudio ? "🎧" : "📖"} ${isAudio ? "Listen" : "Read"} on ${platformNames[p.platform] || p.platform}`}
+                      </button>
+                    ))}
+                  </div>
+                  {findStores.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                      {findStores.map(st => (
+                        <button
+                          key={st.id}
+                          onClick={openFind(st.url)}
+                          style={{ ...btnStyle, flex: "1 1 auto", padding: "6px 10px", fontSize: 12, background: "transparent", color: modalTheme.accent, border: `1px solid ${modalTheme.accent}`, boxShadow: "none" }}
+                        >
+                          🔍 Find on {st.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -4883,7 +5029,6 @@ function BarcodeScannerModal({ onDetected, onDetectedMultiple, onClose }) {
 }
 
 function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, userTier }) {
-  const isFreeTier = (userTier || "reluctant") === "reluctant";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [allResults, setAllResults] = useState([]);
@@ -5287,16 +5432,14 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
               <div style={{ fontSize: 11, fontWeight: 700, color: thm.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
               <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
                 {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audio" }, { id: "physical", label: "📚 Physical" }].map(opt => {
-                  const locked = opt.id === "physical" && isFreeTier;
                   return (
-                    <button key={opt.id} onClick={() => locked ? onOpenSubscription?.() : setMediaType(opt.id)} style={{
+                    <button key={opt.id} onClick={() => setMediaType(opt.id)} style={{
                       flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, cursor: "pointer",
                       fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
                       background: mediaType === opt.id ? thm.accent : thm.bgMuted,
                       color: mediaType === opt.id ? thm.bg : thm.text,
                       border: `1px solid ${mediaType === opt.id ? thm.accent : thm.border}`,
-                      opacity: locked ? 0.55 : 1,
-                    }}>{locked ? `${opt.label} 🔒` : opt.label}</button>
+                    }}>{opt.label}</button>
                   );
                 })}
               </div>
@@ -5342,12 +5485,12 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
       {showLimitWarning && (() => {
         const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
         const wLimit = getEffectiveBookLimit(wTier);
-        const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
+        const wLabels = Object.fromEntries(TIERS.map(t => [t.id, t.name]));
         const wBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
         return <LimitWarningModal
           currentCount={wBooks.length}
           limit={wLimit}
-          tierName={wLabels[wTier] || wTier}
+          tierName={wLabels[normalizeTier(wTier)]}
           onUpgrade={() => { setShowLimitWarning(false); onClose(); onOpenSubscription?.(); }}
           onDismiss={() => { setShowLimitWarning(false); onClose(); }}
         />;
@@ -5710,7 +5853,6 @@ function AllBooksShelf({ onClose }) {
 
 function TBRShelf({ onClose, onOpenSubscription, userTier }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
-  const isFreeTier = (userTier || "reluctant") === "reluctant";
   const isMobile = window.innerWidth < 768;
   const canFitFourBooks = window.innerWidth >= 420;
   const [tbrBooks, setTbrBooks] = useState(() => {
@@ -6258,16 +6400,14 @@ function TBRShelf({ onClose, onOpenSubscription, userTier }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6B4C2A", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Format</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
               {[{ id: "ebooks", label: "📱 eBook" }, { id: "audiobooks", label: "🎧 Audiobook" }, { id: "physical", label: "📚 Physical" }].map(opt => {
-                const locked = opt.id === "physical" && isFreeTier;
                 return (
-                  <button key={opt.id} onClick={() => locked ? onOpenSubscription?.() : setMoveMediaType(opt.id)} style={{
+                  <button key={opt.id} onClick={() => setMoveMediaType(opt.id)} style={{
                     flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, cursor: "pointer",
                     fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
                     background: moveMediaType === opt.id ? "#8B5E3C" : "rgba(255,255,255,0.6)",
                     color: moveMediaType === opt.id ? "#fff" : "#3A2A1A",
                     border: `1px solid ${moveMediaType === opt.id ? "#8B5E3C" : "#C4A882"}`,
-                    opacity: locked ? 0.55 : 1,
-                  }}>{locked ? `${opt.label} 🔒` : opt.label}</button>
+                  }}>{opt.label}</button>
                 );
               })}
             </div>
@@ -6328,12 +6468,12 @@ function TBRShelf({ onClose, onOpenSubscription, userTier }) {
       {showLimitWarning && (() => {
         const wTier = localStorage.getItem("sk_user_tier") || "reluctant";
         const wLimit = getEffectiveBookLimit(wTier);
-        const wLabels = { reluctant: "Reluctant Reader", storyteller: "Storyteller", librarian: "Librarian", storykeeper: "StoryKeeper" };
+        const wLabels = Object.fromEntries(TIERS.map(t => [t.id, t.name]));
         const wBooks = (() => { try { return getUserBooksSync(); } catch { return []; } })();
         return <LimitWarningModal
           currentCount={wBooks.length}
           limit={wLimit}
-          tierName={wLabels[wTier] || wTier}
+          tierName={wLabels[normalizeTier(wTier)]}
           onUpgrade={() => { setShowLimitWarning(false); onOpenSubscription?.(); }}
           onDismiss={() => setShowLimitWarning(false)}
         />;
@@ -7107,21 +7247,26 @@ function BookmarkletCopyButton({ code, label, isScript }) {
   );
 }
 
-function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, userTier, onOpenSubscription }) {
-  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel", "googleplay", "nook"];
-  const showCSV = csvPlatforms.includes(platform.id);
-  const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
-  const isFreeTier = !isAdmin && (userTier || "reluctant") === "reluctant";
+function ImportModal(props) {
+  const { platform, onClose, isAdmin, userTier, onOpenSubscription } = props;
+  // Free accounts get one import, ever (a re-sync counts as another). The Storyteller can
+  // import, and keep re-syncing, two platforms; The Librarian and up have no limit.
+  const tier = isAdmin ? "storykeeper" : normalizeTier(userTier);
+  const allowed = TIER_PLATFORM_IMPORTS[tier];
+  const used = allowed === Infinity ? [] : getImportedPlatforms();
+  const isResync = used.includes(platform.id);
+  const isLocked = tier === "reluctant" ? used.length >= allowed : !isResync && used.length >= allowed;
+  const usedNames = used.map(id => [...EBOOK_PLATFORMS, ...AUDIO_PLATFORMS].find(p => p.id === id)?.name || id);
 
   useEffect(() => {
-    if (isFreeTier) {
-      trackEvent("paywall_gate_shown", { source: "platform_import", platform: platform.id });
+    if (isLocked) {
+      trackEvent("paywall_gate_shown", { source: "platform_import", platform: platform.id, reason: isResync ? "resync" : "second_platform" });
     }
     // Runs once per mount (each time this gate is opened), not on every re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (isFreeTier) {
+  if (isLocked) {
     return (
       <div style={{
         position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.65)",
@@ -7132,9 +7277,15 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
           textAlign: "center", fontFamily: '"Palatino Linotype", Palatino, serif',
         }}>
           <div style={{ fontSize: 36, marginBottom: 12 }}>🗝️</div>
-          <h2 style={{ margin: "0 0 10px", fontSize: 20, color: "#3A2A1A" }}>Platform imports are a paid feature</h2>
+          <h2 style={{ margin: "0 0 10px", fontSize: 20, color: "#3A2A1A" }}>
+            {isResync ? `Keep ${platform.name} up to date` : tier === "reluctant" ? "You've used your free import" : "You've used your 2 imports"}
+          </h2>
           <p style={{ fontSize: 14, color: "#6B4E32", lineHeight: 1.6, margin: "0 0 22px" }}>
-            Importing your {platform.name} library is available on The Storyteller plan and up. Upgrade to bring your whole library in automatically.
+            {isResync
+              ? `Re-importing ${platform.name} to bring in new books is part of every paid plan. You can still add books by hand any time.`
+              : tier === "reluctant"
+                ? `Free accounts include one platform import, and you used yours on ${usedNames[0]}. Bring in ${platform.name} with a paid plan.`
+                : `The Storyteller includes two platform imports, and you've used them on ${usedNames.join(" and ")}. The Librarian and The StoryKeeper import every platform.`}
           </p>
           <button onClick={() => { onClose(); onOpenSubscription?.(); }} style={{
             padding: "10px 24px", background: "#8C5E6B", color: "#F8F1E4", border: "none",
@@ -7148,6 +7299,14 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
       </div>
     );
   }
+
+  return <ImportModalBody {...props} />;
+}
+
+function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPWA, userTier, onOpenSubscription }) {
+  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel", "googleplay", "nook"];
+  const showCSV = csvPlatforms.includes(platform.id);
+  const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
 
   // CSV tab state
   const [csvBooks, setCsvBooks] = useState([]);
@@ -7223,7 +7382,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
           if (rs === 'read' || rs === 'finished') status = 'finished';
           else if (rs === 'reading' || rs === 'started' || rs === 'in_progress' || rs === 'in progress') status = 'reading';
         }
-        books.push({ title: b.title || '', author: (b.authors || []).join(', '), coverUrl: b.productUrl || '', readUrl: b.webReaderUrl || '', asin: b.asin || '', status });
+        books.push({ title: b.title || '', author: (b.authors || []).join(', '), coverUrl: b.productUrl || '', readUrl: b.webReaderUrl || '', asin: b.asin || '', status, originType: b.originType || '' });
       });
       window._skSetStatus && window._skSetStatus('StoryKeeper: Fetched ' + books.length + ' books…');
       token = data.paginationToken || null;
@@ -7436,10 +7595,18 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
       // progress bar or "Finished" badge within this list item. Neither is confirmed
       // against a live Kobo page, so finding nothing here is expected/safe.
       let status = '';
+      // Kobo puts a readStatus on every book ("ReadyToRead" for unopened books).
+      // "Reading" and "Finished" are Kobo's names for the other two states; confirm
+      // against a library with finished books before relying on them.
+      const koboStatus = String(trackInfo.readStatus || '').toLowerCase();
+      if (koboStatus === 'finished' || koboStatus === 'read') status = 'finished';
+      else if (koboStatus === 'reading') status = 'reading';
       const pct = (typeof trackInfo.percentRead === 'number' ? trackInfo.percentRead
         : typeof trackInfo.readingProgress === 'number' ? trackInfo.readingProgress
         : null);
-      if (pct !== null) {
+      if (status) {
+        // readStatus already answered it
+      } else if (pct !== null) {
         if (pct >= 95) status = 'finished';
         else if (pct > 0) status = 'reading';
       } else {
@@ -7694,8 +7861,8 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
         const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
         let header, rows;
         if (plt.id === 'kindle') {
-          header = 'title,author,coverUrl,readUrl,asin,status';
-          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl), esc(b.asin), esc(b.status || '')].join(','));
+          header = 'title,author,coverUrl,readUrl,asin,status,originType';
+          rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.readUrl), esc(b.asin), esc(b.status || ''), esc(b.originType || '')].join(','));
         } else if (plt.id === 'audible') {
           header = 'title,author,coverUrl,asin,status';
           rows = rawBooks.map(b => [esc(b.title), esc(b.author), esc(b.coverUrl), esc(b.asin), esc(b.status || '')].join(','));
@@ -7981,6 +8148,11 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
         // Determine this row's effective media type the same way handleConfirmCSV will save it
         let rawRowMediaType = (isApple || isBookFunnel) ? (row["mediatype"] || "ebook") : null;
 
+        // Goodreads Edition Format detection: "Kindle Edition", "Audible Audiobook", "Hardcover", "Paperback", "eBook", etc.
+        // Declared here, before its first use: it used to be declared further down, which threw
+        // "Cannot access 'goodreadsFormat' before initialization" on every Goodreads import.
+        const goodreadsFormat = isGoodreads ? ((row["edition format"] || row["Edition Format"] || "").toLowerCase().trim()) : "";
+
         // Goodreads: detect media type from Edition Format column
         if (isGoodreads && goodreadsFormat) {
           if (goodreadsFormat.includes("audible") || goodreadsFormat.includes("audiobook")) {
@@ -8027,8 +8199,14 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
         const exclusiveShelf = isGoodreads ? (row["exclusive shelf"] || "") : "";
         const dateRead = isGoodreads ? (row["date read"] || "") : "";
         const dateAdded = isGoodreads ? (row["date added"] || "") : "";
-        // Goodreads Edition Format detection: "Kindle Edition", "Audible Audiobook", "Hardcover", "Paperback", "eBook", etc.
-        const goodreadsFormat = isGoodreads ? ((row["edition format"] || row["Edition Format"] || "").toLowerCase().trim()) : "";
+        // Goodreads uses 0 for "no rating"; StoryKeeper ratings are 1-5.
+        const goodreadsRating = isGoodreads ? (parseInt(row["my rating"] || "0", 10) || 0) : 0;
+        const readCount = isGoodreads ? (parseInt(row["read count"] || "0", 10) || 0) : 0;
+        // Goodreads' own id for the book, used for the "View on Goodreads" link.
+        const goodreadsId = isGoodreads ? (row["book id"] || "").replace(/\D/g, "") : "";
+        const pages = isGoodreads ? (parseInt(row["number of pages"] || "0", 10) || 0) : 0;
+        // Kindle's library API labels each book PURCHASE, KINDLE_UNLIMITED, etc.
+        const originType = (row["origintype"] || "").trim();
 
         // Apple Books specific
         const description = isApple ? (row["description"] || "") : (row["blurb"] || "");
@@ -8107,7 +8285,7 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
             mediaType = "physical";
           }
         }
-        return { _csvIdx: idx, title, author, isbn, asin, coverUrl, readUrl, shelfGenre, status, dateRead, dateAdded, description, mediaType, storeId, narrator, series };
+        return { _csvIdx: idx, title, author, isbn, asin, coverUrl, readUrl, shelfGenre, status, dateRead, dateAdded, description, mediaType, storeId, narrator, series, goodreadsRating, readCount, pages, originType, goodreadsId };
       }).filter(Boolean);
 
       csvUserEditedRef.current = new Set();
@@ -8432,6 +8610,11 @@ function ImportModal({ platform, mediaType, onClose, onImport, isAdmin, isPWA, u
       _status: b.status || null,
       _dateRead: isGoodreads ? b.dateRead : null,
       _dateAdded: isGoodreads ? b.dateAdded : null,
+      _rating: b.goodreadsRating >= 1 && b.goodreadsRating <= 5 ? b.goodreadsRating : null,
+      ...(b.readCount > 0 ? { readCount: b.readCount } : {}),
+      ...(b.pages > 0 ? { pageCount: b.pages } : {}),
+      ...(b.originType ? { originType: b.originType } : {}),
+      ...(b.goodreadsId ? { goodreadsId: b.goodreadsId } : {}),
     }));
     onImport(books);
   };
@@ -9495,45 +9678,28 @@ const STRIPE_PUBLISHABLE_KEY = "pk_live_51ThDnUAr0payYLN5haFZlPikNJXl6vQ1QHBKK0o
 const REVENUECAT_IOS_API_KEY = "appl_JKdqNOGElHCYZrSnqXgasahfUSq";
 const REVENUECAT_ANDROID_API_KEY = "goog_iFnsKFhHjgpFhiDARLmgjQycDfq";
 
-// Maps tier id + billing period to the RevenueCat offering package identifier.
-// Note: librarian's yearly package identifier ended up with a hyphen (librarian-yearly)
-// instead of the underscore convention used everywhere else — a one-off naming slip
-// when it was created in the RevenueCat dashboard. Package identifiers can't be edited
-// after creation, so this map exists specifically to paper over that inconsistency.
+// RevenueCat offering package identifiers, per paid tier and billing period.
 const RC_PACKAGE_IDS = {
   storyteller: { monthly: "storyteller_monthly", yearly: "storyteller_yearly" },
-  librarian:   { monthly: "librarian_monthly",   yearly: "librarian-yearly" },
+  librarian: { monthly: "librarian_monthly", yearly: "librarian-yearly" },
   storykeeper: { monthly: "storykeeper_monthly", yearly: "storykeeper_yearly" },
 };
 
+// Web visitors are pointed to the iPhone and Android apps to subscribe.
+
+// Only features that exist in the app today belong here (App Store guideline 3.1.2).
 const TIERS = [
   {
     id: "reluctant",
     icon: "📖",
     name: "The Reluctant Reader",
     price: "Free",
-    priceNote: "Forever",
-    color: "#8B5E3C",
-    highlight: false,
-    stripePrices: null,
     features: [
-      "Up to 100 books total (eBooks + Audiobooks)",
-      "All genre shelves",
-      "eBooks & Audiobooks toggle",
-      "Manual book adding",
-      "Basic reading status tracking",
-      "TBR shelf",
-      "Bio & top books on profile",
-      "Social links on profile",
-      "Book of the Month pick",
-    ],
-    locked: [
-      "Physical book shelf",
-      "Platform imports",
-      "Genre customization",
-      "Drag-and-drop reordering",
-      "Community discussions & book clubs",
-      "Connect social accounts",
+      `Up to ${FREE_BOOK_LIMIT} books: ebooks, audiobooks and physical`,
+      `${FREE_PLATFORM_IMPORTS} platform import`,
+      "Ratings, reading status and reading stats",
+      "Unlimited TBR shelf",
+      "Genre discussions and Book of the Month",
     ],
   },
   {
@@ -9541,40 +9707,14 @@ const TIERS = [
     icon: "☕",
     name: "The Storyteller",
     price: "$4.99",
-    priceNote: "per month",
     yearlyPrice: "$49.99",
-    yearlyNote: "per year — save $9.89",
     gbpPrice: "£4.99",
-    gbpPriceNote: "per month",
     gbpYearlyPrice: "£49.99",
-    gbpYearlyNote: "per year — save £9.89",
-    color: "#6B8C5E",
-    highlight: false,
-    stripeLinks: {
-      monthly: "https://buy.stripe.com/9B63cudjjcnS0lc3fTeQM00",
-      yearly:  "https://buy.stripe.com/3cI00ia772Ni5Fw4jXeQM01",
-    },
-    stripeLinksGBP: {
-      monthly: "https://buy.stripe.com/8x29AS5QR5Zuc3UdUxeQM06",
-      yearly:  "https://buy.stripe.com/4gM28qfrrdrWgkag2FeQM09",
-    },
     features: [
-      "Up to 250 books total (eBooks + Audiobooks + Physical)",
-      "Physical book shelf",
-      "All genre shelves",
-      "eBooks, Audiobooks & Physical toggle",
-      "2 platform imports",
-      "Genre drag-and-drop reordering",
-      "Reading status tracking",
-      "View community discussions (read-only)",
-      "Connect TikTok & social accounts",
-      "TBR shelf, bio & top books",
-    ],
-    locked: [
-      "Genre customization",
-      "Post in discussions",
-      "Book clubs",
-      "Reading stats & story calendar",
+      "Up to 250 books in every format",
+      "2 platform imports, kept up to date",
+      "Drag-and-drop genre ordering",
+      "Cloud sync across your devices",
     ],
   },
   {
@@ -9582,71 +9722,30 @@ const TIERS = [
     icon: "📚",
     name: "The Librarian",
     price: "$9.99",
-    priceNote: "per month",
     yearlyPrice: "$99.99",
-    yearlyNote: "per year — save $19.89",
     gbpPrice: "£9.99",
-    gbpPriceNote: "per month",
     gbpYearlyPrice: "£99.99",
-    gbpYearlyNote: "per year — save £19.89",
-    color: "#5E6B8C",
-    highlight: false,
-    stripeLinks: {
-      monthly: "https://buy.stripe.com/8x26oG4MN5Zu2tkcQteQM02",
-      yearly:  "https://buy.stripe.com/aFa3cu4MN5Zu6JAdUxeQM03",
-    },
-    stripeLinksGBP: {
-      monthly: "https://buy.stripe.com/14AbJ03IJ4Vq5FwcQteQM07",
-      yearly:  "https://buy.stripe.com/4gM5kCcff0Fa6JA17LeQM08",
-    },
     features: [
-      "Up to 500 books total",
-      "Physical book shelf",
-      "All genre shelves",
-      "Unlimited platform imports",
-      "Full genre customization",
-      "Rename & custom genre images",
-      "Re-detect genres",
-      "Search your library",
-      "Reading stats & story calendar",
-      "Full community profile visible to others",
-      "Cloud sync across up to 2 devices",
+      "Up to 500 books in every format",
+      "All 14 platform imports, kept up to date",
+      "Rename genres and custom genre images",
+      "Everything in The Storyteller",
     ],
-    locked: [],
   },
   {
     id: "storykeeper",
     icon: "🗝️",
     name: "The StoryKeeper",
+    tagline: "Everything StoryKeeper does",
     price: "$14.99",
-    priceNote: "per month",
     yearlyPrice: "$149.99",
-    yearlyNote: "per year — save $29.89",
     gbpPrice: "£14.99",
-    gbpPriceNote: "per month",
     gbpYearlyPrice: "£149.99",
-    gbpYearlyNote: "per year — save £29.89",
-    color: "#8C5E6B",
-    highlight: true,
-    badge: "Most Popular",
-    stripeLinks: {
-      monthly: "https://buy.stripe.com/bJe9AS5QRew04BscQteQM04",
-      yearly:  "https://buy.stripe.com/4gMeVca7773y6JA7w9eQM05",
-    },
-    stripeLinksGBP: {
-      monthly: "https://buy.stripe.com/eVqaEWbbb0Fafg6dUxeQM0a",
-      yearly:  "https://buy.stripe.com/9B64gy7YZ3Rm0lcbMpeQM0b",
-    },
     features: [
-      "Unlimited books",
+      "Unlimited books in every format",
+      "Join genre book clubs and their monthly video meetings",
       "Everything in The Librarian",
-      "Cloud sync across unlimited devices",
-      "Priority support",
-      "Early access to new community features",
-      "Exclusive StoryKeeper badge on profile & posts",
-      "First access to author Q&As & exclusive events (coming soon)",
     ],
-    locked: [],
   },
 ];
 
@@ -9665,49 +9764,85 @@ async function redirectToStripeCheckout(priceId) {
   }
 }
 
-function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurchaseComplete, source = "direct" }) {
+function SubscriptionPage({ onClose, currentTier = "reluctant", fullAccessEndsAt = null, authUser, onPurchaseComplete, source = "direct", onOpenTerms, onOpenPrivacy }) {
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
-  const [billing, setBilling] = useState("monthly");
-  const [hoveredTier, setHoveredTier] = useState(null);
+  const [billing, setBilling] = useState("yearly");
   const [loadingTier, setLoadingTier] = useState(null);
   const [restoring, setRestoring] = useState(false);
+  // Store prices read from RevenueCat on native, keyed by package identifier. Until they
+  // load (or on web) the page falls back to the list prices in TIERS.
+  const [storePrices, setStorePrices] = useState({});
   const isNativeApp = Capacitor.isNativePlatform();
+  const paidTiers = TIERS.filter(t => t.id !== "reluctant");
+  const freeTier = TIERS.find(t => t.id === "reluctant");
+  // During the free full-access period the app treats the reader as The StoryKeeper, but
+  // they haven't subscribed to anything, so every plan stays on offer.
+  const onFullAccess = !!fullAccessEndsAt;
+  const subscribedTier = onFullAccess ? "reluctant" : normalizeTier(currentTier);
+  const isPaid = isPaidTier(subscribedTier);
 
   useEffect(() => {
-    trackEvent("paywall_viewed", { source, current_tier: currentTier, platform: isNativeApp ? "native" : "web" }, authUser?.id);
+    trackEvent("paywall_viewed", { source, current_tier: subscribedTier, full_access: onFullAccess, platform: isNativeApp ? "native" : "web" }, authUser?.id);
     // Runs once per mount (each time the paywall is opened), not on every re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reads RevenueCat's active entitlements and returns our highest matching tier id,
-  // since a customer could theoretically hold more than one (e.g. mid-upgrade).
+  useEffect(() => {
+    if (!isNativeApp) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { Purchases } = await import("@revenuecat/purchases-capacitor");
+        const offerings = await Purchases.getOfferings();
+        const prices = {};
+        (offerings.current?.availablePackages || []).forEach(p => { prices[p.identifier] = p.product.priceString; });
+        if (!cancelled) setStorePrices(prices);
+      } catch (e) {
+        console.warn("Couldn't load store prices:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isNativeApp]);
+
+  const isUK = (() => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const lang = navigator.language || "";
+      return tz.startsWith("Europe/London") || lang === "en-GB";
+    } catch { return false; }
+  })();
+
+  const priceFor = (tier) => {
+    const listPrice = isUK
+      ? (billing === "yearly" ? tier.gbpYearlyPrice : tier.gbpPrice)
+      : (billing === "yearly" ? tier.yearlyPrice : tier.price);
+    return storePrices[RC_PACKAGE_IDS[tier.id][billing]] || listPrice;
+  };
+  const period = billing === "yearly" ? "year" : "month";
+
   const tierFromEntitlements = (entitlements) => {
     const active = Object.keys(entitlements?.active || {});
-    if (active.includes("storykeeper")) return "storykeeper";
-    if (active.includes("librarian")) return "librarian";
-    if (active.includes("storyteller")) return "storyteller";
-    return "reluctant";
+    return [...TIER_ORDER].reverse().find(t => t !== "reluctant" && active.includes(t)) || "reluctant";
   };
 
-  const purchaseNative = async (tier) => {
-    setLoadingTier(tier.id);
+  const purchaseNative = async (tierId) => {
+    setLoadingTier(tierId);
     try {
       const { Purchases } = await import("@revenuecat/purchases-capacitor");
-      const packageId = RC_PACKAGE_IDS[tier.id]?.[billing];
       const offerings = await Purchases.getOfferings();
-      const pkg = offerings.current?.availablePackages?.find(p => p.identifier === packageId);
+      const pkg = offerings.current?.availablePackages?.find(p => p.identifier === RC_PACKAGE_IDS[tierId][billing]);
       if (!pkg) {
         alert("This plan isn't available right now. Please try again shortly.");
         return;
       }
       const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
       const newTier = tierFromEntitlements(customerInfo.entitlements);
-      trackEvent("purchase_completed", { source, tier: newTier, billing, platform: "native" }, authUser?.id);
+      trackEvent("purchase_completed", { source, tier: newTier, billing, platform: "native", full_access: onFullAccess }, authUser?.id);
       onPurchaseComplete?.(newTier);
       onClose();
     } catch (err) {
-      trackEvent(err?.userCancelled ? "purchase_cancelled" : "purchase_failed", { source, tier: tier.id, billing, platform: "native", error: err?.userCancelled ? undefined : String(err?.message || err) }, authUser?.id);
+      trackEvent(err?.userCancelled ? "purchase_cancelled" : "purchase_failed", { source, tier: tierId, billing, platform: "native", error: err?.userCancelled ? undefined : String(err?.message || err) }, authUser?.id);
       if (!err?.userCancelled) {
         alert("Purchase couldn't be completed. Please try again.");
       }
@@ -9726,7 +9861,7 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurc
         alert("No previous purchases found for this account.");
       } else {
         onPurchaseComplete?.(restoredTier);
-        alert(`Restored your ${TIERS.find(t => t.id === restoredTier)?.name || restoredTier} subscription.`);
+        alert(`Restored your ${TIERS.find(t => t.id === restoredTier)?.name || "StoryKeeper"} subscription.`);
       }
     } catch {
       alert("Couldn't restore purchases. Please try again.");
@@ -9735,297 +9870,149 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", authUser, onPurc
     }
   };
 
-  const isUK = (() => {
-    try {
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const lang = navigator.language || "";
-      return tz.startsWith("Europe/London") || lang === "en-GB";
-    } catch { return false; }
-  })();
+  const startCheckout = (tierId) => {
+    trackEvent("upgrade_cta_clicked", { source, tier: tierId, billing, platform: isNativeApp ? "native" : "web", full_access: onFullAccess }, authUser?.id);
+    if (!authUser) { alert("Please sign in to subscribe."); return; }
+    purchaseNative(tierId);
+  };
+
+  const serif = '"Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif';
+  const check = (color) => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }}>
+      <path d="M5 12l5 5L19 7" />
+    </svg>
+  );
+  const featureList = (features, color, textColor) => (
+    <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+      {features.map(f => (
+        <li key={f} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 15, lineHeight: 1.4, color: textColor }}>
+          {check(color)}<span>{f}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  const linkButton = { background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: serif, fontSize: 13, color: "#6B4E32", textDecoration: "underline" };
+  const fullAccessEndText = fullAccessEndsAt ? fullAccessEndsAt.toLocaleDateString("en-US", { month: "long", day: "numeric" }) : "";
 
   return (
     <div
       ref={scrollRef}
       onScroll={(e) => setAtTop(e.currentTarget.scrollTop < 40)}
-      style={{
-        position: "fixed", inset: 0, zIndex: 550,
-        background: "linear-gradient(135deg, #F5ECD7 0%, #EDE0C4 50%, #E8D5B0 100%)",
-        overflowY: "auto",
-        fontFamily: '"Palatino Linotype", Palatino, serif',
-      }}
+      style={{ position: "fixed", inset: 0, zIndex: 550, background: "#FBF6EE", overflowY: "auto", fontFamily: serif, color: "#3A2A1A" }}
     >
-      {/* Back button */}
       <button
         onClick={onClose}
+        aria-label="Close plans"
         style={{
           position: "fixed", top: 56, left: 20, zIndex: 600,
           background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)",
-          borderRadius: 10, padding: "8px 18px", cursor: "pointer",
-          fontFamily: '"Palatino Linotype", Palatino, serif',
-          fontSize: 16, color: "#F5ECD7", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
-          opacity: atTop ? 1 : 0, pointerEvents: atTop ? "auto" : "none",
-          transition: "opacity 0.3s",
+          borderRadius: 10, padding: "8px 18px", cursor: "pointer", fontFamily: serif,
+          fontSize: 16, color: "#F5ECD7", boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+          opacity: atTop ? 1 : 0, pointerEvents: atTop ? "auto" : "none", transition: "opacity 0.3s",
         }}
       >
         ← Back
       </button>
 
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "80px 24px 60px" }}>
-
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ fontSize: 42, marginBottom: 10 }}>🗝️</div>
-          <h1 style={{ fontSize: 32, color: "#3A2A1A", margin: "0 0 8px", fontWeight: 700 }}>
-            Choose Your Chapter
+      <div style={{ maxWidth: 520, margin: "0 auto", padding: "110px 20px 48px", display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 13, letterSpacing: 2, textTransform: "uppercase", color: "#6B4E32" }}>Your library, all in one place</div>
+          <h1 style={{ margin: 0, fontSize: 30, lineHeight: 1.15, fontFamily: serif, fontWeight: 700 }}>
+            {onFullAccess ? `Full access until ${fullAccessEndText}` : isPaid ? `You're on ${TIERS.find(t => t.id === subscribedTier)?.name}` : "Choose your chapter"}
           </h1>
-          <p style={{ fontSize: 15, fontStyle: "italic", color: "#6B4E32", margin: "0 0 24px" }}>
-            Every great story starts somewhere. Find the tier that fits your library.
+          <p style={{ margin: 0, fontSize: 15, lineHeight: 1.5, color: "#5C3D1E" }}>
+            {onFullAccess
+              ? `Everything in The StoryKeeper is free for your first ${FULL_ACCESS_DAYS} days. Pick a plan to keep your whole library after that.`
+              : "Every platform, every format, every book you've read, on one set of shelves."}
           </p>
+        </div>
 
-          {/* Billing toggle */}
-          <div style={{
-            display: "inline-flex", background: "rgba(255,255,255,0.5)",
-            border: "1px solid #D8C3A5", borderRadius: 30, padding: 4, gap: 4,
-          }}>
-            {["monthly", "yearly"].map(b => (
-              <button
-                key={b}
-                onClick={() => setBilling(b)}
-                style={{
-                  padding: "7px 20px", borderRadius: 24, border: "none",
-                  cursor: "pointer", fontSize: 13,
-                  fontFamily: '"Palatino Linotype", Palatino, serif',
-                  background: billing === b ? "#3A2A1A" : "transparent",
-                  color: billing === b ? "#F8F1E4" : "#6B4E32",
-                  fontWeight: billing === b ? 700 : 400,
-                  transition: "all 0.2s",
-                }}
-              >
-                {b === "monthly" ? "Monthly" : "Yearly 🎉 Save 17%"}
-              </button>
-            ))}
+        <div role="group" aria-label="Billing period" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4, background: "#EDE0CC", borderRadius: 24, padding: 4 }}>
+          {["monthly", "yearly"].map(b => (
+            <button key={b} onClick={() => setBilling(b)} aria-pressed={billing === b} style={{
+              minHeight: 44, border: "none", borderRadius: 20, cursor: "pointer", fontFamily: serif, fontSize: 15,
+              background: billing === b ? "#FFFFFF" : "transparent", color: billing === b ? "#3A2A1A" : "#5C3D1E", fontWeight: billing === b ? 700 : 400,
+            }}>
+              {b === "monthly" ? "Monthly" : "Yearly · 2 months free"}
+            </button>
+          ))}
+        </div>
+
+        {!isNativeApp && (
+          <div style={{ textAlign: "center", fontSize: 14, lineHeight: 1.5, background: "#F8F1E4", borderRadius: 10, padding: 12 }}>
+            Subscribe in the StoryKeeper app for iPhone or Android. Your library syncs to this browser once you're signed in.
           </div>
-        </div>
-
-        {/* Tier cards */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 16,
-          alignItems: "stretch",
-        }}>
-          {TIERS.map(tier => {
-            const isActive = currentTier === tier.id;
-            const isHovered = hoveredTier === tier.id;
-            return (
-              <div
-                key={tier.id}
-                onMouseEnter={() => setHoveredTier(tier.id)}
-                onMouseLeave={() => setHoveredTier(null)}
-                style={{
-                  background: tier.highlight
-                    ? "linear-gradient(160deg, #3A2A1A, #5C3D1E)"
-                    : "rgba(255,255,255,0.65)",
-                  border: isActive
-                    ? `2px solid ${tier.color}`
-                    : tier.highlight
-                      ? "2px solid #C9A96E"
-                      : "1px solid #D8C3A5",
-                  borderRadius: 14,
-                  padding: "24px 20px",
-                  position: "relative",
-                  transform: isActive ? "scale(1.04)" : isHovered ? "translateY(-4px)" : "none",
-                  transition: "transform 0.2s, box-shadow 0.2s",
-                  boxShadow: isActive
-                    ? "0 12px 40px rgba(0,0,0,0.2)"
-                    : isHovered
-                      ? "0 8px 32px rgba(0,0,0,0.15)"
-                      : "0 2px 8px rgba(0,0,0,0.07)",
-                  zIndex: isActive ? 2 : 1,
-                }}
-              >
-                {/* Badge */}
-                {tier.badge && (
-                  <div style={{
-                    position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)",
-                    background: tier.highlight ? "#C9A96E" : tier.color,
-                    color: "#fff", fontSize: 11, fontWeight: 700,
-                    padding: "3px 12px", borderRadius: 20,
-                    whiteSpace: "nowrap", letterSpacing: 0.5,
-                  }}>
-                    {tier.badge}
-                  </div>
-                )}
-
-                {/* Current plan indicator */}
-                {isActive && (
-                  <div style={{
-                    position: "absolute", top: 12, right: 12,
-                    background: tier.color, color: "#fff",
-                    fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
-                    letterSpacing: 0.5,
-                  }}>
-                    CURRENT
-                  </div>
-                )}
-
-                {/* Icon & name */}
-                <div style={{ fontSize: 28, marginBottom: 8 }}>{tier.icon}</div>
-                <div style={{
-                  fontSize: 16, fontWeight: 700,
-                  color: tier.highlight ? "#F8F1E4" : "#3A2A1A",
-                  marginBottom: 4,
-                }}>
-                  {tier.name}
-                </div>
-
-                {/* Price */}
-                <div style={{ marginBottom: 16 }}>
-                  <span style={{
-                    fontSize: 28, fontWeight: 700,
-                    color: tier.highlight ? "#C9A96E" : tier.color,
-                  }}>
-                    {isUK
-                      ? (billing === "yearly" && tier.gbpYearlyPrice ? tier.gbpYearlyPrice : (tier.gbpPrice || tier.price))
-                      : (billing === "yearly" && tier.yearlyPrice ? tier.yearlyPrice : tier.price)}
-                  </span>
-                  <span style={{
-                    fontSize: 11, fontStyle: "italic", marginLeft: 4,
-                    color: tier.highlight ? "rgba(248,241,228,0.7)" : "#8B6A50",
-                  }}>
-                    {isUK
-                      ? (billing === "yearly" && tier.gbpYearlyNote ? tier.gbpYearlyNote : (tier.gbpPriceNote || tier.priceNote))
-                      : (billing === "yearly" && tier.yearlyNote ? tier.yearlyNote : tier.priceNote)}
-                  </span>
-                </div>
-
-                {/* Divider */}
-                <div style={{
-                  height: 1,
-                  background: tier.highlight ? "rgba(201,169,110,0.4)" : "#D8C3A5",
-                  marginBottom: 14,
-                }} />
-
-                {/* Features */}
-                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px", fontSize: 12.5 }}>
-                  {tier.features.map(f => {
-                    const isFuture = f.includes("(coming soon)");
-                    const label = isFuture ? f.replace(" (coming soon)", "") : f;
-                    return (
-                      <li key={f} style={{
-                        display: "flex", gap: 8, alignItems: "flex-start",
-                        marginBottom: 6,
-                        color: isFuture
-                          ? (tier.highlight ? "rgba(248,241,228,0.5)" : "#9A8878")
-                          : (tier.highlight ? "#F8F1E4" : "#3A2A1A"),
-                      }}>
-                        <span style={{ color: isFuture ? "#C9A96E" : "#6AAE6A", flexShrink: 0, marginTop: 1 }}>
-                          {isFuture ? "🕐" : "✓"}
-                        </span>
-                        <span>{label} {isFuture && <em style={{ fontSize: "0.85em", opacity: 0.8 }}>(coming soon)</em>}</span>
-                      </li>
-                    );
-                  })}
-                  {tier.locked.map(f => (
-                    <li key={f} style={{
-                      display: "flex", gap: 8, alignItems: "flex-start",
-                      marginBottom: 6,
-                      color: tier.highlight ? "rgba(248,241,228,0.4)" : "#B0A090",
-                    }}>
-                      <span style={{ flexShrink: 0, marginTop: 1 }}>✗</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-
-                {/* CTA Button */}
-                <button
-                  disabled={isActive || loadingTier === tier.id}
-                  onClick={() => {
-                    if (isActive) return;
-                    trackEvent("upgrade_cta_clicked", { source, tier: tier.id, billing, platform: isNativeApp ? "native" : "web" }, authUser?.id);
-                    if (isNativeApp) {
-                      if (!RC_PACKAGE_IDS[tier.id]) return;
-                      if (!authUser) {
-                        alert("Please sign in to subscribe.");
-                        return;
-                      }
-                      purchaseNative(tier);
-                    } else {
-                      if (!tier.stripeLinks) return;
-                      const gbpLinks = tier.stripeLinksGBP;
-                      const gbpLink = isUK && gbpLinks ? (billing === "yearly" ? gbpLinks.yearly : gbpLinks.monthly) : null;
-                      const link = gbpLink || (billing === "yearly" ? tier.stripeLinks.yearly : tier.stripeLinks.monthly);
-                      window.open(link, "_blank");
-                    }
-                  }}
-                  style={{
-                    width: "100%", padding: "10px 0",
-                    background: isActive
-                      ? "transparent"
-                      : tier.highlight
-                        ? "#C9A96E"
-                        : "#3A2A1A",
-                    color: isActive
-                      ? (tier.highlight ? "#C9A96E" : "#3A2A1A")
-                      : "#F8F1E4",
-                    border: isActive
-                      ? `1px solid ${tier.highlight ? "#C9A96E" : "#3A2A1A"}`
-                      : "none",
-                    borderRadius: 8, cursor: isActive ? "default" : loadingTier === tier.id ? "wait" : "pointer",
-                    fontFamily: '"Palatino Linotype", Palatino, serif',
-                    fontSize: 13, fontWeight: 700,
-                    transition: "all 0.2s",
-                    opacity: loadingTier === tier.id ? 0.7 : 1,
-                  }}
-                >
-                  {isActive ? "Current Plan" : loadingTier === tier.id ? "Processing…" : tier.price === "Free" ? "Get Started" : "Upgrade"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Footer note */}
-        <p style={{
-          textAlign: "center", marginTop: 36,
-          fontSize: 12, fontStyle: "italic", color: "#8B6A50",
-        }}>
-          Cancel anytime. No hidden fees. Your library data is always yours. 🗝️
-        </p>
-        {isUK && !isNativeApp && (
-          <p style={{ textAlign: "center", fontSize: 11, color: "#8B6A50", marginTop: 4 }}>
-            🇬🇧 Prices shown in GBP. UK VAT may apply at checkout.
-          </p>
         )}
+
+        {paidTiers.map(tier => {
+          const isCurrent = subscribedTier === tier.id;
+          const isTop = tier.id === "storykeeper";
+          const price = priceFor(tier);
+          return (
+            <div key={tier.id} style={{ background: "#FFFFFF", border: isTop ? "2px solid #6B4E32" : "1px solid #D8C3A5", borderRadius: 16, padding: "22px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}><span aria-hidden="true">{tier.icon}</span> {tier.name}</div>
+                  {tier.tagline && <div style={{ fontSize: 14, color: "#5C3D1E" }}>{tier.tagline}</div>}
+                </div>
+                {isCurrent && (
+                  <div style={{ background: "#6B4E32", color: "#fff", fontSize: 12, fontWeight: 700, padding: "6px 10px", borderRadius: 12, whiteSpace: "nowrap" }}>Current plan</div>
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span style={{ fontSize: 32, fontWeight: 700 }}>{price}</span>
+                <span style={{ fontSize: 15, color: "#5C3D1E" }}>/ {period}</span>
+              </div>
+              {featureList(tier.features, "#6B4E32", "#3A2A1A")}
+              {isNativeApp && !isCurrent && (
+                <button onClick={() => startCheckout(tier.id)} disabled={!!loadingTier} style={{
+                  minHeight: 50, border: isTop ? "none" : "1px solid #6B4E32", borderRadius: 25,
+                  background: isTop ? "#6B4E32" : "transparent", color: isTop ? "#FFFFFF" : "#3A2A1A",
+                  fontFamily: serif, fontSize: 16, fontWeight: 700, cursor: loadingTier ? "wait" : "pointer", opacity: loadingTier && loadingTier !== tier.id ? 0.5 : 1,
+                }}>
+                  {loadingTier === tier.id ? "Processing…" : `${isPaid ? "Switch to" : "Subscribe for"} ${price}/${period}`}
+                </button>
+              )}
+            </div>
+          );
+        })}
 
         {isNativeApp && (
-          <p style={{ textAlign: "center", marginTop: 10 }}>
-            <button
-              onClick={restorePurchases}
-              disabled={restoring}
-              style={{
-                background: "none", border: "none", cursor: restoring ? "wait" : "pointer",
-                fontFamily: '"Palatino Linotype", Palatino, serif',
-                fontSize: 12, color: "#6B4E32", textDecoration: "underline",
-                opacity: restoring ? 0.6 : 1,
-              }}
-            >
-              {restoring ? "Restoring…" : "Restore Purchases"}
-            </button>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "#5C3D1E", textAlign: "center" }}>
+            Subscriptions renew automatically until you cancel. Cancel anytime in your {Capacitor.getPlatform() === "ios" ? "Apple ID" : "Google Play"} subscription settings.
           </p>
         )}
 
-        {/* Secure payment badge */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12 }}>
-          <span style={{ fontSize: 16 }}>🔒</span>
-          <span style={{ fontSize: 12, color: "#8B6A50" }}>
-            {isNativeApp
-              ? "Payments are securely processed by the App Store or Google Play. We never store your card details."
-              : "Payments are secure and encrypted via Stripe. We never store your card details."}
-          </span>
+        {/* The Reluctant Reader */}
+        <div style={{ border: "1px solid #D8C3A5", borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{freeTier.name}</div>
+              {!isPaid && <div style={{ fontSize: 13, color: "#6B4E32" }}>{onFullAccess ? `Your plan after ${fullAccessEndText}` : "Your current plan"}</div>}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>Free</div>
+          </div>
+          {featureList(freeTier.features, "#8B7355", "#5C3D1E")}
+          {!isPaid && (
+            <button onClick={onClose} style={{ minHeight: 48, border: "1px solid #6B4E32", borderRadius: 24, background: "transparent", color: "#3A2A1A", fontFamily: serif, fontSize: 16, cursor: "pointer" }}>
+              {onFullAccess ? "Keep exploring" : "Continue with free"}
+            </button>
+          )}
         </div>
+
+        <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap" }}>
+          {isNativeApp && (
+            <button onClick={restorePurchases} disabled={restoring} style={{ ...linkButton, cursor: restoring ? "wait" : "pointer", opacity: restoring ? 0.6 : 1 }}>
+              {restoring ? "Restoring…" : "Restore purchases"}
+            </button>
+          )}
+          <button onClick={onOpenTerms} style={linkButton}>Terms of Service</button>
+          <button onClick={onOpenPrivacy} style={linkButton}>Privacy Policy</button>
+        </div>
+        <p style={{ margin: 0, textAlign: "center", fontSize: 12, color: "#8B6A50" }}>
+          Payments are processed by the App Store or Google Play. We never see or store your card details.
+          {isUK && !isNativeApp ? " Prices shown in GBP; UK VAT may apply." : ""}
+        </p>
       </div>
     </div>
   );
@@ -10162,6 +10149,81 @@ function PushToCacheButton({ th }) {
   );
 }
 
+// Free accounts hold FREE_BOOK_LIMIT visible books. When an import (or a trial ending)
+// would go over that, the reader picks which books stay in the library; the rest are
+// saved with saveLockedBooks() and come back the moment they upgrade. Nothing is deleted.
+function ChooseBooksModal({ books, room, heading, message, confirmLabel, onConfirm, onUpgrade, onCancel }) {
+  const isReading = (b) => (b._status || b.status) === "reading";
+  const defaultPick = () => {
+    const order = books.map((b, i) => i).sort((a, b) => (isReading(books[b]) ? 1 : 0) - (isReading(books[a]) ? 1 : 0));
+    return new Set(order.slice(0, room));
+  };
+  const [picked, setPicked] = useState(defaultPick);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const visible = books
+    .map((b, i) => ({ b, i }))
+    .filter(({ b }) => !q || (b.title || "").toLowerCase().includes(q) || (b.author || "").toLowerCase().includes(q));
+  const toggle = (i) => setPicked(prev => {
+    const next = new Set(prev);
+    if (next.has(i)) next.delete(i);
+    else if (next.size < room) next.add(i);
+    return next;
+  });
+  const lockedCount = books.length - picked.size;
+  const btn = (bg, color, border) => ({
+    padding: "11px 18px", borderRadius: 22, cursor: "pointer", fontSize: 14, fontWeight: 700,
+    fontFamily: '"Palatino Linotype", Palatino, serif', background: bg, color, border: border || "none",
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9600, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "#F8F1E4", borderRadius: 14, width: "100%", maxWidth: 520, maxHeight: "90vh", display: "flex", flexDirection: "column", fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A" }}>
+        <div style={{ padding: "22px 22px 12px" }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: 20 }}>{heading}</h2>
+          <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.5, color: "#5C3D1E" }}>{message}</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              id="choose-books-search"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search by title or author"
+              aria-label="Search books"
+              style={{ flex: "1 1 200px", padding: "9px 12px", borderRadius: 8, border: "1px solid #D8C3A5", fontSize: 14, fontFamily: "Georgia, serif", background: "#fff" }}
+            />
+            <button onClick={() => setPicked(defaultPick())} style={{ ...btn("transparent", "#6B4E32", "1px solid #D8C3A5"), padding: "8px 12px", fontSize: 12 }}>Currently reading first</button>
+            <button onClick={() => setPicked(new Set())} style={{ ...btn("transparent", "#6B4E32", "1px solid #D8C3A5"), padding: "8px 12px", fontSize: 12 }}>Clear</button>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700 }}>
+            {picked.size} of {room} chosen · {lockedCount} will be saved for later
+          </div>
+        </div>
+        <div style={{ overflowY: "auto", padding: "0 22px", flex: 1, borderTop: "1px solid #E5D5BC", borderBottom: "1px solid #E5D5BC" }}>
+          {visible.map(({ b, i }) => {
+            const on = picked.has(i);
+            const full = !on && picked.size >= room;
+            return (
+              <label key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #EFE3D0", cursor: full ? "not-allowed" : "pointer", opacity: full ? 0.5 : 1 }}>
+                <input type="checkbox" checked={on} disabled={full} onChange={() => toggle(i)} style={{ width: 18, height: 18 }} />
+                {b.coverUrl ? <img src={b.coverUrl} alt="" style={{ width: 30, height: 44, objectFit: "cover", borderRadius: 3 }} /> : <div style={{ width: 30, height: 44, background: "#E5D5BC", borderRadius: 3 }} />}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.title}</div>
+                  <div style={{ fontSize: 12, color: "#6B4E32" }}>{b.author}{isReading(b) ? " · Currently reading" : ""}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+        <div style={{ padding: "14px 22px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <button onClick={onUpgrade} style={btn("#6B4E32", "#fff")}>Keep all {books.length.toLocaleString()} with a paid plan</button>
+          <button onClick={() => onConfirm([...picked])} style={btn("transparent", "#3A2A1A", "1px solid #6B4E32")}>{confirmLabel}</button>
+          {onCancel && <button onClick={onCancel} style={{ ...btn("transparent", "#6B4E32"), fontWeight: 400, fontSize: 13 }}>Cancel</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin, isPWA, userTier, onOpenSubscription }) {
   const scrollRef = useRef(null);
   const isNativeApp = Capacitor.isNativePlatform();
@@ -10182,6 +10244,91 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     return () => window.removeEventListener("sk-cloud-synced", onSync);
   }, []);
   const [importingPlatform, setImportingPlatform] = useState(null);
+  const [pendingImport, setPendingImport] = useState(null); // { books, room, platform } while choosing
+  const [lockedCount, setLockedCount] = useState(0);
+  useEffect(() => {
+    const refresh = () => getLockedBooks().then(l => setLockedCount(l.length));
+    refresh();
+    window.addEventListener("sk-locked-books-changed", refresh);
+    return () => window.removeEventListener("sk-locked-books-changed", refresh);
+  }, []);
+
+  const handleImport = (newBooks) => {
+    const plt = importingPlatform;
+    const limit = isAdmin ? Infinity : getEffectiveBookLimit(userTier);
+    const room = Math.max(0, limit - getUserBooksSync().length);
+    if (newBooks.length > room) {
+      setImportingPlatform(null);
+      setPendingImport({ books: newBooks, room, platform: plt });
+      trackEvent("import_over_limit", { platform: plt.id, books: newBooks.length, room });
+      return;
+    }
+    completeImport(newBooks, [], plt);
+  };
+
+  const completeImport = async (rawNewBooks, rawLockedBooks, plt) => {
+    const tagOwnership = (b) => ({ ...b, ownership: b.ownership || inferOwnership(plt.id, b) });
+    const newBooks = rawNewBooks.map(tagOwnership);
+    const lockedBooks = rawLockedBooks.map(tagOwnership);
+    if (lockedBooks.length > 0) {
+      const alreadyLocked = await getLockedBooks();
+      const saved = await saveLockedBooks([...alreadyLocked, ...lockedBooks.map(b => ({ ...b, id: `${b.platform}-${Date.now()}-${Math.random()}` }))]);
+      if (!saved) { alert("Couldn't save the extra books for later, so nothing was imported. Please try again."); return; }
+      setLockedCount(alreadyLocked.length + lockedBooks.length);
+    }
+    const existing = getUserBooksSync();
+    const withIds = newBooks.map(b => ({ ...b, id: `${b.platform}-${Date.now()}-${Math.random()}` }));
+    saveUserBooks([...existing, ...withIds]);
+    recordImportedPlatform(plt.id);
+
+    // Write all imported books with ISBNs to community cache so every user benefits
+    withIds.forEach(b => {
+      if (b.isbn || b.description) {
+        writeToCache(b.isbn || null, b.title, b.author, b.description || null, b.coverUrl || null, b.genre || null);
+      }
+    });
+
+    // Save Goodreads reading status and dates. They're keyed the way BookModal reads them
+    // (ISBN, or title when there's none, which is common for Kindle editions) and filed
+    // under each book's own shelf, since one Goodreads import fills ebooks, audiobooks
+    // and physical shelves at once.
+    const statusesByType = {};
+    const datesByType = {};
+    const ratings = safeParseLS("sk_ratings", {});
+
+    [...newBooks, ...lockedBooks].forEach(b => {
+      const key = b.isbn || b.title;
+      if (!key) return;
+      const type = b.type || mediaType;
+      const statuses = statusesByType[type] ||= safeParseLS(`sk_statuses_${type}`, {});
+      const dates = datesByType[type] ||= safeParseLS(`sk_dates_${type}`, {});
+      if (b._status) statuses[key] = b._status;
+      if (b._dateRead) {
+        const d = new Date(b._dateRead);
+        if (!isNaN(d)) {
+          // Goodreads exports only a finish date. Leaving the start date empty keeps these
+          // books out of "average days to finish" instead of counting each as one day.
+          dates[key] = { ...dates[key], endDate: d.toISOString() };
+        }
+      }
+      if (b._rating) ratings[key] = ratings[key] || b._rating;
+    });
+
+    Object.entries(statusesByType).forEach(([type, v]) => localStorage.setItem(`sk_statuses_${type}`, JSON.stringify(v)));
+    Object.entries(datesByType).forEach(([type, v]) => localStorage.setItem(`sk_dates_${type}`, JSON.stringify(v)));
+    localStorage.setItem("sk_ratings", JSON.stringify(ratings));
+
+    connect(plt.id);
+    const updatedConnections = { ...JSON.parse(localStorage.getItem("sk_connections") || "{}"), [plt.id]: true };
+    localStorage.setItem("sk_connections", JSON.stringify(updatedConnections));
+    setImportingPlatform(null);
+    setPendingImport(null);
+    refreshBookCounts();
+    // Cloud sync runs on its own: StoryKeeperApp listens for sk-books-changed.
+    const statusCount = newBooks.filter(b => b._status).length;
+    alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${statusCount > 0 ? `\n📊 ${statusCount} books imported with reading status (finished/reading).` : ''}${lockedBooks.length > 0 ? `\n🔒 ${lockedBooks.length} more saved for later. Upgrade to The StoryKeeper to add them.` : ''}`);
+  };
+
   const [enriching, setEnriching] = useState(false);
   const [enrichResult, setEnrichResult] = useState(null);
   const [enrichProgress, setEnrichProgress] = useState(null);
@@ -12230,6 +12377,18 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           </div>
         </div>
 
+        {/* Books held back by the free limit */}
+        {lockedCount > 0 && !isPaidTier(userTier) && (
+          <div style={{ background: th.bgMuted, border: `1px solid ${th.accent}`, borderRadius: 12, padding: "16px 20px", marginBottom: 32, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 260px", fontFamily: "Georgia, serif", fontSize: 14, color: th.text, lineHeight: 1.6 }}>
+              🔒 <strong>{lockedCount.toLocaleString()} books are saved and waiting.</strong> Free accounts hold {FREE_BOOK_LIMIT} books. Upgrade to a paid plan to add them all to your library.
+            </div>
+            <button onClick={() => onOpenSubscription?.()} style={{ padding: "9px 18px", background: th.accent, color: th.bg, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+              See The StoryKeeper
+            </button>
+          </div>
+        )}
+
         {/* eBook Platforms */}
         <div style={{ marginBottom: 40 }}>
           {sectionTitle("📚 eBook Platforms")}
@@ -12261,48 +12420,29 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           platform={importingPlatform}
           mediaType={AUDIO_PLATFORMS.some(p => p.id === importingPlatform.id) ? "audiobooks" : "ebooks"}
           onClose={() => setImportingPlatform(null)}
-          onImport={(newBooks) => {
-            const existing = getUserBooksSync();
-            const withIds = newBooks.map(b => ({ ...b, id: `${b.platform}-${Date.now()}-${Math.random()}` }));
-            saveUserBooks([...existing, ...withIds]);
-
-            // Write all imported books with ISBNs to community cache so every user benefits
-            withIds.forEach(b => {
-              if (b.isbn || b.description) {
-                writeToCache(b.isbn || null, b.title, b.author, b.description || null, b.coverUrl || null, b.genre || null);
-              }
-            });
-
-            // Save Goodreads reading status and dates
-            const statusKey = `sk_statuses_${mediaType}`;
-            const datesKey  = `sk_dates_${mediaType}`;
-            const statuses  = JSON.parse(localStorage.getItem(statusKey) || "{}");
-            const dates     = JSON.parse(localStorage.getItem(datesKey)  || "{}");
-
-            newBooks.forEach(b => {
-              if (!b.isbn) return;
-              if (b._status) statuses[b.isbn] = b._status;
-              if (b._dateRead) {
-                const d = new Date(b._dateRead);
-                if (!isNaN(d)) {
-                  dates[b.isbn] = { ...dates[b.isbn], endDate: d.toISOString() };
-                  if (b._status === "finished") dates[b.isbn].startDate = dates[b.isbn].startDate || d.toISOString();
-                }
-              }
-            });
-
-            localStorage.setItem(statusKey, JSON.stringify(statuses));
-            localStorage.setItem(datesKey,  JSON.stringify(dates));
-
-            connect(importingPlatform.id);
-            const updatedConnections = { ...JSON.parse(localStorage.getItem("sk_connections") || "{}"), [importingPlatform.id]: true };
-            localStorage.setItem("sk_connections", JSON.stringify(updatedConnections));
-            setImportingPlatform(null);
-            refreshBookCounts();
-            syncToCloud(authUser);
-            const statusCount = newBooks.filter(b => b._status).length;
-            alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${statusCount > 0 ? `\n📊 ${statusCount} books imported with reading status (finished/reading).` : ''}`);
+          onImport={handleImport}
+        />
+      )}
+      {pendingImport && (
+        <ChooseBooksModal
+          books={pendingImport.books}
+          room={pendingImport.room}
+          heading={`Choose ${pendingImport.room} books to bring in`}
+          message={`This ${pendingImport.platform.name} import has ${pendingImport.books.length.toLocaleString()} books. Free accounts hold ${FREE_BOOK_LIMIT} books${pendingImport.room < FREE_BOOK_LIMIT ? `, and you have room for ${pendingImport.room} more` : ""}. The rest are saved, not deleted, and appear the moment you upgrade.`}
+          confirmLabel={`Import my ${pendingImport.room} and save the rest`}
+          onConfirm={(keepIdx) => {
+            const keep = new Set(keepIdx);
+            completeImport(
+              pendingImport.books.filter((_, i) => keep.has(i)),
+              pendingImport.books.filter((_, i) => !keep.has(i)),
+              pendingImport.platform,
+            );
           }}
+          onUpgrade={() => {
+            // Save everything behind the lock first, so upgrading brings the whole import in.
+            completeImport([], pendingImport.books, pendingImport.platform).then(() => onOpenSubscription?.());
+          }}
+          onCancel={() => setPendingImport(null)}
         />
       )}
       {showFetchDesc && <FetchDescriptionsModal onClose={() => setShowFetchDesc(false)} th={th} />}
@@ -12919,8 +13059,8 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
   const fileInputRef = useRef(null);
   const uploadingForGenreRef = useRef(null);
 
-  const canCustomize = ["librarian", "storykeeper"].includes(userTier);
-  const canReorder = ["storyteller", "librarian", "storykeeper"].includes(userTier);
+  const canCustomize = tierAtLeast(userTier, "librarian");
+  const canReorder = tierAtLeast(userTier, "storyteller");
 
   const saveCustomName = (oldGenre, newName) => {
     const trimmed = newName.trim();
@@ -13153,8 +13293,8 @@ function MobileHomeView({ onGenreClick, mediaType, onToggleMediaType, onOpenSett
 
         {/* eBooks / Audiobooks / Physical toggle */}
         <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 10 }}>
-          {["ebooks", "audiobooks", ...(userTier !== "reluctant" ? ["physical"] : [])].map(t => (
-            <button key={t} onClick={() => { if (mediaType !== t) { const steps = userTier !== "reluctant" ? ["ebooks","audiobooks","physical"] : ["ebooks","audiobooks"]; let cur = mediaType; while(cur !== t) { onToggleMediaType(); cur = cur === "ebooks" ? "audiobooks" : cur === "audiobooks" ? (userTier !== "reluctant" ? "physical" : "ebooks") : "ebooks"; } } }}
+          {["ebooks", "audiobooks", "physical"].map(t => (
+            <button key={t} onClick={() => { if (mediaType !== t) { let cur = mediaType; while(cur !== t) { onToggleMediaType(); cur = cur === "ebooks" ? "audiobooks" : cur === "audiobooks" ? "physical" : "ebooks"; } } }}
               style={{
                 padding: "4px 10px", borderRadius: 16, border: "1px solid rgba(201,169,110,0.4)", cursor: "pointer",
                 fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 10, fontWeight: 700,
@@ -14927,19 +15067,19 @@ function LimitWarningModal({ currentCount, limit, tierName, onUpgrade, onDismiss
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{ background: th.bg, borderRadius: 16, padding: 32, maxWidth: 420, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.25)", fontFamily: '"Palatino Linotype", Palatino, serif', textAlign: "center" }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
-        <h3 style={{ margin: "0 0 12px", fontSize: 20, color: th.text }}>You're Almost at Your Limit</h3>
+        <h3 style={{ margin: "0 0 12px", fontSize: 20, color: th.text }}>{currentCount >= limit ? "Your free library is full" : "You're almost at your limit"}</h3>
         <p style={{ margin: "0 0 8px", fontSize: 14, color: th.textMid, lineHeight: 1.7 }}>
-          You've used <strong>{currentCount.toLocaleString()}</strong> of your <strong>{limit.toLocaleString()}</strong> book limit ({pct}% full) on the <strong>{tierName}</strong> plan.
+          You have <strong>{currentCount.toLocaleString()}</strong> of <strong>{limit.toLocaleString()}</strong> books ({pct}% full) on <strong>{tierName}</strong>.
         </p>
         <p style={{ margin: "0 0 24px", fontSize: 14, color: th.textMid, lineHeight: 1.7 }}>
-          We want to make sure all of your books stay safe and in one place. To ensure your entire library is always imported, please consider upgrading your subscription.
+          The StoryKeeper gives you unlimited books in every format, so your whole library stays in one place. Your TBR shelf is always unlimited.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <button onClick={onUpgrade} style={{
             background: th.accent, border: "none", borderRadius: 10, padding: "12px 24px",
             color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer",
             fontFamily: '"Palatino Linotype", Palatino, serif',
-          }}>View Subscription Plans</button>
+          }}>See The StoryKeeper</button>
           <button onClick={onDismiss} style={{
             background: "none", border: `1px solid ${th.border}`, borderRadius: 10, padding: "10px 24px",
             color: th.textSoft, fontSize: 13, cursor: "pointer",
@@ -15389,7 +15529,7 @@ function PrivacyPolicyPage({ onClose }) {
         {[
           ["1. Who We Are", `StoryKeeper is a personal library and reading community app operated by StoryKeeper LLC, a Florida limited liability company. You can reach us at hello@thestorykeeper.co.`],
           ["2. Information We Collect", `When you create an account, we collect your email address and any optional profile information you provide (username, bio, profile photo, top books list, and social media handles). We also collect reading data you add to the app — books, ratings, progress, and notes. We use Supabase to store your account and library data securely.`],
-          ["3. How We Use Your Information", `We use your information to:\n• Operate and personalize your StoryKeeper experience\n• Sync your library across devices (Librarian tier and above)\n• Display your public profile to other users (username only — your email and real name are never shown)\n• Send you account-related emails (e.g., password reset)\n• Improve and maintain the app`],
+          ["3. How We Use Your Information", `We use your information to:\n• Operate and personalize your StoryKeeper experience\n• Sync your library across devices (The StoryKeeper plan)\n• Display your public profile to other users (username only — your email and real name are never shown)\n• Send you account-related emails (e.g., password reset)\n• Improve and maintain the app`],
           ["4. What Is Public vs. Private", `Your username and any social media handles you choose to link are visible to other StoryKeeper users. Your email address, real name, and payment information are never displayed publicly. You control everything in your profile settings.`],
           ["5. Third-Party Services", `We use the following third-party services:\n• Supabase (database and authentication)\n• Stripe (payment processing — we never store your card details)\n• Google Books API and Open Library API (book metadata)\n• TikTok API (optional, only if you connect your TikTok account)\n\nEach of these services has its own privacy policy.`],
           ["6. Data Retention", `Your data is kept as long as your account is active. You may delete your account at any time by contacting us at support@thestorykeeper.co. We will delete your personal data within 30 days of your request.`],
@@ -15466,20 +15606,329 @@ function TermsOfServicePage({ onClose }) {
   );
 }
 
-function BookOfTheMonthPage({ onClose }) {
+// Book of the Month discussion board. Each month's board is stored in group_discussions
+// under genre "botm-YYYY-MM", so it shares posting, replies, moderation and reporting with
+// genre discussions. The four pinned starter threads are created by a Supabase trigger
+// (supabase-botm-discussion-migration.sql) when the month's book is added.
+const BOTM_STAGES = [
+  { id: "none", label: "No spoilers" },
+  { id: "first_half", label: "First half" },
+  { id: "second_half", label: "Second half" },
+  { id: "finished", label: "Finished: full spoilers" },
+];
+const botmStageLabel = (id) => BOTM_STAGES.find(s => s.id === id)?.label || "General";
+
+function BotmSpoiler({ spoiler, children }) {
+  const [shown, setShown] = useState(false);
+  if (!spoiler || shown) return children;
+  return (
+    <button onClick={() => setShown(true)} style={{
+      width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px dashed #C4A882",
+      background: "rgba(139,94,60,0.08)", color: "#6B4C2A", cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13,
+    }}>
+      Contains spoilers. Tap to show.
+    </button>
+  );
+}
+
+function BotmDiscussionBoard({ botm, authUser, supabaseRef, onOpenBookClub, onAddToTBR }) {
+  const board = `botm-${botm.month}`;
+  const sb = supabaseRef?.current;
+  const isAdmin = authUser?.email === ADMIN_EMAIL;
+  const [threads, setThreads] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [readerCount, setReaderCount] = useState(null); // null = botm_readers not available
+  const [isReading, setIsReading] = useState(false);
+  const [username, setUsername] = useState("");
+  const [activeThread, setActiveThread] = useState(null);
+  const [replies, setReplies] = useState([]);
+  const [reply, setReply] = useState("");
+  const [replySpoiler, setReplySpoiler] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [newStage, setNewStage] = useState("none");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [rulesAgreed, setRulesAgreed] = useState(() => !!localStorage.getItem("sk_rules_agreed"));
+  const [reported, setReported] = useState(new Set());
+
+  const sortThreads = (rows) => {
+    const order = (t) => BOTM_STAGES.findIndex(s => s.id === t.stage);
+    const pinned = rows.filter(t => t.pinned).sort((a, b) => order(a) - order(b));
+    const rest = rows.filter(t => !t.pinned).sort((a, b) => new Date(b.last_reply_at || b.created_at) - new Date(a.last_reply_at || a.created_at));
+    return [...pinned, ...rest];
+  };
+
+  const load = React.useCallback(async () => {
+    if (!sb) { setLoading(false); return; }
+    setLoading(true);
+    const { data } = await sb.from("group_discussions").select("*").eq("genre", board);
+    setThreads(sortThreads(data || []));
+    const { count, error } = await sb.from("botm_readers").select("user_id", { count: "exact", head: true }).eq("month", botm.month);
+    setReaderCount(error ? null : (count || 0));
+    if (authUser && !error) {
+      const { data: mine } = await sb.from("botm_readers").select("user_id").eq("month", botm.month).eq("user_id", authUser.id);
+      setIsReading(Array.isArray(mine) && mine.length > 0);
+    }
+    setLoading(false);
+  }, [sb, board, botm.month, authUser]);
+
+  useEffect(() => { setActiveThread(null); load(); }, [load]);
+
+  useEffect(() => {
+    if (!authUser || !sb) return;
+    sb.from("usernames").select("username").eq("user_id", authUser.id).maybeSingle()
+      .then(({ data }) => { if (data?.username) setUsername(data.username); });
+  }, [authUser, sb]);
+
+  const openThread = async (thread) => {
+    setActiveThread(thread);
+    setReplies([]);
+    setMsg("");
+    const { data } = await sb.from("group_discussion_replies").select("*").eq("discussion_id", thread.id).order("created_at");
+    setReplies(data || []);
+  };
+
+  const readyToPost = () => {
+    if (!authUser) { setMsg("Sign in to join the discussion."); return false; }
+    if (!username) { setMsg("Set a username in your profile before posting."); return false; }
+    if (!rulesAgreed) { setMsg("Please agree to the community rules first."); return false; }
+    return true;
+  };
+
+  const passesModeration = async (text) => {
+    if (containsBannedWords(text)) { setMsg("Your post contains language that isn't allowed."); return false; }
+    if (await checkToxicity(text)) { setMsg("Your post was flagged as potentially harmful. Please revise."); return false; }
+    return true;
+  };
+
+  const toggleReading = async () => {
+    if (!authUser) { setMsg("Sign in to mark that you're reading this."); return; }
+    if (isReading) {
+      await sb.from("botm_readers").delete().eq("month", botm.month).eq("user_id", authUser.id);
+      setIsReading(false);
+      setReaderCount(c => Math.max(0, (c || 1) - 1));
+    } else {
+      const { error } = await sb.from("botm_readers").insert({ month: botm.month, user_id: authUser.id });
+      if (!error) { setIsReading(true); setReaderCount(c => (c || 0) + 1); }
+      onAddToTBR?.();
+    }
+  };
+
+  const createThread = async () => {
+    if (!readyToPost()) return;
+    const title = newTitle.trim(), content = newContent.trim();
+    if (!title || !content) { setMsg("Add a title and a message."); return; }
+    setBusy(true);
+    try {
+      if (!(await passesModeration(title + " " + content))) return;
+      const { data, error } = await sb.from("group_discussions").insert({
+        genre: board, user_id: authUser.id, username, title, content, reply_count: 0,
+        stage: newStage, spoiler: newStage !== "none", pinned: false,
+      }).select().single();
+      if (error) { setMsg("Couldn't start the discussion. Please try again."); return; }
+      setNewTitle(""); setNewContent(""); setNewStage("none"); setShowNew(false); setMsg("");
+      setThreads(prev => sortThreads([data, ...prev]));
+      openThread(data);
+    } finally { setBusy(false); }
+  };
+
+  const sendReply = async () => {
+    if (!readyToPost()) return;
+    const text = reply.trim();
+    if (!text) return;
+    setBusy(true);
+    try {
+      if (!(await passesModeration(text))) return;
+      const { error } = await sb.from("group_discussion_replies").insert({
+        discussion_id: activeThread.id, user_id: authUser.id, username, content: text, spoiler: replySpoiler,
+      });
+      if (error) { setMsg("Couldn't post your reply. Please try again."); return; }
+      setReply(""); setReplySpoiler(false); setMsg("");
+      openThread({ ...activeThread, reply_count: (activeThread.reply_count || 0) + 1 });
+    } finally { setBusy(false); }
+  };
+
+  const deleteThread = async (t) => {
+    if (!window.confirm("Delete this discussion and all its replies?")) return;
+    await sb.from("group_discussion_replies").delete().eq("discussion_id", t.id);
+    await sb.from("group_discussions").delete().eq("id", t.id);
+    setActiveThread(null);
+    load();
+  };
+
+  const deleteReply = async (r) => {
+    if (!window.confirm("Delete this reply?")) return;
+    await sb.from("group_discussion_replies").delete().eq("id", r.id);
+    openThread(activeThread);
+  };
+
+  const report = async (id, type, text, who) => {
+    if (!authUser || reported.has(id)) return;
+    await sb.from("reported_content").insert({
+      content_id: id, content_type: type, content_text: text, content_username: who,
+      reported_by: authUser.id, reporter_username: username, context: board, status: "pending",
+    });
+    setReported(prev => new Set([...prev, id]));
+  };
+
+  // The last week of the current month invites readers to the genre's book club meeting.
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const showClubInvite = botm.month === currentMonth && botm.genre && daysInMonth - now.getDate() < 7;
+
+  const card = { background: "rgba(255,255,255,0.65)", border: "1px solid #D8C3A5", borderRadius: 12, padding: 14 };
+  const btn = (bg, color) => ({ padding: "10px 16px", borderRadius: 8, border: "none", background: bg, color, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700 });
+  const input = { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: "1px solid #C4A882", background: "#fff", fontFamily: "Georgia, serif", fontSize: 14, color: "#3A2A1A" };
+  const small = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12, color: "#8B5E3C", fontFamily: "Georgia, serif" };
+  const canDelete = (row) => isAdmin || authUser?.id === row.user_id;
+
+  return (
+    <div style={{ marginTop: 32, display: "flex", flexDirection: "column", gap: 14, color: "#3A2A1A" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A" }}>Discussion</h2>
+        <button onClick={toggleReading} aria-pressed={isReading} style={btn(isReading ? "#6B8C5E" : "#3A2A1A", "#fff")}>
+          {isReading ? "✓ I'm reading this" : "I'm reading this"}
+        </button>
+      </div>
+      {readerCount !== null && (
+        <div style={{ fontSize: 13, color: "#6B4C2A", marginTop: -6 }}>
+          {readerCount === 0 ? "Be the first reader this month." : `${readerCount} ${readerCount === 1 ? "reader" : "readers"} this month`}
+        </div>
+      )}
+
+      {showClubInvite && (
+        <div style={{ ...card, borderColor: "#8B5E3C", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 220px", fontSize: 14, lineHeight: 1.5 }}>
+            Finishing up? Talk it through live at the <strong>{botm.genre}</strong> book club's video meeting.
+          </div>
+          <button onClick={() => onOpenBookClub?.(botm.genre)} style={btn("#8B5E3C", "#fff")}>See the book club</button>
+        </div>
+      )}
+
+      {msg && <div role="alert" style={{ fontSize: 13, color: "#8B2020", background: "#FBEAEA", borderRadius: 8, padding: "8px 12px" }}>{msg}</div>}
+
+      {authUser && !rulesAgreed && (
+        <div style={{ ...card, fontSize: 13, lineHeight: 1.6 }}>
+          <strong>Before you post:</strong> keep it kind, keep spoilers in the right thread, and follow the community rules.
+          <div style={{ marginTop: 8 }}>
+            <button onClick={() => { localStorage.setItem("sk_rules_agreed", "1"); setRulesAgreed(true); setMsg(""); }} style={btn("#8B5E3C", "#fff")}>I agree</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: 14, color: "#8B5E3C" }}>Loading discussion…</div>
+      ) : activeThread ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={() => { setActiveThread(null); setMsg(""); load(); }} style={{ ...small, alignSelf: "flex-start", fontSize: 14 }}>‹ All threads</button>
+          <div style={card}>
+            <div style={{ fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#8B5E3C", marginBottom: 4 }}>{botmStageLabel(activeThread.stage)}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>{activeThread.title}</div>
+            <BotmSpoiler spoiler={activeThread.spoiler && !activeThread.pinned}>
+              <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{activeThread.content}</div>
+            </BotmSpoiler>
+            <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12, color: "#6B4C2A" }}>
+              <span>{activeThread.username}</span>
+              {canDelete(activeThread) && <button onClick={() => deleteThread(activeThread)} style={small}>Delete</button>}
+              {authUser && authUser.id !== activeThread.user_id && (
+                <button onClick={() => report(activeThread.id, "botm_discussion", activeThread.content, activeThread.username)} style={small}>
+                  {reported.has(activeThread.id) ? "Reported" : "Report"}
+                </button>
+              )}
+            </div>
+          </div>
+          {replies.length === 0 && <div style={{ fontSize: 13, color: "#6B4C2A" }}>No replies yet.</div>}
+          {replies.map(r => (
+            <div key={r.id} style={{ ...card, padding: 12 }}>
+              <BotmSpoiler spoiler={r.spoiler}>
+                <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{r.content}</div>
+              </BotmSpoiler>
+              <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 12, color: "#6B4C2A" }}>
+                <span>{r.username}</span>
+                {canDelete(r) && <button onClick={() => deleteReply(r)} style={small}>Delete</button>}
+                {authUser && authUser.id !== r.user_id && (
+                  <button onClick={() => report(r.id, "botm_reply", r.content, r.username)} style={small}>{reported.has(r.id) ? "Reported" : "Report"}</button>
+                )}
+              </div>
+            </div>
+          ))}
+          {authUser && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <label htmlFor="botm-reply" style={{ fontSize: 13, fontWeight: 700 }}>Your reply</label>
+              <textarea id="botm-reply" value={reply} onChange={e => setReply(e.target.value)} rows={3} style={input} />
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                <input id="botm-reply-spoiler" type="checkbox" checked={replySpoiler} onChange={e => setReplySpoiler(e.target.checked)} /> Contains spoilers
+              </label>
+              <button onClick={sendReply} disabled={busy || !reply.trim()} style={{ ...btn("#8B5E3C", "#fff"), alignSelf: "flex-start", opacity: busy || !reply.trim() ? 0.6 : 1 }}>
+                {busy ? "Posting…" : "Post reply"}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {threads.length === 0 && (
+            <div style={{ fontSize: 14, color: "#6B4C2A" }}>The discussion for this month opens soon.</div>
+          )}
+          {threads.map(t => (
+            <button key={t.id} onClick={() => openThread(t)} style={{ ...card, textAlign: "left", cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', color: "#3A2A1A" }}>
+              <div style={{ fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#8B5E3C", marginBottom: 4 }}>
+                {t.pinned ? "📌 " : ""}{botmStageLabel(t.stage)}
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{t.title}</div>
+              <div style={{ fontSize: 12, color: "#6B4C2A", marginTop: 4 }}>
+                {t.username} · {t.reply_count || 0} {(t.reply_count || 0) === 1 ? "reply" : "replies"}
+              </div>
+            </button>
+          ))}
+          {authUser && !showNew && (
+            <button onClick={() => { if (readyToPost()) setShowNew(true); }} style={{ ...btn("#3A2A1A", "#fff"), alignSelf: "flex-start" }}>Start a thread</button>
+          )}
+          {!authUser && <div style={{ fontSize: 13, color: "#6B4C2A" }}>Sign in to join the discussion.</div>}
+          {showNew && (
+            <div style={{ ...card, display: "flex", flexDirection: "column", gap: 8 }}>
+              <label htmlFor="botm-new-stage" style={{ fontSize: 13, fontWeight: 700 }}>How far along does this cover?</label>
+              <select id="botm-new-stage" value={newStage} onChange={e => setNewStage(e.target.value)} style={input}>
+                {BOTM_STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+              <label htmlFor="botm-new-title" style={{ fontSize: 13, fontWeight: 700 }}>Title</label>
+              <input id="botm-new-title" value={newTitle} onChange={e => setNewTitle(e.target.value)} style={input} />
+              <label htmlFor="botm-new-content" style={{ fontSize: 13, fontWeight: 700 }}>Message</label>
+              <textarea id="botm-new-content" value={newContent} onChange={e => setNewContent(e.target.value)} rows={4} style={input} />
+              {newStage !== "none" && <div style={{ fontSize: 12, color: "#6B4C2A" }}>This thread will be hidden behind a spoiler warning.</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={createThread} disabled={busy} style={{ ...btn("#8B5E3C", "#fff"), opacity: busy ? 0.6 : 1 }}>{busy ? "Posting…" : "Post thread"}</button>
+                <button onClick={() => { setShowNew(false); setMsg(""); }} style={btn("transparent", "#6B4C2A")}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BookOfTheMonthPage({ onClose, authUser, supabaseRef, onOpenBookClub }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
-  const [botm, setBotm] = useState(null);
+  // Every month so far, newest first; past months stay readable as an archive.
+  const [months, setMonths] = useState([]);
+  const [monthIdx, setMonthIdx] = useState(0);
+  const botm = months[monthIdx] || null;
   const [loading, setLoading] = useState(true);
   const [added, setAdded] = useState(false);
+  useEffect(() => { setAdded(false); }, [monthIdx]);
 
   useEffect(() => {
     const url = localStorage.getItem("sk_supabase_url") || SUPABASE_URL;
     const key = localStorage.getItem("sk_supabase_key") || SUPABASE_ANON_KEY;
-    fetch(`${url}/rest/v1/book_of_the_month?select=month,title,author,isbn,cover,genre,note,goodreadsUrl:goodreads_url&order=month.desc&limit=1`, {
+    fetch(`${url}/rest/v1/book_of_the_month?select=month,title,author,isbn,cover,genre,note,goodreadsUrl:goodreads_url&order=month.desc&limit=24`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
     })
       .then(r => r.json())
-      .then(rows => { setBotm(Array.isArray(rows) && rows.length > 0 ? rows[0] : null); setLoading(false); })
+      .then(rows => { setMonths(Array.isArray(rows) ? rows : []); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -15545,6 +15994,16 @@ function BookOfTheMonthPage({ onClose }) {
           </div>
           <h1 style={{ fontSize: 26, color: "#3A2A1A", margin: "0 0 4px", fontStyle: "italic" }}>{monthLabel}</h1>
           <div style={{ width: 60, height: 2, background: "#8B5E3C", margin: "12px auto 0" }} />
+          {months.length > 1 && (
+            <div style={{ marginTop: 14 }}>
+              <label htmlFor="botm-month" style={{ fontSize: 12, color: "#6B4C2A", marginRight: 8 }}>Past months</label>
+              <select id="botm-month" value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #C4A882", background: "#fff", fontFamily: "Georgia, serif", fontSize: 13 }}>
+                {months.map((m, i) => (
+                  <option key={m.month} value={i}>{new Date(m.month + "-02").toLocaleDateString("en-US", { month: "long", year: "numeric" })}: {m.title}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -15601,6 +16060,8 @@ function BookOfTheMonthPage({ onClose }) {
             }}>
               {added ? "✓ Added to Your TBR Shelf!" : "📚 Add to My TBR Shelf"}
             </button>
+
+            <BotmDiscussionBoard key={botm.month} botm={botm} authUser={authUser} supabaseRef={supabaseRef} onOpenBookClub={onOpenBookClub} onAddToTBR={addToTBR} />
           </>
         )}
       </div>
@@ -15694,19 +16155,11 @@ function MyClubsPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookCl
 function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose, onOpenGroup, onOpenBookClub, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
-  const canRead = ["storyteller", "librarian", "storykeeper"].includes(userTier);
-  const canPost = ["librarian", "storykeeper"].includes(userTier);
-  const hasBookClub = ["librarian", "storykeeper"].includes(userTier);
-  const canViewCommunity = canRead;
+  // Genre discussions and Book of the Month are free for everyone signed in (build 36);
+  // joining a book club is the paid part of community.
+  const canPost = !!authUser;
+  const hasBookClub = tierAtLeast(userTier, "storykeeper");
   const [showBotm, setShowBotm] = React.useState(false);
-
-  React.useEffect(() => {
-    if (authUser && !canViewCommunity) {
-      trackEvent("paywall_gate_shown", { source: "community" }, authUser?.id);
-    }
-    // Runs once per mount (each time this gate is opened), not on every re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const [memberCounts, setMemberCounts]   = React.useState({});
   const [socialLinks, setSocialLinks]     = React.useState({ instagram: "", tiktok: "", facebook: "", x_twitter: "" });
@@ -15820,19 +16273,13 @@ function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose,
           <div style={{ ...cardStyle, textAlign: "center", padding: 24, marginBottom: 20 }}>
             <div style={{ fontSize: 13, color: th.textSoft }}>Sign in to access community features.</div>
           </div>
-        ) : !canViewCommunity ? (
-          <div style={{ ...cardStyle, textAlign: "center", padding: 24, marginBottom: 20, background: th.accent + "12", borderColor: th.accent + "40" }}>
-            <div style={{ fontSize: 14, color: th.text, marginBottom: 8, fontWeight: 600 }}>Upgrade to access Community</div>
-            <div style={{ fontSize: 13, color: th.textSoft, marginBottom: 12 }}>The Storyteller plan and above unlocks community discussions. Librarian and StoryKeeper unlock full posting and book clubs.</div>
-            <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>View Plans</button>
-          </div>
         ) : (
           <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
             <div style={{ background: canPost ? "#6B8C5E22" : th.bgMuted, border: `1px solid ${canPost ? "#6B8C5E" : th.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: canPost ? "#3A5C2E" : th.textSoft }}>
               {canPost ? "✓ Full posting access" : "👁 Read-only discussions"}
             </div>
             <div style={{ background: hasBookClub ? "#8C5E6B22" : th.bgMuted, border: `1px solid ${hasBookClub ? "#8C5E6B" : th.border}`, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: hasBookClub ? "#5C2E3A" : th.textSoft }}>
-              {hasBookClub ? "✓ Book Clubs included" : "🔒 Book Clubs — Librarian+"}
+              {hasBookClub ? "✓ Book Clubs included" : "🔒 Book Clubs — The StoryKeeper"}
             </div>
           </div>
         )}
@@ -15852,7 +16299,7 @@ function CommunityPage({ authUser, userTier: userTierProp, supabaseRef, onClose,
           </div>
         </div>
 
-        {showBotm && <BookOfTheMonthPage onClose={() => setShowBotm(false)} />}
+        {showBotm && <BookOfTheMonthPage onClose={() => setShowBotm(false)} authUser={authUser} supabaseRef={supabaseRef} onOpenBookClub={(genre) => { setShowBotm(false); onOpenBookClub?.(genre); }} />}
 
         {/* Genre list */}
         <h3 style={{ margin: "0 0 12px", color: th.text, fontSize: 16 }}>Genre Groups & Book Clubs</h3>
@@ -15897,16 +16344,11 @@ const POST_TYPES = [
 function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
-  const canRead  = ["storyteller", "librarian", "storykeeper"].includes(userTier);
-  const canPost  = ["librarian", "storykeeper"].includes(userTier);
-
-  React.useEffect(() => {
-    if (authUser && !canRead && !canPost) {
-      trackEvent("paywall_gate_shown", { source: "genre_group", genre }, authUser?.id);
-    }
-    // Runs once per mount (each time this gate is opened), not on every re-render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Genre groups are free to read and post in for anyone signed in (build 36).
+  const canRead  = !!authUser;
+  const canPost  = !!authUser;
+  // Delete buttons show on your own posts; the admin account can remove anything.
+  const isCommunityAdmin = authUser?.email === ADMIN_EMAIL;
 
   const [username, setUsername]         = React.useState("");
   const [isMember, setIsMember]         = React.useState(false);
@@ -16218,11 +16660,10 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
         {!authUser || (!canRead && !canPost) ? (
           <div style={{ ...cardStyle, textAlign: "center", padding: 32 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>👥</div>
-            <h3 style={{ margin: "0 0 8px", color: th.text, fontSize: 18 }}>Groups are a Paid Feature</h3>
+            <h3 style={{ margin: "0 0 8px", color: th.text, fontSize: 18 }}>Sign in to join genre groups</h3>
             <p style={{ color: th.textSoft, fontSize: 14, lineHeight: 1.6, margin: "0 0 20px" }}>
-              Join genre groups, share what you're reading, ask for recommendations, and connect with other readers. Available on all paid plans.
+              Join genre groups, share what you're reading, ask for recommendations, and connect with other readers. Free for everyone with a StoryKeeper account.
             </p>
-            {authUser && <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>Upgrade to Join</button>}
           </div>
         ) : loading ? (
           <div style={{ textAlign: "center", color: th.textSoft, padding: 40 }}>Loading...</div>
@@ -16405,7 +16846,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
                     <span style={{ background: typeColors[post.post_type] || th.accent, color: "#fff", borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 600 }}>{pt.label}</span>
                     <span style={{ flex: 1 }} />
                     <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
-                    {(canPost || authUser?.id === post.user_id) && (
+                    {(isCommunityAdmin || authUser?.id === post.user_id) && (
                       <button onClick={() => handleDeleteGroupPost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: "0 0 0 8px" }} title="Delete post">🗑</button>
                     )}
                   </div>
@@ -16493,7 +16934,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
                   <div style={cardStyle}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
                       <div style={{ fontWeight: 700, color: th.text, fontSize: 17, flex: 1 }}>{activeThread.title}</div>
-                      {(canPost || authUser?.id === activeThread.user_id) && (
+                      {(isCommunityAdmin || authUser?.id === activeThread.user_id) && (
                         <button onClick={() => handleDeleteGroupDiscussion(activeThread.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 15, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
                       )}
                     </div>
@@ -16516,7 +16957,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
                         <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{r.username}</span>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ fontSize: 11, color: th.textSoft }}>{new Date(r.created_at).toLocaleDateString()}</span>
-                          {(canPost || authUser?.id === r.user_id) && (
+                          {(isCommunityAdmin || authUser?.id === r.user_id) && (
                             <button onClick={() => handleDeleteGroupReply(r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Delete reply">🗑</button>
                           )}
                         </div>
@@ -16579,7 +17020,7 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
                       <div style={{ ...cardStyle, cursor: "pointer" }} onClick={() => loadThread(disc)}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
                           <div style={{ fontWeight: 700, color: th.text, fontSize: 15, flex: 1 }}>{disc.title}</div>
-                          {(canPost || authUser?.id === disc.user_id) && (
+                          {(isCommunityAdmin || authUser?.id === disc.user_id) && (
                             <button onClick={e => { e.stopPropagation(); handleDeleteGroupDiscussion(disc.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 14, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
                           )}
                         </div>
@@ -16637,8 +17078,9 @@ function GenreGroupPage({ genre, authUser, userTier: userTierProp, supabaseRef, 
 function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, onClose, onOpenSubscription }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const userTier = userTierProp || localStorage.getItem("sk_user_tier") || "reluctant";
-  const hasAccess = authUser && ["librarian", "storykeeper"].includes(userTier);
+  const hasAccess = authUser && tierAtLeast(userTier, "storykeeper");
   const canPost = hasAccess;
+  const isCommunityAdmin = authUser?.email === ADMIN_EMAIL;
 
   React.useEffect(() => {
     if (authUser && !hasAccess) {
@@ -17119,7 +17561,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
             <p style={{ color: th.textSoft, fontSize: 14, lineHeight: 1.6, margin: "0 0 20px" }}>
               {!authUser
                 ? "You need to be signed in to participate in monthly book picks, voting, and live video discussions."
-                : "Monthly book picks, voting, and live video discussions are available on The Librarian and The StoryKeeper plans."}
+                : "Monthly book picks, voting, and live video discussions are part of The StoryKeeper plan."}
             </p>
             {authUser && <button onClick={onOpenSubscription} style={btnStyle(th.accent)}>Upgrade to Join</button>}
           </div>
@@ -17529,7 +17971,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
                     <span style={{ fontWeight: 700, color: th.accent, fontSize: 14 }}>@{post.username}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 12, color: th.textSoft }}>{new Date(post.created_at).toLocaleDateString()}</span>
-                      {(canPost || authUser?.id === post.user_id) && (
+                      {(isCommunityAdmin || authUser?.id === post.user_id) && (
                         <button onClick={() => handleDeleteBCPost(post.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Delete post">🗑</button>
                       )}
                     </div>
@@ -17598,7 +18040,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
                   <div style={cardStyle}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
                       <div style={{ fontWeight: 700, color: th.text, fontSize: 17, flex: 1 }}>{activeThreadBC.title}</div>
-                      {(canPost || authUser?.id === activeThreadBC.user_id) && (
+                      {(isCommunityAdmin || authUser?.id === activeThreadBC.user_id) && (
                         <button onClick={() => handleDeleteBCDiscussion(activeThreadBC.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 15, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
                       )}
                     </div>
@@ -17621,7 +18063,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
                         <span style={{ fontWeight: 700, color: th.accent, fontSize: 13 }}>@{r.username}</span>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ fontSize: 11, color: th.textSoft }}>{new Date(r.created_at).toLocaleDateString()}</span>
-                          {(canPost || authUser?.id === r.user_id) && (
+                          {(isCommunityAdmin || authUser?.id === r.user_id) && (
                             <button onClick={() => handleDeleteBCReply(r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 13, padding: 0 }} title="Delete reply">🗑</button>
                           )}
                         </div>
@@ -17684,7 +18126,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
                       <div style={{ ...cardStyle, cursor: "pointer" }} onClick={() => loadThreadBC(disc)}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
                           <div style={{ fontWeight: 700, color: th.text, fontSize: 15, flex: 1 }}>{disc.title}</div>
-                          {(canPost || authUser?.id === disc.user_id) && (
+                          {(isCommunityAdmin || authUser?.id === disc.user_id) && (
                             <button onClick={e => { e.stopPropagation(); handleDeleteBCDiscussion(disc.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#c0392b", fontSize: 14, padding: 0, flexShrink: 0 }} title="Delete discussion">🗑</button>
                           )}
                         </div>
@@ -17774,7 +18216,7 @@ function BookClubPage({ genre, authUser, userTier: userTierProp, supabaseRef, on
   );
 }
 
-function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSubscription, currentTier = "reluctant", initialSocialLinks, onSocialLinksChange }) {
+function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSubscription, currentTier = "reluctant", fullAccessEndsAt = null, initialSocialLinks, onSocialLinksChange }) {
   const th = SK_THEMES[localStorage.getItem("sk_theme") || "firelight"] || SK_THEMES.firelight;
   const [avatar, setAvatar] = React.useState(() => localStorage.getItem("sk_avatar") || null);
   const [avatarPos, setAvatarPos] = React.useState(() => {
@@ -18349,8 +18791,9 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
         {/* Subscription */}
         {(() => {
           const tierInfo = TIERS.find(t => t.id === currentTier) || TIERS[0];
-          const isPaid = currentTier !== "reluctant";
-          const isLifetime = authUser?.email === ADMIN_EMAIL || authUser?.email === "ebratt13@yahoo.com";
+          // The free full-access period isn't a subscription, so it still offers Upgrade.
+          const isPaid = currentTier !== "reluctant" && !fullAccessEndsAt;
+          const isLifetime = isLifetimeEmail(authUser?.email);
           return (
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Subscription</div>
@@ -18360,7 +18803,7 @@ function UserProfileModal({ authUser, supabaseRef, onClose, onSignOut, onOpenSub
               }}>
                 <div>
                   <div style={{ fontSize: 14, color: th.text, fontWeight: 700 }}>{tierInfo.name}</div>
-                  <div style={{ fontSize: 12, color: th.textSoft }}>{isLifetime ? "Lifetime access" : isPaid ? "Paid plan" : "Free plan"}</div>
+                  <div style={{ fontSize: 12, color: th.textSoft }}>{isLifetime ? "Lifetime access" : fullAccessEndsAt ? `Free full access until ${fullAccessEndsAt.toLocaleDateString("en-US", { month: "long", day: "numeric" })}` : isPaid ? "Paid plan" : "Free plan"}</div>
                 </div>
                 <span style={{ fontSize: 18 }}>{tierInfo.icon}</span>
               </div>
@@ -19314,7 +19757,7 @@ function StoryKeeperApp() {
 
   const isSyncTier = (user) => {
     const tier = user ? (localStorage.getItem("sk_user_tier") || "reluctant") : "reluctant";
-    return ["librarian", "storykeeper"].includes(tier);
+    return isPaidTier(tier);
   };
 
   const gatherLocalData = () => {
@@ -19625,36 +20068,34 @@ function StoryKeeperApp() {
       const user = session?.user ?? null;
       setAuthUser(user);
       if (user) {
-        // Lifetime free StoryKeeper access for whitelisted emails
-        const LIFETIME_EMAILS = [
-          "msbratt23@gmail.com",
-          "ebratt13@yahoo.com",
-          "mbrady991@gmail.com",
-          "ceb5891@snet.net",
-          "mamadub83@yahoo.com",
-          "msbratt23@yahoo.com",
-          // Founding beta testers — lifetime top-tier access (added 2026-07-12)
-          "amandagray03@yahoo.com", // her Play Store/tester account email
-          "amandagray03@gmail.com", // the email she actually signed into StoryKeeper with
-          "beautifulangel1209@gmail.com",
-          "brandyreneebrady@gmail.com",
-          "forseee1991@gmail.com",
-          "heather.roo1980@gmail.com",
-          "kebrownrn@gmail.com",
-          "mrsfortin17@gmail.com",
-          "steph.spone@gmail.com",
-          "weezie918@gmail.com",
-        ];
-        if (LIFETIME_EMAILS.includes(user.email)) {
+        if (isLifetimeEmail(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
           setUserTier("storykeeper");
+          setTierConfirmed(true);
         } else {
           // Load subscription tier from Supabase
           sb.from("user_subscriptions").select("tier, status").eq("user_id", user.id).maybeSingle()
-            .then(({ data }) => {
-              const tier = (data?.status === "active" && data?.tier) ? data.tier : "reluctant";
+            .then(({ data, error }) => {
+              // A failed lookup isn't a downgrade: keep the cached tier rather than locking
+              // a paying reader's books because of a network hiccup.
+              if (error) return;
+              let tier = normalizeTier((data?.status === "active" && data?.tier) ? data.tier : "reluctant");
+              // Free accounts get FULL_ACCESS_DAYS of The StoryKeeper. The start is saved on
+              // the account (not the device) so it follows the reader everywhere.
+              let fullAccessEnds = null;
+              if (tier === "reluctant") {
+                let start = Date.parse(user.user_metadata?.full_access_start || "");
+                if (!start) {
+                  start = Date.now();
+                  sb.auth.updateUser({ data: { full_access_start: new Date(start).toISOString() } }).catch(() => {});
+                }
+                const ends = start + FULL_ACCESS_DAYS * 24 * 60 * 60 * 1000;
+                if (Date.now() < ends) { tier = "storykeeper"; fullAccessEnds = new Date(ends); }
+              }
+              setFullAccessEndsAt(fullAccessEnds);
               localStorage.setItem("sk_user_tier", tier);
               setUserTier(tier);
+              setTierConfirmed(true);
             });
         }
       } else {
@@ -19725,9 +20166,12 @@ function StoryKeeperApp() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // RevenueCat native purchase SDK — configured once we know who's signed in (or signed
-  // out), since RevenueCat needs the Supabase user id as appUserID so the webhook can
-  // correlate a purchase back to the same user_subscriptions row Stripe already writes to.
+  // RevenueCat native purchase SDK — configured once we know who's signed in, since
+  // RevenueCat needs the Supabase user id as appUserID so the webhook can correlate a
+  // purchase back to the same user_subscriptions row Stripe already writes to.
+  // Deliberately no Purchases.logOut() on sign-out: it mints a new $RCAnonymousID customer
+  // every time, inflating the RevenueCat customer count. The next sign-in's logIn()
+  // switches identity anyway.
   const revenueCatConfiguredRef = useRef(false);
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -19741,8 +20185,6 @@ function StoryKeeperApp() {
         } else {
           await Purchases.logIn({ appUserID: authUser.id });
         }
-      } else if (revenueCatConfiguredRef.current) {
-        await Purchases.logOut();
       }
     })();
   }, [authUser]);
@@ -19960,6 +20402,7 @@ function StoryKeeperApp() {
     window.location.hash = "#subscription";
   }, []);
 
+
   // Stripe's checkout successUrl redirects back with ?subscribed=true — there's no
   // client-side confirmation of *which* tier otherwise (that's inferred later from
   // the account's synced tier), but this at least closes the web-purchase funnel loop.
@@ -19977,7 +20420,45 @@ function StoryKeeperApp() {
   const [showTerms, setShowTerms] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [toast, setToast] = useState("");
-  const [userTier, setUserTier] = useState(() => localStorage.getItem("sk_user_tier") || "reluctant");
+  const [userTier, setUserTier] = useState(() => normalizeTier(localStorage.getItem("sk_user_tier")));
+  // True once the tier comes from Supabase (or the lifetime list) this session, rather than
+  // the cached sk_user_tier. Locking or unlocking books waits for this.
+  const [tierConfirmed, setTierConfirmed] = useState(false);
+  const [trialEndBooks, setTrialEndBooks] = useState(null);
+  const [fullAccessEndsAt, setFullAccessEndsAt] = useState(null); // Date while a free account's full-access period runs
+  const [fullAccessBannerHidden, setFullAccessBannerHidden] = useState(false);
+  const [graceEndsAt, setGraceEndsAt] = useState(null); // Date while an existing free reader's grace period runs
+  const [graceBannerHidden, setGraceBannerHidden] = useState(false);
+
+  // Upgrading (or starting a trial) brings back every book the free limit held back.
+  useEffect(() => {
+    if (!tierConfirmed || !isPaidTier(userTier)) return;
+    localStorage.setItem("sk_was_paid", "1");
+    unlockLockedBooks().catch(e => console.warn("Couldn't unlock saved books:", e));
+  }, [tierConfirmed, userTier]);
+
+  // Any free account with more than FREE_BOOK_LIMIT books chooses which ones stay on the
+  // shelves: readers whose trial or subscription ended, and readers who had more than 50
+  // before build 36 lowered the free limit. It waits for a confirmed tier (so a slow or
+  // failed lookup never locks a paying reader's books) and comes back after the plans page
+  // closes until they choose or upgrade.
+  //
+  // Existing free readers (not ones whose trial just ended, who had the trial as notice)
+  // first get FREE_LIMIT_GRACE_DAYS with a banner, counted from the first time they open
+  // this version, then the choose screen.
+  useEffect(() => {
+    if (!tierConfirmed || isPaidTier(userTier) || showSubscription) return;
+    const books = getUserBooksSync();
+    if (books.length <= FREE_BOOK_LIMIT) { localStorage.removeItem("sk_was_paid"); setGraceEndsAt(null); return; }
+    if (localStorage.getItem("sk_was_paid") !== "1") {
+      let start = parseInt(localStorage.getItem("sk_free_limit_grace_start") || "", 10);
+      if (!start) { start = Date.now(); localStorage.setItem("sk_free_limit_grace_start", String(start)); }
+      const ends = start + FREE_LIMIT_GRACE_DAYS * 24 * 60 * 60 * 1000;
+      if (Date.now() < ends) { setGraceEndsAt(new Date(ends)); return; }
+    }
+    setGraceEndsAt(null);
+    setTrialEndBooks(books);
+  }, [tierConfirmed, userTier, showSubscription]);
   const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem("sk_onboarded"));
   const [showUsernameNudge, setShowUsernameNudge] = useState(false);
   const [showNewUserOnboarding, setShowNewUserOnboarding] = useState(false);
@@ -20231,7 +20712,65 @@ function StoryKeeperApp() {
       {showAddToLibrary && <AddToLibraryModal onClose={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); }} th={th} initialSelected={addToLibraryPrefill} userTier={userTier} onOpenSubscription={() => { setShowAddToLibrary(false); setAddToLibraryPrefill(null); openSubscription("add_to_library"); }} />}
 
       {/* SUBSCRIPTION PAGE */}
-      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} currentTier={userTier} authUser={authUser} source={subscriptionSourceRef.current} onPurchaseComplete={(tier) => { setUserTier(tier); localStorage.setItem("sk_user_tier", tier); }} />}
+      {showSubscription && <SubscriptionPage onClose={() => { setShowSubscription(false); window.location.hash = ""; setShowSidebar(true); }} onOpenTerms={() => setShowTerms(true)} onOpenPrivacy={() => setShowPrivacy(true)} currentTier={userTier} fullAccessEndsAt={fullAccessEndsAt} authUser={authUser} source={subscriptionSourceRef.current} onPurchaseComplete={(tier) => { const t = normalizeTier(tier); setFullAccessEndsAt(null); setUserTier(t); setTierConfirmed(true); localStorage.setItem("sk_user_tier", t); }} />}
+      {fullAccessEndsAt && !showSubscription && !fullAccessBannerHidden && (() => {
+        const daysLeft = Math.max(1, Math.ceil((fullAccessEndsAt - Date.now()) / (24 * 60 * 60 * 1000)));
+        // Shown in the last week only, so the first weeks are just for enjoying the app.
+        if (daysLeft > 7) return null;
+        return (
+          <div role="status" style={{
+            position: "fixed", left: 12, right: 12, bottom: "calc(12px + env(safe-area-inset-bottom, 0px))", zIndex: 2500,
+            maxWidth: 560, margin: "0 auto", background: "#3A2A1A", color: "#F8F1E4", borderRadius: 14,
+            padding: "14px 16px", boxShadow: "0 6px 24px rgba(0,0,0,0.35)", fontFamily: '"Palatino Linotype", Palatino, serif',
+            display: "flex", flexDirection: "column", gap: 10,
+          }}>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+              <strong>{daysLeft === 1 ? "Last day" : `${daysLeft} days left`} of full access.</strong> After {fullAccessEndsAt.toLocaleDateString("en-US", { month: "long", day: "numeric" })}, free accounts hold {FREE_BOOK_LIMIT} books and you'll choose which to keep. The rest stay saved, never deleted.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={() => openSubscription("full_access_ending")} style={{ padding: "9px 14px", borderRadius: 18, border: "none", background: "#C9A96E", color: "#3A2A1A", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>See plans</button>
+              <button onClick={() => setFullAccessBannerHidden(true)} aria-label="Hide for now" style={{ marginLeft: "auto", padding: "9px 10px", border: "none", background: "transparent", color: "#D8C3A5", fontFamily: "inherit", fontSize: 13, cursor: "pointer" }}>Later</button>
+            </div>
+          </div>
+        );
+      })()}
+      {graceEndsAt && !trialEndBooks && !showSubscription && !graceBannerHidden && (
+        <div role="status" style={{
+          position: "fixed", left: 12, right: 12, bottom: "calc(12px + env(safe-area-inset-bottom, 0px))", zIndex: 2500,
+          maxWidth: 560, margin: "0 auto", background: "#3A2A1A", color: "#F8F1E4", borderRadius: 14,
+          padding: "14px 16px", boxShadow: "0 6px 24px rgba(0,0,0,0.35)", fontFamily: '"Palatino Linotype", Palatino, serif',
+          display: "flex", flexDirection: "column", gap: 10,
+        }}>
+          <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+            <strong>Free accounts now hold {FREE_BOOK_LIMIT} books.</strong> You have {getUserBooksSync().length.toLocaleString()}. On {graceEndsAt.toLocaleDateString("en-US", { month: "long", day: "numeric" })} you'll choose {FREE_BOOK_LIMIT} to keep on your shelves; the rest stay saved, never deleted.
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => openSubscription("free_limit_grace")} style={{ padding: "9px 14px", borderRadius: 18, border: "none", background: "#C9A96E", color: "#3A2A1A", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Keep everything with a paid plan</button>
+            <button onClick={() => { setGraceEndsAt(null); setTrialEndBooks(getUserBooksSync()); }} style={{ padding: "9px 14px", borderRadius: 18, border: "1px solid #C9A96E", background: "transparent", color: "#F8F1E4", fontFamily: "inherit", fontSize: 13, cursor: "pointer" }}>Choose my {FREE_BOOK_LIMIT} now</button>
+            <button onClick={() => setGraceBannerHidden(true)} aria-label="Hide for now" style={{ marginLeft: "auto", padding: "9px 10px", border: "none", background: "transparent", color: "#D8C3A5", fontFamily: "inherit", fontSize: 13, cursor: "pointer" }}>Later</button>
+          </div>
+        </div>
+      )}
+      {trialEndBooks && !showSubscription && (
+        <ChooseBooksModal
+          books={trialEndBooks}
+          room={FREE_BOOK_LIMIT}
+          heading={localStorage.getItem("sk_was_paid") === "1" ? "Your trial has ended" : `Free accounts now hold ${FREE_BOOK_LIMIT} books`}
+          message={`${localStorage.getItem("sk_was_paid") === "1" ? `Free accounts hold ${FREE_BOOK_LIMIT} books.` : "StoryKeeper's free plan has changed."} Choose the ${FREE_BOOK_LIMIT} to keep on your shelves. The other ${(trialEndBooks.length - FREE_BOOK_LIMIT).toLocaleString()} are saved, not deleted, and come back the moment you upgrade.`}
+          confirmLabel={`Keep these ${FREE_BOOK_LIMIT}`}
+          onConfirm={async (keepIdx) => {
+            const keep = new Set(keepIdx);
+            const already = await getLockedBooks();
+            const saved = await saveLockedBooks([...already, ...trialEndBooks.filter((_, i) => !keep.has(i))]);
+            if (!saved) { alert("Couldn't save your books for later, so nothing was changed. Please try again."); return; }
+            saveUserBooks(trialEndBooks.filter((_, i) => keep.has(i)));
+            trackEvent("free_limit_books_chosen", { kept: keep.size, locked: trialEndBooks.length - keep.size, reason: localStorage.getItem("sk_was_paid") === "1" ? "paid_ended" : "existing_free" }, authUser?.id);
+            localStorage.removeItem("sk_was_paid");
+            setTrialEndBooks(null);
+          }}
+          onUpgrade={() => { setTrialEndBooks(null); openSubscription("trial_ended"); }}
+        />
+      )}
 
       {/* MY CLUBS & GROUPS PAGE */}
       {showMyClubs && (
@@ -20648,7 +21187,7 @@ function StoryKeeperApp() {
           userTier={userTier}
           soundOn={soundOn}
           toggleSound={toggleSound}
-          onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+          onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? "physical" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
           onClose={() => { setGenre(null); setShowHome(true); window.location.hash = ""; }}
           onOpenSettings={() => { setShowSettings(true); window.location.hash = "#settings"; }}
           onOpenStats={() => setShowStats(true)}
@@ -20679,7 +21218,7 @@ function StoryKeeperApp() {
             isIOS={isIOS}
             soundOn={soundOn}
             toggleSound={toggleSound}
-            onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+            onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? "physical" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
             userTier={userTier}
             customGenreTiles={customGenreTiles}
             customHomeBackground={customHomeBackground}
@@ -20700,8 +21239,8 @@ function StoryKeeperApp() {
           mediaType={mediaType}
           soundOn={soundOn}
           toggleSound={toggleSound}
-          onToggleMediaType={() => setMediaType(t => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? (isFree ? "ebooks" : "physical") : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
-          onSetMediaType={(t) => { const isFree = (localStorage.getItem("sk_user_tier") || "reluctant") === "reluctant"; if (t === "physical" && isFree) return; localStorage.setItem("sk_media_type", t); setMediaType(t); }}
+          onToggleMediaType={() => setMediaType(t => { const next = t === "ebooks" ? "audiobooks" : t === "audiobooks" ? "physical" : "ebooks"; localStorage.setItem("sk_media_type", next); return next; })}
+          onSetMediaType={(t) => { localStorage.setItem("sk_media_type", t); setMediaType(t); }}
           onGenreClick={(g) => {
             if (g === "__settings__") {
               return;
@@ -21109,7 +21648,7 @@ function StoryKeeperApp() {
                     </button>
                   ) : (
                     <div style={{ fontSize: 13, color: th.textSoft, fontFamily: "Georgia, serif", marginBottom: 8, padding: "8px 0" }}>
-                      ☁️ Cloud sync is available on Librarian and StoryKeeper plans.
+                      ☁️ Cloud sync is part of The StoryKeeper plan.
                     </div>
                   )}
                   <button onClick={() => { handleSignOut(); setShowSettings(false); }} style={{
@@ -21183,17 +21722,14 @@ function StoryKeeperApp() {
                 Upload custom images for your genre shelves. Your subscription tier determines how many genres you can customize:
               </p>
               <div style={{ fontSize: 12, color: th.textSoft, marginTop: 12, background: th.bgMuted, padding: 12, borderRadius: 8 }}>
-                <div>• <strong>Reluctant Reader:</strong> 3 genres</div>
-                <div>• <strong>Storyteller:</strong> 3 genres (upgrade to Librarian for more)</div>
-                <div>• <strong>Librarian:</strong> All genres</div>
-                <div>• <strong>StoryKeeper:</strong> Unlimited + advanced features</div>
+                <div>• <strong>The Reluctant Reader and The Storyteller:</strong> 3 genres</div>
+                <div>• <strong>The Librarian and The StoryKeeper:</strong> All genres</div>
               </div>
             </div>
 
             <div style={{ marginBottom: 20 }}>
               {(() => {
-                const tierLimits = { reluctant: 3, storyteller: 3, librarian: 999, storykeeper: 999 };
-                const limit = tierLimits[userTier] || 3;
+                const limit = tierAtLeast(userTier, "librarian") ? 999 : 3;
 
                 return [...DEFAULT_LEFT, ...DEFAULT_RIGHT].map((genreItem, idx) => {
                   const isEditable = idx < limit;
@@ -21285,6 +21821,7 @@ function StoryKeeperApp() {
             onSignOut={handleSignOut}
             onOpenSubscription={() => { setShowProfile(false); openSubscription("profile"); }}
             currentTier={userTier}
+            fullAccessEndsAt={fullAccessEndsAt}
             initialSocialLinks={appSocialLinks}
             onSocialLinksChange={setAppSocialLinks}
           />
