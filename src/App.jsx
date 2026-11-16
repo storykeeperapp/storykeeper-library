@@ -3130,6 +3130,10 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 const q = b.isbn || [b.title, b.author].filter(Boolean).join(" ");
                 return q ? `https://www.goodreads.com/search?q=${encodeURIComponent(q)}` : null;
               };
+              const getStoryGraphUrl = (b) => {
+                const q = b.isbn || [b.title, b.author].filter(Boolean).join(" ");
+                return q ? `https://app.thestorygraph.com/browse?search_term=${encodeURIComponent(q)}` : null;
+              };
               const getPlatformUrl = (b) => {
                 const PLATFORM_URLS = {
                   kindle:    b.readUrl || (b.asin ? `https://read.amazon.com/?asin=${b.asin}` : b.isbn ? `https://read.amazon.com/reader?asin=${b.isbn}` : "https://read.amazon.com"),
@@ -3141,6 +3145,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                   libby:     b.readUrl || "https://libbyapp.com/shelf",
                   hoopla:    b.readUrl || "https://www.hoopladigital.com/my/borrowed",
                   goodreads: getGoodreadsUrl(b),
+                  storygraph: getStoryGraphUrl(b),
                 };
                 return b.platform ? PLATFORM_URLS[b.platform] : null;
               };
@@ -3165,7 +3170,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
               if (platformUrls.length === 0) return null;
               const isAudio = mediaType === "audiobooks";
-              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel", goodreads: "Goodreads" };
+              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel", goodreads: "Goodreads", storygraph: "StoryGraph" };
 
               const createOpenHandler = (platform, url, platformBook) => {
                 return () => {
@@ -3288,7 +3293,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
               // A Goodreads export doesn't say where the reader owns a book, so Goodreads-only
               // ebooks and audiobooks get store searches instead, with the likely store first.
-              const goodreadsOnly = platformUrls.every(p => p.platform === "goodreads");
+              const goodreadsOnly = platformUrls.every(p => p.platform === "goodreads" || p.platform === "storygraph");
               const findQuery = encodeURIComponent([book.title, book.author].filter(Boolean).join(" "));
               const FIND_STORES = [
                 { id: "kindle",  label: "Kindle",      url: `https://www.amazon.com/s?k=${findQuery}&i=digital-text` },
@@ -3310,8 +3315,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                         onClick={createOpenHandler(p.platform, p.url, p.book)}
                         style={{ ...btnStyle, flex: platformUrls.length === 1 ? "1" : "auto" }}
                       >
-                        {p.platform === "goodreads"
-                          ? `🔗 View on Goodreads`
+                        {(p.platform === "goodreads" || p.platform === "storygraph")
+                          ? `🔗 View on ${platformNames[p.platform]}`
                           : `${isAudio ? "🎧" : "📖"} ${isAudio ? "Listen" : "Read"} on ${platformNames[p.platform] || p.platform}`}
                       </button>
                     ))}
@@ -4211,12 +4216,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
       const bLast = (b.author || "").split(" ").pop().toLowerCase();
       return aLast.localeCompare(bLast);
     });
-    if (sortBy === "series") return [...arr].sort((a, b) => {
-      const aS = (a.series || "").toLowerCase() || "zzz";
-      const bS = (b.series || "").toLowerCase() || "zzz";
-      if (aS !== bS) return aS.localeCompare(bS);
-      return (a.title || "").localeCompare(b.title || "");
-    });
+    if (sortBy === "series") return [...arr].sort(compareBySeries);
     return arr;
   };
 
@@ -6343,8 +6343,9 @@ function TBRShelf({ onClose, onOpenSubscription, userTier }) {
                 nook:    b.readUrl || "https://nook.barnesandnoble.com/my_library",
                 libby:   b.readUrl || "https://libbyapp.com/shelf",
                 hoopla:  b.readUrl || "https://www.hoopladigital.com/my/borrowed",
+                storygraph: `https://app.thestorygraph.com/browse?search_term=${encodeURIComponent(b.isbn || b.title || "")}`,
               };
-              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel", goodreads: "Goodreads" };
+              const platformNames = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", libby: "Libby", hoopla: "Hoopla", bookfunnel: "BookFunnel", goodreads: "Goodreads", storygraph: "StoryGraph" };
               const url = PLATFORM_URLS[b.platform] || b.readUrl;
               const name = platformNames[b.platform] || b.platform;
               if (!url) return null;
@@ -6362,7 +6363,7 @@ function TBRShelf({ onClose, onOpenSubscription, userTier }) {
                   display: "block", width: "100%", padding: "11px", borderRadius: 8, marginBottom: 8, boxSizing: "border-box",
                   background: "#4A7C59", border: "none", color: "#fff", textDecoration: "none",
                   textAlign: "center", fontSize: 14, fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 600,
-                }}>{b.platform === "goodreads" ? "🔗 View on Goodreads" : `📖 Read in ${name}`}</a>
+                }}>{(b.platform === "goodreads" || b.platform === "storygraph") ? `🔗 View on ${name}` : `📖 Read in ${name}`}</a>
               );
             })()}
             <button onClick={() => { setMoveTarget({ book: tbrActionTarget.book, index: tbrActionTarget.index }); setMoveMediaType("ebooks"); setMoveGenre(""); setTbrActionTarget(null); }} style={{
@@ -7175,6 +7176,7 @@ const EBOOK_PLATFORMS = [
   { id: "bookfunnel", name: "BookFunnel",        emoji: "🎁", desc: "Indie author book delivery",     url: "https://bookfunnel.com" },
   { id: "libby",      name: "Libby / OverDrive", emoji: "🏛️", desc: "Free library ebooks & audio",    url: "https://libbyapp.com" },
   { id: "goodreads",  name: "Goodreads",         emoji: "🌸", desc: "Import your full Goodreads library", url: "https://www.goodreads.com", csvExport: "https://www.goodreads.com/review/import" },
+  { id: "storygraph", name: "StoryGraph",        emoji: "🌿", desc: "Import your full StoryGraph library", url: "https://app.thestorygraph.com", csvExport: "https://app.thestorygraph.com/user-export" },
 ];
 
 const AUDIO_PLATFORMS = [
@@ -7184,6 +7186,34 @@ const AUDIO_PLATFORMS = [
   { id: "chirp",        name: "Chirp",          emoji: "🐦", desc: "Audiobook deals platform",     url: "https://www.chirpbooks.com" },
   { id: "graphicaudio", name: "Graphic Audio",  emoji: "🎭", desc: "Full-cast audio productions",  url: "https://www.graphicaudio.net" },
 ];
+
+// Series name + number for sorting. Uses the book's series field when it has one
+// (Audible: "Name, Book 3"), else a "(Name, #3)" tag in the title (Goodreads/StoryGraph).
+// Books with no series sort after every series.
+function seriesSortKey(book) {
+  let name = (book.series || "").trim();
+  let num = null;
+  const fromTitle = (book.title || "").match(/\(([^()]+?),?\s*#\s*(\d+(?:\.\d+)?)\)\s*$/);
+  if (!name && fromTitle) { name = fromTitle[1].trim(); num = parseFloat(fromTitle[2]); }
+  if (name) {
+    const inName = name.match(/^(.*?)[,\s]*(?:book|#|vol\.?|volume)\s*(\d+(?:\.\d+)?)\s*$/i);
+    if (inName) { name = inName[1].trim(); num = num ?? parseFloat(inName[2]); }
+    if (num === null && fromTitle) num = parseFloat(fromTitle[2]);
+  }
+  return { name: name.toLowerCase(), num };
+}
+
+function compareBySeries(a, b) {
+  const ka = seriesSortKey(a), kb = seriesSortKey(b);
+  if (!ka.name !== !kb.name) return ka.name ? -1 : 1;
+  if (ka.name !== kb.name) return ka.name.localeCompare(kb.name);
+  if (ka.num !== kb.num) {
+    if (ka.num === null) return 1;
+    if (kb.num === null) return -1;
+    return ka.num - kb.num;
+  }
+  return (a.title || "").localeCompare(b.title || "", undefined, { numeric: true });
+}
 
 function parseCSVLine(line) {
   const result = [];
@@ -7205,8 +7235,29 @@ function parseCSVLine(line) {
   return result;
 }
 
+// Splits CSV text into records, keeping line breaks that sit inside quoted fields
+// (StoryGraph and Goodreads reviews can span several lines).
+function splitCSVRecords(text) {
+  const records = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') inQuotes = !inQuotes;
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      records.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current) records.push(current);
+  return records;
+}
+
 function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const lines = splitCSVRecords(text.replace(/^\uFEFF/, "")).filter(l => l.trim());
   if (lines.length < 2) return [];
   const headers = parseCSVLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
   return lines.slice(1).map(line => {
@@ -7304,7 +7355,7 @@ function ImportModal(props) {
 }
 
 function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPWA, userTier, onOpenSubscription }) {
-  const csvPlatforms = ["kindle", "kobo", "goodreads", "audible", "chirp", "apple", "bookfunnel", "googleplay", "nook"];
+  const csvPlatforms = ["kindle", "kobo", "goodreads", "storygraph", "audible", "chirp", "apple", "bookfunnel", "googleplay", "nook"];
   const showCSV = csvPlatforms.includes(platform.id);
   const [activeTab, setActiveTab] = useState(showCSV ? "csv" : "search");
 
@@ -8088,6 +8139,7 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
       const rows = parseCSV(ev.target.result);
       if (rows.length === 0) { alert("⚠️ No data found in this file. Make sure you're uploading the correct CSV export."); return; }
       const isGoodreads = platform.id === "goodreads";
+      const isStoryGraph = platform.id === "storygraph";
       const isApple = platform.id === "apple";
       const importMediaType = mediaType; // capture the prop before the per-row "mediaType" const below shadows it
 
@@ -8133,7 +8185,7 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
         const rawCoverForIsbn = row["coverurl"] || row["cover_url"] || "";
         const chirpIsbnMatch = isChirp ? rawCoverForIsbn.match(/\/(\d{13})(?:\.jpg|$)/) : null;
         const chirpIsbn = chirpIsbnMatch ? chirpIsbnMatch[1] : "";
-        const isbn = (row["isbn13"] || row["isbn"] || chirpIsbn || "").replace(/[="]/g, "").replace(/\s/g, "");
+        const isbn = (row["isbn13"] || row["isbn"] || row["isbn/uid"] || chirpIsbn || "").replace(/[="]/g, "").replace(/\s/g, "");
         const asin = rawAsin;
         const storeId = row["storeid"] || "";
         // ALE wraps cover in =HYPERLINK(...; IMAGE("url")) — extract the image URL
@@ -8162,6 +8214,14 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
           } else if (goodreadsFormat.includes("hardcover") || goodreadsFormat.includes("paperback") || goodreadsFormat.includes("hardback")) {
             rawRowMediaType = "physical";
           }
+        }
+
+        // StoryGraph Format column: "digital", "audio", "paperback" or "hardcover"
+        const storyGraphFormat = isStoryGraph ? (row["format"] || "").toLowerCase().trim() : "";
+        if (isStoryGraph && storyGraphFormat) {
+          if (storyGraphFormat.includes("audio")) rawRowMediaType = "audiobook";
+          else if (storyGraphFormat.includes("digital") || storyGraphFormat.includes("ebook")) rawRowMediaType = "ebook";
+          else if (storyGraphFormat.includes("paperback") || storyGraphFormat.includes("hardcover")) rawRowMediaType = "physical";
         }
 
         const rowEffType = rawRowMediaType
@@ -8197,11 +8257,21 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
 
         const shelves = isGoodreads ? (row["bookshelves"] || "") : "";
         const exclusiveShelf = isGoodreads ? (row["exclusive shelf"] || "") : "";
-        const dateRead = isGoodreads ? (row["date read"] || "") : "";
-        const dateAdded = isGoodreads ? (row["date added"] || "") : "";
-        // Goodreads uses 0 for "no rating"; StoryKeeper ratings are 1-5.
-        const goodreadsRating = isGoodreads ? (parseInt(row["my rating"] || "0", 10) || 0) : 0;
-        const readCount = isGoodreads ? (parseInt(row["read count"] || "0", 10) || 0) : 0;
+        const dateRead = isGoodreads ? (row["date read"] || "") : isStoryGraph ? (row["last date read"] || "") : "";
+        const dateAdded = (isGoodreads || isStoryGraph) ? (row["date added"] || "") : "";
+        // StoryGraph "Dates Read" lists each read as "start-end" ("2024/01/02-2024/01/15"),
+        // separated by commas. The latest one with a start date gives the start of the last read.
+        const dateStarted = isStoryGraph ? (() => {
+          const reads = (row["dates read"] || "").split(",").map(r => r.trim()).filter(Boolean);
+          const last = reads[reads.length - 1] || "";
+          const m = last.match(/^(\d{4}\/\d{1,2}\/\d{1,2})-\d{4}\/\d{1,2}\/\d{1,2}$/);
+          return m ? m[1] : "";
+        })() : "";
+        // Goodreads uses 0 for "no rating"; StoryKeeper ratings are 1-5. StoryGraph allows
+        // quarter stars, so those round to the nearest whole star.
+        const goodreadsRating = isGoodreads ? (parseInt(row["my rating"] || "0", 10) || 0)
+          : isStoryGraph ? Math.round(parseFloat(row["star rating"] || "0") || 0) : 0;
+        const readCount = (isGoodreads || isStoryGraph) ? (parseInt(row["read count"] || "0", 10) || 0) : 0;
         // Goodreads' own id for the book, used for the "View on Goodreads" link.
         const goodreadsId = isGoodreads ? (row["book id"] || "").replace(/\D/g, "") : "";
         const pages = isGoodreads ? (parseInt(row["number of pages"] || "0", 10) || 0) : 0;
@@ -8228,6 +8298,8 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
         const authorGenre = getAuthorGenre(author, authorRules, {});
         const shelfGenre = authorGenre || (isGoodreads
           ? (detectGenreFromGoodreads(shelves, exclusiveShelf) || detectGenreFromTitle(title) || "Fiction & Drama")
+          : isStoryGraph
+            ? (detectGenreFromGoodreads(row["tags"] || "", "") || detectGenreFromTitle(title) || "Fiction & Drama")
           : isApple
             ? (detectGenre([rawGenre], title) || "Fiction & Drama")
             : isAudible
@@ -8247,6 +8319,13 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
           else if (shelf === "to-read" || shelf === "toread") status = "want-to-read";
           else if (shelf === "reading") status = "reading";
           else if (shelf === "wanttoread") status = "want-to-read";
+        } else if (isStoryGraph) {
+          // StoryGraph also has "did-not-finish" and "paused"; StoryKeeper has no status for
+          // those yet, so they import without one rather than being called finished or reading.
+          const sgStatus = (row["read status"] || "").toLowerCase().trim();
+          if (sgStatus === "read") status = "finished";
+          else if (sgStatus === "currently-reading") status = "reading";
+          else if (sgStatus === "to-read") status = "want-to-read";
         } else if (isApple && appleProgress !== null && !isNaN(appleProgress)) {
           // Normalize to a 0-1 fraction — "readingprogress" is typically already
           // 0-1, but the broader fallback columns (progress/read percentage) may
@@ -8285,7 +8364,8 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
             mediaType = "physical";
           }
         }
-        return { _csvIdx: idx, title, author, isbn, asin, coverUrl, readUrl, shelfGenre, status, dateRead, dateAdded, description, mediaType, storeId, narrator, series, goodreadsRating, readCount, pages, originType, goodreadsId };
+        if (isStoryGraph && rawRowMediaType) mediaType = rawRowMediaType;
+        return { _csvIdx: idx, title, author, isbn, asin, coverUrl, readUrl, shelfGenre, status, dateRead, dateStarted, dateAdded, description, mediaType, storeId, narrator, series, goodreadsRating, readCount, pages, originType, goodreadsId };
       }).filter(Boolean);
 
       csvUserEditedRef.current = new Set();
@@ -8593,6 +8673,7 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
 
   const handleConfirmCSV = () => {
     const isGoodreads = platform.id === "goodreads";
+    const isStoryGraph = platform.id === "storygraph";
     const isApple = platform.id === "apple";
     const isGooglePlay = platform.id === "googleplay";
     const books = csvBooks.map(b => ({
@@ -8602,14 +8683,15 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
       asin: b.asin || "",
       coverUrl: b.coverUrl || "",
       readUrl: b.readUrl || "",
-      type: (isApple || isGoodreads) && b.mediaType ? (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks") : mediaType,
+      type: (isApple || isGoodreads || isStoryGraph) && b.mediaType ? (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks") : mediaType,
       genre: csvGenres[b._csvIdx] || "Fiction & Drama",
       platform: platform.id,
       description: b.description || "",
       storeId: (isApple || isGooglePlay) ? (b.storeId || "") : undefined,
       _status: b.status || null,
-      _dateRead: isGoodreads ? b.dateRead : null,
-      _dateAdded: isGoodreads ? b.dateAdded : null,
+      _dateRead: (isGoodreads || isStoryGraph) ? b.dateRead : null,
+      _dateStarted: isStoryGraph ? (b.dateStarted || null) : null,
+      _dateAdded: (isGoodreads || isStoryGraph) ? b.dateAdded : null,
       _rating: b.goodreadsRating >= 1 && b.goodreadsRating <= 5 ? b.goodreadsRating : null,
       ...(b.readCount > 0 ? { readCount: b.readCount } : {}),
       ...(b.pages > 0 ? { pageCount: b.pages } : {}),
@@ -8657,6 +8739,7 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
     kindle:     { url: "https://read.amazon.com", step1: 'Go to read.amazon.com (your Kindle Cloud Reader), open the Console (Safari: Cmd+Option+C — Chrome/Edge: F12 or Cmd+Option+J), paste the script below, and press Enter. A CSV will download automatically.' },
     kobo:       { url: "https://www.kobo.com/us/en/library/books", step1: 'Go to My Books and look for an "Export" option to download your library CSV.' },
     goodreads:  { url: "https://www.goodreads.com/review/import", step1: 'Scroll down to "Export Library" and click the export button. A CSV file will download.' },
+    storygraph: { url: "https://app.thestorygraph.com/user-export", step1: 'Sign in to StoryGraph and tap "Generate export". When it\'s ready, download the CSV file.' },
     apple:      { url: null, step1: 'Run the export script below in Terminal. It reads your Apple Books library directly from your Mac and saves a CSV file to your Desktop.' },
     audible:    { url: "https://www.audible.com/library/titles", step1: 'Open your Audible library, then export using the Chrome extension or the console script below.' },
     chirp:       { url: "https://www.chirpbooks.com/library", step1: 'Open DevTools (F12 or Cmd+Option+J), go to the Console tab, paste the script below, and press Enter. A CSV will download automatically.' },
@@ -9698,6 +9781,7 @@ const TIERS = [
       `Up to ${FREE_BOOK_LIMIT} books: ebooks, audiobooks and physical`,
       `${FREE_PLATFORM_IMPORTS} platform import`,
       "Ratings, reading status and reading stats",
+      "Automatic cloud backup",
       "Unlimited TBR shelf",
       "Genre discussions and Book of the Month",
     ],
@@ -9714,7 +9798,7 @@ const TIERS = [
       "Up to 250 books in every format",
       "2 platform imports, kept up to date",
       "Drag-and-drop genre ordering",
-      "Cloud sync across your devices",
+      "Sync across all your devices",
     ],
   },
   {
@@ -9727,7 +9811,7 @@ const TIERS = [
     gbpYearlyPrice: "£99.99",
     features: [
       "Up to 500 books in every format",
-      "All 14 platform imports, kept up to date",
+      "Every available platform import, kept up to date",
       "Rename genres and custom genre images",
       "Everything in The Storyteller",
     ],
@@ -9857,6 +9941,7 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", fullAccessEndsAt
       const { Purchases } = await import("@revenuecat/purchases-capacitor");
       const { customerInfo } = await Purchases.restorePurchases();
       const restoredTier = tierFromEntitlements(customerInfo.entitlements);
+      trackEvent("purchases_restored", { tier: restoredTier, found: restoredTier !== "reluctant" }, authUser?.id);
       if (restoredTier === "reluctant") {
         alert("No previous purchases found for this account.");
       } else {
@@ -10311,6 +10396,10 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
           dates[key] = { ...dates[key], endDate: d.toISOString() };
         }
       }
+      if (b._dateStarted) {
+        const d = new Date(b._dateStarted);
+        if (!isNaN(d)) dates[key] = { ...dates[key], startDate: d.toISOString() };
+      }
       if (b._rating) ratings[key] = ratings[key] || b._rating;
     });
 
@@ -10326,6 +10415,7 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
     refreshBookCounts();
     // Cloud sync runs on its own: StoryKeeperApp listens for sk-books-changed.
     const statusCount = newBooks.filter(b => b._status).length;
+    trackEvent("import_completed", { platform: plt.id, books: newBooks.length, locked: lockedBooks.length, with_status: statusCount, tier: normalizeTier(userTier) });
     alert(`✅ ${newBooks.length} book${newBooks.length !== 1 ? 's' : ''} imported successfully!${statusCount > 0 ? `\n📊 ${statusCount} books imported with reading status (finished/reading).` : ''}${lockedBooks.length > 0 ? `\n🔒 ${lockedBooks.length} more saved for later. Upgrade to The StoryKeeper to add them.` : ''}`);
   };
 
@@ -12737,6 +12827,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
   const sortBooks = (arr) => {
     if (sortBy === "title") return [...arr].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
     if (sortBy === "author") return [...arr].sort((a, b) => (a.author || "").split(" ").pop().localeCompare((b.author || "").split(" ").pop()));
+    if (sortBy === "series") return [...arr].sort(compareBySeries);
     return arr;
   };
   // Cross-shelf/cross-media matching belongs only to the home screen's global search
@@ -12849,6 +12940,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
             <option value="default">Default</option>
             <option value="title">Title</option>
             <option value="author">Author</option>
+            <option value="series">Series</option>
           </select>
         </div>
       </div>
@@ -19760,8 +19852,18 @@ function StoryKeeperApp() {
     return isPaidTier(tier);
   };
 
-  const gatherLocalData = () => {
+  // Free accounts get backup, not sync: their library uploads to the same user_libraries
+  // row, but never downloads on its own. A device only starts uploading once it has
+  // checked for an existing backup (and offered to restore it), so a new or reset phone
+  // can never overwrite a saved library with an empty one.
+  const backupCheckedKey = (user) => `sk_backup_checked_${user.id}`;
+  const isBackupReady = (user) => !!user && !isSyncTier(user) && localStorage.getItem(backupCheckedKey(user)) === "1";
+  const canUpload = (user) => !!user && (isSyncTier(user) || isBackupReady(user));
+
+  const gatherLocalData = async () => {
     const payload = {};
+    // Books the free limit held back go along too, so a backup never loses them.
+    try { payload._locked_books = await getLockedBooks(); } catch {}
     SYNC_KEYS.forEach(k => {
       if (k === "sk_user_books") {
         payload[k] = getUserBooksSync();
@@ -19868,6 +19970,22 @@ function StoryKeeperApp() {
         localStorage.setItem(k, typeof val === "string" ? val : JSON.stringify(val));
       }
     });
+    // Held-back books in the saved copy are never dropped. A free account adds them to
+    // this device's held-back books; a paid one puts them straight back on the shelves,
+    // since its next upload would otherwise replace them with this device's empty list.
+    const cloudLocked = Array.isArray(data._locked_books) ? data._locked_books : [];
+    if (cloudLocked.length > 0) {
+      if (isPaidTier(localStorage.getItem("sk_user_tier"))) {
+        const shelf = getUserBooksSync();
+        const extra = cloudLocked.filter(cb => !shelf.some(b => isSameBook(b, cb)));
+        if (extra.length > 0) saveUserBooks([...shelf, ...extra]);
+      } else {
+        getLockedBooks().then(local => {
+          const extra = cloudLocked.filter(cb => !local.some(lb => isSameBook(lb, cb)));
+          if (extra.length > 0) saveLockedBooks([...local, ...extra]);
+        }).catch(() => {});
+      }
+    }
     // Notify components to re-read from localStorage
     window.dispatchEvent(new CustomEvent("sk-cloud-synced"));
     // Also refresh shelves so enriched covers/descriptions appear immediately
@@ -19895,10 +20013,10 @@ function StoryKeeperApp() {
 
   const syncToCloud = async (user, attempt = 0) => {
     const sb = supabaseRef.current;
-    if (!sb || !user || !isSyncTier(user)) return false;
+    if (!sb || !canUpload(user)) return false;
     try {
       const t0 = performance.now();
-      const payload = gatherLocalData();
+      const payload = await gatherLocalData();
       const rawSize = JSON.stringify(payload).length;
       const compressed = await gzipJsonToBase64(payload);
       const compressedSize = JSON.stringify(compressed).length;
@@ -19923,6 +20041,69 @@ function StoryKeeperApp() {
       }
       console.error("syncToCloud failed after retries:", err?.message);
       return false;
+    }
+  };
+
+  // Downloads and unpacks the saved library. Returns null when there's no saved copy,
+  // and throws when the download itself fails.
+  const fetchCloudPayload = async (user, attempt = 0) => {
+    try {
+      const auth = await getAuthHeaders();
+      if (!auth) throw new Error("No auth session");
+      const res = await withTimeout(
+        fetch(`${auth.url}/rest/v1/user_libraries?select=data,updated_at&user_id=eq.${user.id}`, { headers: auth.headers })
+      );
+      if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+      const rows = await res.json();
+      const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+      return row ? await gunzipBase64ToJson(row.data) : null;
+    } catch (err) {
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        return fetchCloudPayload(user, attempt + 1);
+      }
+      throw err;
+    }
+  };
+
+  // Free accounts, once per device per account: look for a backup before uploading.
+  // If it holds books this device doesn't have, offer to restore them; either way the
+  // device then starts backing up. A failed download changes nothing and tries again
+  // next launch.
+  const backupCheckInFlightRef = useRef(false);
+  const checkFreeBackup = async (user) => {
+    if (!user || isSyncTier(user) || backupCheckInFlightRef.current) return;
+    if (isBackupReady(user)) { syncToCloud(user); return; }
+    backupCheckInFlightRef.current = true;
+    try {
+      const payload = await fetchCloudPayload(user);
+      const cloudBooks = Array.isArray(payload?.sk_user_books) ? payload.sk_user_books : [];
+      const cloudLocked = Array.isArray(payload?._locked_books) ? payload._locked_books : [];
+      const local = getUserBooksSync();
+      const missing = [...cloudBooks, ...cloudLocked].filter(cb => !local.some(lb => isSameBook(lb, cb)));
+      let restored = false;
+      if (missing.length > 0) {
+        const total = cloudBooks.length + cloudLocked.length;
+        restored = window.confirm(
+          `We found a backup of your StoryKeeper library with ${total.toLocaleString()} book${total === 1 ? "" : "s"}.\n\n` +
+          `Restore it to this device? Your ratings, reading dates and notes come back too.\n\n` +
+          `If you start fresh instead, this device's library replaces the backup.`
+        );
+        if (restored) applyCloudData(payload);
+        trackEvent("backup_restore_offered", { books: total, restored }, user.id);
+      }
+      localStorage.setItem(backupCheckedKey(user), "1");
+      await syncToCloud(user);
+      // A backup made while the account was paid can hold more than a free account keeps;
+      // go straight to choosing which books stay on the shelves.
+      if (restored && getUserBooksSync().length > FREE_BOOK_LIMIT) {
+        localStorage.setItem("sk_was_paid", "1");
+        setTrialEndBooks(getUserBooksSync());
+      }
+    } catch (err) {
+      console.error("checkFreeBackup failed:", err?.message);
+    } finally {
+      backupCheckInFlightRef.current = false;
     }
   };
 
@@ -19978,7 +20159,7 @@ function StoryKeeperApp() {
   };
 
   const triggerAutoSync = (user) => {
-    if (!user || !isSyncTier(user)) return;
+    if (!canUpload(user)) return;
     clearTimeout(syncDebounceRef.current);
     syncDebounceRef.current = setTimeout(() => syncToCloud(user), 5000);
   };
@@ -19988,6 +20169,12 @@ function StoryKeeperApp() {
     const handleVisibility = () => {
       if (document.visibilityState === "visible" && authUser && isSyncTier(authUser)) {
         runFullSync(authUser);
+      }
+      // Ratings, dates and notes don't fire sk-books-changed, so free accounts also back
+      // up each time the app goes to the background.
+      if (document.visibilityState === "hidden" && isBackupReady(authUser)) {
+        clearTimeout(syncDebounceRef.current);
+        syncToCloud(authUser);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -20067,6 +20254,22 @@ function StoryKeeperApp() {
       }
       const user = session?.user ?? null;
       setAuthUser(user);
+      // One "app_opened" per device per day: the baseline for retention and for how many
+      // readers reach the paywall at all.
+      if (event === "INITIAL_SESSION") {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          if (localStorage.getItem("sk_last_open_logged") !== today) {
+            localStorage.setItem("sk_last_open_logged", today);
+            trackEvent("app_opened", {
+              signed_in: !!user,
+              tier: normalizeTier(localStorage.getItem("sk_user_tier")),
+              books: getUserBooksSync().length,
+              platform: Capacitor.isNativePlatform() ? "native" : "web",
+            }, user?.id);
+          }
+        } catch {}
+      }
       if (user) {
         if (isLifetimeEmail(user.email)) {
           localStorage.setItem("sk_user_tier", "storykeeper");
@@ -20088,6 +20291,10 @@ function StoryKeeperApp() {
                 if (!start) {
                   start = Date.now();
                   sb.auth.updateUser({ data: { full_access_start: new Date(start).toISOString() } }).catch(() => {});
+                  // Accounts made in the last day are new sign-ups; older ones are readers
+                  // who signed up before build 36 and are only now getting their 30 days.
+                  const accountAgeMs = Date.now() - (Date.parse(user.created_at || "") || Date.now());
+                  trackEvent("full_access_started", { account: accountAgeMs < 24 * 60 * 60 * 1000 ? "new" : "existing", platform: Capacitor.isNativePlatform() ? "native" : "web" }, user.id);
                 }
                 const ends = start + FULL_ACCESS_DAYS * 24 * 60 * 60 * 1000;
                 if (Date.now() < ends) { tier = "storykeeper"; fullAccessEnds = new Date(ends); }
@@ -20459,6 +20666,12 @@ function StoryKeeperApp() {
     setGraceEndsAt(null);
     setTrialEndBooks(books);
   }, [tierConfirmed, userTier, showSubscription]);
+
+  // Free accounts back up once their tier is confirmed, so a paying reader whose cached
+  // tier is still "free" on a new device never sees the restore prompt meant for free ones.
+  useEffect(() => {
+    if (tierConfirmed && authUser && !isPaidTier(userTier)) checkFreeBackup(authUser);
+  }, [tierConfirmed, userTier, authUser?.id]);
   const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem("sk_onboarded"));
   const [showUsernameNudge, setShowUsernameNudge] = useState(false);
   const [showNewUserOnboarding, setShowNewUserOnboarding] = useState(false);
@@ -21647,8 +21860,24 @@ function StoryKeeperApp() {
                       {syncStatus === "syncing" ? "☁️ Syncing…" : syncStatus === "done" ? "✅ Synced!" : syncStatus === "error" ? "❌ Sync failed" : "☁️ Sync Now"}
                     </button>
                   ) : (
-                    <div style={{ fontSize: 13, color: th.textSoft, fontFamily: "Georgia, serif", marginBottom: 8, padding: "8px 0" }}>
-                      ☁️ Cloud sync is part of The StoryKeeper plan.
+                    <div style={{ marginBottom: 8 }}>
+                      <button onClick={async () => {
+                        if (syncStatus === "syncing") return;
+                        setSyncStatus("syncing");
+                        if (!isBackupReady(authUser)) await checkFreeBackup(authUser);
+                        const ok = isBackupReady(authUser) && await syncToCloud(authUser);
+                        setSyncStatus(ok ? "done" : "error");
+                        setTimeout(() => setSyncStatus(""), 3000);
+                      }} style={{
+                        width: "100%", padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`,
+                        background: th.bgDeep, color: th.text, cursor: "pointer", fontSize: 14,
+                        fontFamily: '"Palatino Linotype", Palatino, serif', marginBottom: 6,
+                      }}>
+                        {syncStatus === "syncing" ? "☁️ Backing up…" : syncStatus === "done" ? "✅ Backed up!" : syncStatus === "error" ? "❌ Backup failed" : "☁️ Back Up Now"}
+                      </button>
+                      <div style={{ fontSize: 12, color: th.textSoft, fontFamily: "Georgia, serif", lineHeight: 1.5 }}>
+                        Your library backs up automatically. Syncing across several devices comes with The Storyteller and up.
+                      </div>
                     </div>
                   )}
                   <button onClick={() => { handleSignOut(); setShowSettings(false); }} style={{
@@ -21659,6 +21888,9 @@ function StoryKeeperApp() {
                 </div>
               ) : (
                 <div>
+                  <div style={{ fontSize: 13, color: th.textMid, fontFamily: "Georgia, serif", marginBottom: 10, lineHeight: 1.5 }}>
+                    ☁️ Sign in to back up your library, so a lost or new phone never loses your books, ratings or reading history.
+                  </div>
                   <button onClick={handleGoogleAuth} style={{
                     width: "100%", padding: "11px", marginBottom: 10, borderRadius: 8,
                     border: `1px solid ${th.border}`, background: th.bgMuted,
