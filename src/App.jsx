@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { BarcodeDetector as BarcodeDetectorPolyfill } from "barcode-detector/ponyfill";
 import { openDB } from "idb";
 import { Capacitor } from "@capacitor/core";
+import { startReread, getDnf, saveDnf, clearDnf, updateLatestSession, addManualSession, getSessions, TRACKING_SYNC_KEYS } from "./tracking/store.js";
+import { DnfSheet, DnfBanner, SessionDetailsSheet, ManualSessionSheet, ReadHistory, GoalsAndStreak, Achievements, AdvancedStats, WrapCard, sessionDetailText } from "./tracking/TrackingUI.jsx";
 
 // Module-level background task bus — survives component unmounts
 const skDispatch = (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail }));
@@ -2511,6 +2513,10 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     try { return JSON.parse(localStorage.getItem(`sk_chapters_ebooks`) || "{}")[isbn] || ""; } catch { return ""; }
   });
   const [sessionSaved, setSessionSaved] = useState(false);
+  const [showDnfSheet, setShowDnfSheet] = useState(false);
+  const [sessionDetails, setSessionDetails] = useState(null); // { minutes, fromPage, toPage } after the timer stops
+  const [showManualSession, setShowManualSession] = useState(false);
+  const [readsVersion, setReadsVersion] = useState(0);
 
   const isTimerActive = activeTimer?.isbn === isbn;
 
@@ -2564,15 +2570,27 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   const stopTimer = () => {
     if (!isTimerActive) return;
     const minutes = Math.max(1, Math.round(elapsed / 60));
+    const isAudio = mediaType === "audiobooks";
+    const sessions = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
+    // "Page reached" is a position, so pages read this session is the gap since the
+    // last session's position for this book (only when there was a last session).
+    const reached = !isAudio && currentPage ? parseInt(currentPage) || 0 : 0;
+    const prev = sessions.find(s => s.isbn === isbn && (s.toPage || s.pages));
+    const prevPage = prev ? (prev.toPage || prev.pages || 0) : 0;
+    const pagesRead = reached && prevPage && reached > prevPage ? reached - prevPage : 0;
     const session = {
       isbn,
       title: book.title,
       date: new Date().toISOString(),
+      startTime: new Date(activeTimer.startTime).toISOString(),
+      endTime: new Date().toISOString(),
       minutes,
-      pages: mediaType === "ebooks" ? (currentPage ? parseInt(currentPage) || 0 : 0) : 0,
-      chapters: mediaType === "audiobooks" ? (currentPage ? parseInt(currentPage) || 0 : 0) : (currentChapter ? parseInt(currentChapter) || 0 : 0),
+      pages: reached,
+      chapters: isAudio ? (currentPage ? parseInt(currentPage) || 0 : 0) : (currentChapter ? parseInt(currentChapter) || 0 : 0),
+      ...(reached ? { toPage: reached } : {}),
+      ...(prevPage ? { fromPage: prevPage } : {}),
+      ...(pagesRead ? { pagesRead } : {}),
     };
-    const sessions = (() => { try { return JSON.parse(localStorage.getItem(sessionsKey) || "[]"); } catch { return []; } })();
     sessions.unshift(session);
     localStorage.setItem(sessionsKey, JSON.stringify(sessions));
 
@@ -2580,9 +2598,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     const ltMinKey = `sk_lifetime_minutes_${mediaType}`;
     const prevMin = parseInt(localStorage.getItem(ltMinKey) || "0");
     localStorage.setItem(ltMinKey, String(prevMin + minutes));
-    if (mediaType === "ebooks" && session.pages > 0) {
+    if (pagesRead > 0) {
       const ltPgKey = "sk_lifetime_pages";
-      localStorage.setItem(ltPgKey, String(parseInt(localStorage.getItem(ltPgKey) || "0") + session.pages));
+      localStorage.setItem(ltPgKey, String(parseInt(localStorage.getItem(ltPgKey) || "0") + pagesRead));
     }
     if (mediaType === "ebooks" && session.chapters > 0) {
       const ltChEKey = "sk_lifetime_chapters_ebooks";
@@ -2596,6 +2614,37 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
     localStorage.removeItem(timerKey);
     setActiveTimer(null);
     setElapsed(0);
+    setSessionSaved(true);
+    setTimeout(() => setSessionSaved(false), 3000);
+    setSessionDetails({ minutes, fromPage: prevPage || null, toPage: reached || null, pagesRead });
+  };
+
+  // Optional details from the sheet after the timer. Lifetime pages move by the
+  // difference, since the timer already counted any pages it could work out.
+  const saveSessionDetails = (d) => {
+    const pagesRead = d.pagesRead || 0;
+    const delta = pagesRead - (sessionDetails?.pagesRead || 0);
+    updateLatestSession(mediaType, isbn, {
+      ...(d.fromPage != null ? { fromPage: d.fromPage } : {}),
+      ...(d.toPage != null ? { toPage: d.toPage, pages: d.toPage } : {}),
+      ...(pagesRead ? { pagesRead } : {}),
+      ...(d.mood ? { mood: d.mood } : {}),
+      ...(d.place ? { place: d.place } : {}),
+    });
+    if (delta !== 0) {
+      const k = "sk_lifetime_pages";
+      localStorage.setItem(k, String(Math.max(0, (parseInt(localStorage.getItem(k) || "0") || 0) + delta)));
+    }
+    if (d.toPage) savePage(String(d.toPage));
+    setSessionDetails(null);
+  };
+
+  const saveManualSession = (d) => {
+    addManualSession(mediaType, book, d);
+    if (d.toPage) savePage(String(d.toPage));
+    const currentStatus = statuses[isbn] || book.status;
+    if (!currentStatus || currentStatus === "want-to-read") handleStatus("reading");
+    setShowManualSession(false);
     setSessionSaved(true);
     setTimeout(() => setSessionSaved(false), 3000);
   };
@@ -2693,6 +2742,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
 
   const handleStatus = (s) => {
     setStatuses((prev) => ({ ...prev, [isbn]: s }));
+    // Any status other than DNF/paused means the reader picked the book back up.
+    if (s !== "dnf" && s !== "paused") clearDnf(mediaType, isbn);
     if (s === "reading") {
       setDates((prev) => {
         const existing = prev[isbn] || {};
@@ -2718,7 +2769,7 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
           localStorage.setItem("sk_tbr_books", JSON.stringify(tbr));
           window.dispatchEvent(new CustomEvent("sk-tbr-changed"));
         }
-      } else if (s === "reading" || s === "finished") {
+      } else if (s === "reading" || s === "finished" || s === "dnf" || s === "paused") {
         const filtered = tbr.filter(b => !matches(b));
         if (filtered.length !== tbr.length) {
           localStorage.setItem("sk_tbr_books", JSON.stringify(filtered));
@@ -2726,6 +2777,28 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
         }
       }
     } catch { /* ignore */ }
+  };
+
+  // DNF or pause. The stop date doubles as the calendar end date, so the book stops
+  // spanning every day up to today.
+  const handleDnfSave = (rec) => {
+    saveDnf(mediaType, isbn, rec);
+    handleStatus(rec.mightReturn ? "paused" : "dnf");
+    setDates(prev => ({ ...prev, [isbn]: { ...(prev[isbn] || {}), endDate: new Date().toISOString() } }));
+    setShowDnfSheet(false);
+  };
+  const handleResume = () => {
+    setDates(prev => { const e = { ...(prev[isbn] || {}) }; delete e.endDate; return { ...prev, [isbn]: e }; });
+    handleStatus("reading");
+  };
+  // Files the finished read into history and starts a new one from today.
+  const handleReadAgain = () => {
+    const rating = (() => { try { return JSON.parse(localStorage.getItem("sk_ratings") || "{}")[isbn] || 0; } catch { return 0; } })();
+    startReread(mediaType, isbn, rating);
+    setDates(prev => ({ ...prev, [isbn]: { startDate: new Date().toISOString() } }));
+    setStatuses(prev => ({ ...prev, [isbn]: "reading" }));
+    setProgress(prev => ({ ...prev, [isbn]: 0 }));
+    setReadsVersion(v => v + 1);
   };
 
   const handleFav = () => {
@@ -3512,6 +3585,24 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 ✅ Finished
               </button>
             </div>
+            {status === "reading" && (
+              <div style={{ marginTop: -6, marginBottom: 12 }}>
+                <button onClick={() => setShowDnfSheet(true)} style={{ background: "none", border: "none", padding: "4px 0", color: modalTheme.textSoft || "#8B7355", fontFamily: "Georgia, serif", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>
+                  🚪 Stop or pause this book
+                </button>
+              </div>
+            )}
+            {(status === "dnf" || status === "paused") && (
+              <DnfBanner status={status} record={getDnf(mediaType, isbn)} mediaType={mediaType} onResume={handleResume} theme={modalTheme} />
+            )}
+            <ReadHistory mediaType={mediaType} bookKeyValue={isbn} status={status} importedReadCount={book.readCount || 0} onReadAgain={handleReadAgain} theme={modalTheme} refresh={readsVersion} />
+            {showDnfSheet && (
+              <DnfSheet book={book} mediaType={mediaType}
+                currentPage={mediaType === "audiobooks" ? null : (book._currentPage || parseInt(currentPage) || null)}
+                totalPages={mediaType === "audiobooks" ? null : (book._totalPages || book.pageCount || null)}
+                progressPct={prog || null}
+                onSave={handleDnfSave} onClose={() => setShowDnfSheet(false)} />
+            )}
 
             {/* Editable start / finish dates */}
             {(status === "reading" || status === "finished") && (
@@ -3644,6 +3735,9 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                     <button onClick={startTimer} style={{ padding: "7px 16px", background: modalTheme.text, color: modalTheme.bg, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
                       ▶ Start Session
                     </button>
+                    <button onClick={() => setShowManualSession(true)} style={{ padding: "7px 12px", background: "transparent", color: modalTheme.text, border: `1px solid ${modalTheme.accent || "#8B5E3C"}`, borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13 }}>
+                      ✍️ Log a session
+                    </button>
                     {sessionSaved && <span style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2d6a2d", fontStyle: "italic" }}>✓ Session saved!</span>}
                   </>
                 )}
@@ -3706,6 +3800,16 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 <span style={{ fontFamily: "Georgia, serif", fontSize: 11, color: "#8B7355", fontStyle: "italic" }}>(saved with session)</span>
               </div>
             </div>
+            {sessionDetails && (
+              <SessionDetailsSheet mediaType={mediaType} minutes={sessionDetails.minutes}
+                defaultFromPage={sessionDetails.fromPage} defaultToPage={sessionDetails.toPage}
+                onSave={saveSessionDetails} onClose={() => setSessionDetails(null)} />
+            )}
+            {showManualSession && (
+              <ManualSessionSheet mediaType={mediaType}
+                defaultFromPage={mediaType === "audiobooks" ? null : (parseInt(currentPage) || book._currentPage || null)}
+                onSave={saveManualSession} onClose={() => setShowManualSession(false)} />
+            )}
 
             {/* Find Cover & Info — for imported books */}
             {isUserBook && (
@@ -6483,7 +6587,7 @@ function TBRShelf({ onClose, onOpenSubscription, userTier }) {
   );
 }
 
-function StatsPage({ onClose, mediaType: initialMediaType }) {
+function StatsPage({ onClose, mediaType: initialMediaType, isPaid = false, onUpgrade }) {
   const [mediaType, setMediaType] = useState(initialMediaType || "ebooks");
   const [calMonth, setCalMonth] = useState(new Date());
   const [selectedTallyMonth, setSelectedTallyMonth] = useState(null); // { yr, mi }
@@ -6498,6 +6602,11 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
   const favorites = (() => { try { return JSON.parse(localStorage.getItem(`sk_favorites_${mediaType}`)) || {}; } catch { return {}; } })();
   const progress = (() => { try { return JSON.parse(localStorage.getItem(`sk_progress_${mediaType}`)) || {}; } catch { return {}; } })();
   const dates = (() => { try { return JSON.parse(localStorage.getItem(`sk_dates_${mediaType}`)) || {}; } catch { return {}; } })();
+
+  // Every book the reader has, across formats, for the cross-format tracking panels.
+  const trackingBooks = React.useMemo(() => {
+    try { return [...Object.values(library).flat(), ...getUserBooksSync()]; } catch { return []; }
+  }, [calRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Session data
   const sessions = (() => { try { return JSON.parse(localStorage.getItem(`sk_sessions_${mediaType}`) || "[]"); } catch { return []; } })();
@@ -6717,6 +6826,13 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
           textAlign: "center",
           marginBottom: 16,
         }}>{mediaType === "audiobooks" ? "🎧 My Story So Far" : mediaType === "physical" ? "📚 My Story So Far" : "📖 My Story So Far"}</h1>
+
+        {/* Detailed tracking across every format. Goals, streak and achievements are free;
+            the detailed stats and wraps come with a paid plan. */}
+        <GoalsAndStreak books={trackingBooks} refreshKey={calRefresh} />
+        <WrapCard books={trackingBooks} isPaid={isPaid} refreshKey={calRefresh} shareFile={downloadOrShareFile} />
+        <AdvancedStats books={trackingBooks} isPaid={isPaid} onUpgrade={onUpgrade} refreshKey={calRefresh} />
+        <Achievements books={trackingBooks} refreshKey={calRefresh} />
 
         {/* eBooks / Audiobooks toggle */}
         <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 30 }}>
@@ -7060,7 +7176,10 @@ function StatsPage({ onClose, mediaType: initialMediaType }) {
               {sessions.slice(0, 30).map((s, i) => (
                 <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 80px 70px 28px", gap: 0, padding: "8px 14px", background: i % 2 === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.3)", borderTop: "1px solid #E8D9C5", alignItems: "center" }}>
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#6B4E32" }}>{new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
-                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, color: "#3A2A1A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                  <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 12, color: "#3A2A1A", overflow: "hidden" }}>
+                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                    {sessionDetailText(s) && <div style={{ fontFamily: "Georgia, serif", fontSize: 10, color: "#8B7355", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionDetailText(s)}</div>}
+                  </div>
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#3A2A1A" }}>
                     {formatMins(s.minutes)}
                     {s.platform && <span style={{ fontSize: 10, color: "#8B7355", marginLeft: 4 }}>via {s.platform}</span>}
@@ -19845,6 +19964,8 @@ function StoryKeeperApp() {
     "sk_author_genres",
     // API keys — entered once, should follow the user across every device/reinstall
     "sk_google_api_key", "sk_isbndb_key",
+    // Detailed tracking: re-reads, DNF details, goals, achievements
+    ...TRACKING_SYNC_KEYS,
   ];
 
   const isSyncTier = (user) => {
@@ -20188,7 +20309,11 @@ function StoryKeeperApp() {
       if (authUser) triggerAutoSync(authUser);
     };
     window.addEventListener("sk-books-changed", handleBooksChanged);
-    return () => window.removeEventListener("sk-books-changed", handleBooksChanged);
+    window.addEventListener("sk-tracking-changed", handleBooksChanged);
+    return () => {
+      window.removeEventListener("sk-books-changed", handleBooksChanged);
+      window.removeEventListener("sk-tracking-changed", handleBooksChanged);
+    };
   }, [authUser]);
 
   async function fetchCommunityAuthorGenres() {
@@ -20898,7 +21023,8 @@ function StoryKeeperApp() {
       `}</style>
 
       {/* STATS PAGE */}
-      {showStats && <StatsPage onClose={() => { setShowStats(false); window.location.hash = ""; setShowSidebar(true); }} mediaType={mediaType} />}
+      {showStats && <StatsPage onClose={() => { setShowStats(false); window.location.hash = ""; setShowSidebar(true); }} mediaType={mediaType}
+        isPaid={isAdmin || isPaidTier(userTier)} onUpgrade={() => openSubscription("advanced_stats")} />}
 
       {/* FAVORITES SHELF PAGE */}
       {showFavorites && (
