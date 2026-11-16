@@ -412,5 +412,5 @@ export function refreshAchievements(books) {
 export const TRACKING_SYNC_KEYS = [
   "sk_reads_ebooks", "sk_reads_audiobooks", "sk_reads_physical",
   "sk_dnf_ebooks", "sk_dnf_audiobooks", "sk_dnf_physical",
-  "sk_goals", "sk_achievements",
+  "sk_goals", "sk_achievements", "sk_quotes", "sk_share_ratings",
 ];

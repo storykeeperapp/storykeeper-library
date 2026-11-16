@@ -4,6 +4,8 @@ import { BarcodeDetector as BarcodeDetectorPolyfill } from "barcode-detector/pon
 import { openDB } from "idb";
 import { Capacitor } from "@capacitor/core";
 import { startReread, getDnf, saveDnf, clearDnf, updateLatestSession, addManualSession, getSessions, TRACKING_SYNC_KEYS } from "./tracking/store.js";
+import { CopiesSection, QuotesSection, CollectionPanel } from "./tracking/CollectorUI.jsx";
+import { BuddyReadsSection, RecommendationsSection } from "./tracking/SocialUI.jsx";
 import { DnfSheet, DnfBanner, SessionDetailsSheet, ManualSessionSheet, ReadHistory, GoalsAndStreak, Achievements, AdvancedStats, WrapCard, sessionDetailText } from "./tracking/TrackingUI.jsx";
 
 // Module-level background task bus — survives component unmounts
@@ -3811,6 +3813,15 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
                 onSave={saveManualSession} onClose={() => setShowManualSession(false)} />
             )}
 
+            <QuotesSection bookKeyValue={isbn} title={book.title} author={book.author} mediaType={mediaType} theme={modalTheme}
+              shareText={async (text) => {
+                try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e?.name === "AbortError") return; }
+                try { await navigator.clipboard.writeText(text); alert("Quote copied."); } catch { alert(text); }
+              }} />
+            {mediaType === "physical" && isUserBook && (
+              <CopiesSection book={book} getUserBooks={getUserBooksSync} saveUserBooks={saveUserBooks} theme={modalTheme} />
+            )}
+
             {/* Find Cover & Info — for imported books */}
             {isUserBook && (
               <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -5319,7 +5330,21 @@ function AddToLibraryModal({ onClose, th, onOpenSubscription, initialSelected, u
     });
     if (existingCopy) {
       if (addingMediaType === "physical") {
-        if (!window.confirm(`"${selected.title}" is already on your physical book shelf. Add it again anyway?`)) return;
+        // A second physical copy joins the book already on the shelf, so ratings, notes and
+        // status stay in one place. The first copy is created from the existing record.
+        if (!window.confirm(`"${selected.title}" is already on your physical shelf.\n\nAdd this as another copy of it? You can add edition details on the book's page.`)) return;
+        const all = getUserBooksSync();
+        const idx = all.indexOf(existingCopy);
+        if (idx !== -1) {
+          const mkId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          const copies = [...(all[idx].copies || [])];
+          if (copies.length === 0) copies.push({ id: mkId(), status: "owned", format: "Hardcover", isbn: all[idx].isbn || "" });
+          copies.push({ id: mkId(), status: "owned", format: "Hardcover", isbn: selected.isbn || "", ...(selected.publisher ? { publisher: selected.publisher } : {}) });
+          all[idx] = { ...all[idx], copies };
+          saveUserBooks(all);
+          setMsg(`Added as copy ${copies.length} of "${existingCopy.title}". Open the book to add edition details.`);
+        }
+        return;
       } else {
         setMsg("This book is already in your library!"); return;
       }
@@ -6833,6 +6858,7 @@ function StatsPage({ onClose, mediaType: initialMediaType, isPaid = false, onUpg
         <WrapCard books={trackingBooks} isPaid={isPaid} refreshKey={calRefresh} shareFile={downloadOrShareFile} />
         <AdvancedStats books={trackingBooks} isPaid={isPaid} onUpgrade={onUpgrade} refreshKey={calRefresh} />
         <Achievements books={trackingBooks} refreshKey={calRefresh} />
+        <CollectionPanel books={trackingBooks} />
 
         {/* eBooks / Audiobooks toggle */}
         <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 30 }}>
@@ -8745,11 +8771,13 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
     const isbn = result.isbn ? result.isbn[0] : null;
     const coverUrl = result.coverUrl || (result.cover_i ? `https://covers.openlibrary.org/b/id/${result.cover_i}-S.jpg` : "");
 
-    // Duplicate check
-    const existingUserBooks = getUserBooksSync();
-    const allLibraryBooks = Object.values(library).flat();
+    // Duplicate check, within this format only: owning a book as an ebook and an
+    // audiobook (or a physical copy) is fine.
+    const sameFormat = (b) => (b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks")) === mediaType;
+    const existingUserBooks = getUserBooksSync().filter(sameFormat);
+    const allLibraryBooks = Object.values(library).flat().filter(sameFormat);
     const existingIsbns = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.isbn).filter(Boolean));
-    const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.title.toLowerCase().trim()));
+    const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => (b.title || "").toLowerCase().trim()));
     const alreadyInPending = pending.some(b => b.title.toLowerCase().trim() === title.toLowerCase().trim());
 
     if ((isbn && existingIsbns.has(isbn)) || existingTitles.has(title.toLowerCase().trim()) || alreadyInPending) {
@@ -16313,7 +16341,7 @@ function MyClubsPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookCl
     <div style={pageStyle}>
       <div style={headerStyle}>
         <button onClick={onClose} style={{ background: "rgba(58,34,16,0.72)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 10, fontSize: 20, cursor: "pointer", color: "#F5ECD7", padding: "6px 12px", lineHeight: 1, boxShadow: "0 2px 8px rgba(0,0,0,0.35)" }}>←</button>
-        <h2 style={{ margin: 0, fontSize: 20, color: thm.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>My Clubs & Groups</h2>
+        <h2 style={{ margin: 0, fontSize: 20, color: thm.text, fontFamily: '"Palatino Linotype", Palatino, serif' }}>My Clubs & Buddy Reads</h2>
       </div>
 
       <div style={{ padding: "20px 20px 40px" }}>
@@ -16323,6 +16351,8 @@ function MyClubsPage({ authUser, supabaseRef, onClose, onOpenGroup, onOpenBookCl
           <div style={{ textAlign: "center", padding: "60px 20px", color: thm.textSoft, fontStyle: "italic" }}>Loading…</div>
         ) : (
           <>
+            <BuddyReadsSection sb={supabaseRef?.current || getSupabase()} authUser={authUser} th={thm} libraryBooks={getUserBooksSync()} />
+            <RecommendationsSection sb={supabaseRef?.current || getSupabase()} authUser={authUser} th={thm} libraryBooks={getUserBooksSync()} />
             {/* Genre Groups */}
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: 11, color: thm.accent, letterSpacing: 2, textTransform: "uppercase", marginBottom: 12, fontFamily: "Georgia, serif" }}>Genre Groups</div>
@@ -21427,7 +21457,7 @@ function StoryKeeperApp() {
               {item("tbr",       "📚 My TBR Shelf",         () => { setShowSidebar(false); setShowTBR(true); window.location.hash = "#tbr"; })}
               {item("addbook",   "➕ Add Book to Library",   () => { setShowSidebar(false); setShowAddToLibrary(true); })}
               {item("stats",     "📖 My Story So Far",       () => { setShowSidebar(false); setShowStats(true); window.location.hash = "#stats"; })}
-              {item("myclubs",   "🏛️ My Clubs & Groups",    () => { setShowSidebar(false); setShowMyClubs(true); })}
+              {item("myclubs",   "🏛️ My Clubs & Buddy Reads",    () => { setShowSidebar(false); setShowMyClubs(true); })}
 
               <div style={{ borderTop: `1px solid ${th.border}`, margin: "10px 12px" }} />
 
