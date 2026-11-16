@@ -106,7 +106,7 @@ function CreateBuddyRead({ sb, authUser, username, th, libraryBooks, onDone, onC
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [chapters, setChapters] = useState("");
-  const [start, setStart] = useState(new Date().toISOString().slice(0, 10));
+  const [start, setStart] = useState((() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })());
   const [busy, setBusy] = useState(false);
   const chosen = candidates[parseInt(pick, 10)];
 

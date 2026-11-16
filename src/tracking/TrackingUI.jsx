@@ -187,7 +187,7 @@ export function SessionDetailsSheet({ mediaType, minutes, defaultFromPage, defau
 // Log a session without the timer (e.g. reading a paperback away from the phone).
 export function ManualSessionSheet({ mediaType, defaultFromPage, onSave, onClose, theme }) {
   const isAudio = mediaType === "audiobooks";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
   const [date, setDate] = useState(today);
   const [hours, setHours] = useState(null);
   const [mins, setMins] = useState(null);
