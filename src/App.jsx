@@ -195,9 +195,14 @@ async function saveLockedBooks(books) {
   return true;
 }
 
-const isSameBook = (a, b) =>
+// A book's format bucket: "ebooks", "audiobooks" or "physical".
+const bookFormat = (b) => b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
+
+// Two records are the same book only in the same format: a Kindle edition and an
+// Audible audiobook of one title are two things the reader owns, not a duplicate.
+const isSameBook = (a, b) => bookFormat(a) === bookFormat(b) && (
   (a.isbn && b.isbn && a.isbn === b.isbn) ||
-  ((a.title || "").toLowerCase().trim() === (b.title || "").toLowerCase().trim() && (a.author || "") === (b.author || ""));
+  ((a.title || "").toLowerCase().trim() === (b.title || "").toLowerCase().trim() && (a.author || "") === (b.author || "")));
 
 // Puts any locked books back into the library. Called once the account is on a paid tier.
 async function unlockLockedBooks() {
@@ -3597,6 +3602,31 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
             {(status === "dnf" || status === "paused") && (
               <DnfBanner status={status} record={getDnf(mediaType, isbn)} mediaType={mediaType} onResume={handleResume} theme={modalTheme} />
             )}
+            {(() => {
+              // Other formats of this same title the reader owns, so a Kindle edition,
+              // an audiobook and a hardcover read as one book in three formats.
+              const myTitle = cleanTitle(book.title || "").toLowerCase().trim();
+              if (!myTitle) return null;
+              const others = getUserBooksSync().filter(b => bookFormat(b) !== mediaType && (
+                (book.isbn && b.isbn === book.isbn) ||
+                (cleanTitle(b.title || "").toLowerCase().trim() === myTitle && (!book.author || !b.author || authorsMatch(b.author, book.author)))));
+              if (others.length === 0) return null;
+              const FORMAT_INFO = { ebooks: "📱 eBook", audiobooks: "🎧 Audiobook", physical: "📚 Physical" };
+              // Only stores and libraries: Goodreads and StoryGraph track books but don't say where you own them.
+              const PLATFORM_NAMES = { kindle: "Kindle", audible: "Audible", chirp: "Chirp", apple: "Apple Books", kobo: "Kobo", nook: "Nook", googleplay: "Google Play", bookfunnel: "BookFunnel", libby: "Libby", hoopla: "Hoopla" };
+              const byFormat = {};
+              others.forEach(b => { (byFormat[bookFormat(b)] ||= []).push(b); });
+              const parts = Object.entries(byFormat).map(([fmt, list]) => {
+                const copies = fmt === "physical" ? Math.max(list.length, ...list.map(b => (b.copies || []).filter(c => c.status !== "wishlist").length)) : 0;
+                const where = [...new Set(list.map(b => PLATFORM_NAMES[b.platform]).filter(Boolean))].join(", ");
+                return `${FORMAT_INFO[fmt] || fmt}${where && fmt !== "physical" ? ` (${where})` : ""}${copies > 1 ? ` (${copies} copies)` : ""}`;
+              });
+              return (
+                <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 10, border: `1px dashed ${modalTheme.accent || "#8B5E3C"}`, fontFamily: "Georgia, serif", fontSize: 13, color: modalTheme.text }}>
+                  <span style={{ fontWeight: 700 }}>Also in your library:</span> {parts.join(" · ")}
+                </div>
+              );
+            })()}
             <ReadHistory mediaType={mediaType} bookKeyValue={isbn} status={status} importedReadCount={book.readCount || 0} onReadAgain={handleReadAgain} theme={modalTheme} refresh={readsVersion} />
             {showDnfSheet && (
               <DnfSheet book={book} mediaType={mediaType}
@@ -4355,7 +4385,7 @@ function BookShelf({ genre, mediaType, onClose, autoOpenBook, onAutoOpenDone }) 
     } else {
       const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
       if (isUser) {
-        const updated = userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title));
+        const updated = userBooksAll.filter(b => !((!book.type || bookFormat(b) === book.type) && ((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
         saveUserBooks(updated);
       } else {
         // Built-in book: add to hidden set
@@ -4743,7 +4773,7 @@ function FavoritesShelf({ onClose }) {
     } else {
       const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
       if (isUser) {
-        const updated = userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title));
+        const updated = userBooksAll.filter(b => !((!book.type || bookFormat(b) === book.type) && ((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
         saveUserBooks(updated);
       } else {
         const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
@@ -5769,7 +5799,7 @@ function AllBooksShelf({ onClose }) {
     } else {
       const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
       if (isUser) {
-        saveUserBooks(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
+        saveUserBooks(userBooksAll.filter(b => !((!book.type || bookFormat(b) === book.type) && ((b.isbn && b.isbn === book.isbn) || b.title === book.title))));
       } else {
         const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
         if (!hidden.includes(bookKey)) hidden.push(bookKey);
@@ -8222,9 +8252,10 @@ function ImportModalBody({ platform, mediaType, onClose, onImport, isAdmin, isPW
     setBulkPending([]);
     setBulkGenres({});
 
-    const existingUserBooks = getUserBooksSync();
-    const allLibraryBooks = Object.values(library).flat();
-    const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => b.title.toLowerCase().trim()));
+    // Only books already in this format count as duplicates.
+    const existingUserBooks = getUserBooksSync().filter(b => bookFormat(b) === mediaType);
+    const allLibraryBooks = Object.values(library).flat().filter(b => bookFormat(b) === mediaType);
+    const existingTitles = new Set([...existingUserBooks, ...allLibraryBooks].map(b => (b.title || "").toLowerCase().trim()));
 
     const found = [];
     for (let i = 0; i < titles.length; i++) {
@@ -13005,7 +13036,7 @@ function MobileBookShelf({ genre, mediaType, onToggleMediaType, onClose, onOpenS
     } else {
       const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
       if (isUser) {
-        saveUserBooks(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
+        saveUserBooks(userBooksAll.filter(b => !((!book.type || bookFormat(b) === book.type) && ((b.isbn && b.isbn === book.isbn) || b.title === book.title))));
       } else {
         const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
         if (!hidden.includes(bookKey)) hidden.push(bookKey);
@@ -20039,15 +20070,18 @@ function StoryKeeperApp() {
         // Merge cloud books with local books — never overwrite locally-enriched fields
         const local = getUserBooksSync();
         const cloudBooks = (Array.isArray(data[k]) ? data[k] : []).map(b => ({ ...b, genre: migrateGenre(b.genre || "") }));
+        // Matched within each format, so the Kindle and Audible editions of one title
+        // never merge into a single record.
+        const fmtKey = (b, v) => `${bookFormat(b)}::${v}`;
         const localMap = new Map();
         local.forEach(b => {
-          if (b.isbn) localMap.set(b.isbn, b);
-          localMap.set(b.title?.toLowerCase().trim(), b);
+          if (b.isbn) localMap.set(fmtKey(b, b.isbn), b);
+          localMap.set(fmtKey(b, b.title?.toLowerCase().trim()), b);
         });
         const merged = cloudBooks.map(cloudBook => {
           const localBook =
-            (cloudBook.isbn && localMap.get(cloudBook.isbn)) ||
-            localMap.get(cloudBook.title?.toLowerCase().trim());
+            (cloudBook.isbn && localMap.get(fmtKey(cloudBook, cloudBook.isbn))) ||
+            localMap.get(fmtKey(cloudBook, cloudBook.title?.toLowerCase().trim()));
           if (!localBook) return cloudBook; // new book from cloud — add it
           // Prefer locally-enriched fields; fill missing fields from cloud
           return {
@@ -20063,12 +20097,12 @@ function StoryKeeperApp() {
           };
         });
         // Keep any local books not in cloud (locally added, not yet synced)
-        const cloudIsbns = new Set(cloudBooks.map(b => b.isbn).filter(Boolean));
-        const cloudTitles = new Set(cloudBooks.map(b => b.title?.toLowerCase().trim()).filter(Boolean));
+        const cloudIsbns = new Set(cloudBooks.filter(b => b.isbn).map(b => fmtKey(b, b.isbn)));
+        const cloudTitles = new Set(cloudBooks.filter(b => b.title).map(b => fmtKey(b, b.title.toLowerCase().trim())));
         local.forEach(localBook => {
           const inCloud =
-            (localBook.isbn && cloudIsbns.has(localBook.isbn)) ||
-            cloudTitles.has(localBook.title?.toLowerCase().trim());
+            (localBook.isbn && cloudIsbns.has(fmtKey(localBook, localBook.isbn))) ||
+            cloudTitles.has(fmtKey(localBook, localBook.title?.toLowerCase().trim()));
           if (!inCloud) merged.push(localBook);
         });
         saveUserBooks(merged);
@@ -21532,7 +21566,7 @@ function StoryKeeperApp() {
             } else {
               const isUser = userBooksAll.some(b => (b.isbn && b.isbn === book.isbn) || b.title === book.title);
               if (isUser) {
-                saveUserBooks(userBooksAll.filter(b => !((b.isbn && b.isbn === book.isbn) || b.title === book.title)));
+                saveUserBooks(userBooksAll.filter(b => !((!book.type || bookFormat(b) === book.type) && ((b.isbn && b.isbn === book.isbn) || b.title === book.title))));
               } else {
                 const hidden = JSON.parse(localStorage.getItem("sk_hidden_books") || "[]");
                 if (!hidden.includes(bookKey)) hidden.push(bookKey);
@@ -21937,8 +21971,9 @@ function StoryKeeperApp() {
                       if (!books?.length) { alert("❌ No books found in this file."); return; }
                       if (!window.confirm(`Restore ${books.length} books from backup? This will merge with your current library.`)) return;
                       const existing = getUserBooksSync();
-                      const existingTitles = new Set(existing.map(b => (b.title || "").toLowerCase().trim()));
-                      const newBooks = books.filter(b => b.title && !existingTitles.has(b.title.toLowerCase().trim()));
+                      // Per format: restoring the Kindle and Audible editions of one title keeps both.
+                      const existingTitles = new Set(existing.map(b => `${bookFormat(b)}::${(b.title || "").toLowerCase().trim()}`));
+                      const newBooks = books.filter(b => b.title && !existingTitles.has(`${bookFormat(b)}::${b.title.toLowerCase().trim()}`));
                       saveUserBooks([...existing, ...newBooks]);
                       if (!Array.isArray(data)) {
                         if (data.statuses_e) localStorage.setItem("sk_statuses_ebooks", JSON.stringify(data.statuses_e));
