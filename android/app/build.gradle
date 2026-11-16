@@ -50,8 +50,10 @@ android {
             } else {
                 logger.warn("StoryKeeper: no 'storykeeper-android-upload' Keychain item, so the release bundle will be unsigned.")
             }
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // R8 code shrinking and obfuscation (Google Play asks for it). Keep rules for
+            // Capacitor, the plugins and WebView JavaScript bridges are in proguard-rules.pro.
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

@@ -9356,7 +9356,7 @@ fi`}
                 {isNativeApp && (
                   <div style={{ background: "#EAF4EA", border: "1px solid #6BAD6B", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
                     <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 14, color: "#1A3A1A", marginBottom: 6 }}>
-                      📱 Import Directly on Your iPhone
+                      📱 Import Directly on Your {Capacitor.getPlatform() === "android" ? "Phone" : "iPhone"}
                     </div>
                     <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2A4A2A", lineHeight: 1.6, marginBottom: 12 }}>
                       StoryKeeper can open {platform.name} right inside the app, sign in, and pull your entire library automatically — no desktop needed.
@@ -9550,7 +9550,7 @@ fi`}
                 {(platform.id === "goodreads" || platform.id === "kobo" || platform.id === "nook") && isNativeApp && (
                   <div style={{ background: "#EAF4EA", border: "1px solid #6BAD6B", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
                     <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontWeight: 700, fontSize: 14, color: "#1A3A1A", marginBottom: 6 }}>
-                      📱 Import Directly on Your iPhone
+                      📱 Import Directly on Your {Capacitor.getPlatform() === "android" ? "Phone" : "iPhone"}
                     </div>
                     <div style={{ fontFamily: "Georgia, serif", fontSize: 12, color: "#2A4A2A", lineHeight: 1.6, marginBottom: 12 }}>
                       StoryKeeper can open {platform.name} right inside the app, request your export, and pull your entire library automatically — no desktop needed.
