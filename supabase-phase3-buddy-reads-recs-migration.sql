@@ -1,5 +1,5 @@
 -- Phase 3: buddy reads with chapter-locked comments, and community recommendations.
--- RUN in Supabase on 2026-11-15 and verified (4 tables with RLS, 15 policies, 7 functions
+-- RUN in Supabase on 2026-11-15 and verified (4 tables with RLS, 16 policies after the 2026-11-16 read-own fix, 7 functions
 -- callable by signed-in users only). Safe to run again.
 -- Nothing here changes or reads existing tables.
 --
@@ -12,8 +12,8 @@
 --
 -- 2. Community recommendations (shared_ratings + two functions)
 --    Strictly opt-in. A reader who turns on "Share my ratings anonymously" has their star
---    ratings copied here. Nobody can read this table directly, not even the reader's own
---    rows from another account. Two functions return only combined results (book, number
+--    ratings copied here. Each reader can read only their own rows (needed for saving
+--    and deleting them); nobody can read anyone else's. Two functions return only combined results (book, number
 --    of readers, average rating), never who rated what, and only for books rated by at
 --    least 2 (recommendations) or 3 (popular) different readers.
 
@@ -168,8 +168,12 @@ create table if not exists shared_ratings (
 create index if not exists shared_ratings_book on shared_ratings(book_key);
 alter table shared_ratings enable row level security;
 
--- Readers may add, change and remove their own rows, but no one can read the table:
--- results only come out through the two functions below, already combined.
+-- Readers may add, read, change and remove only their own rows. Other readers' ratings only
+-- come out through the two functions below, already combined.
+-- The read-own policy was added 2026-11-16: without it, saving ratings (insert ... on conflict
+-- do update) failed with "new row violates row-level security policy", and deleting found nothing.
+drop policy if exists "read own shared_ratings" on shared_ratings;
+create policy "read own shared_ratings" on shared_ratings for select using (user_id = auth.uid());
 drop policy if exists "insert own shared_ratings" on shared_ratings;
 create policy "insert own shared_ratings" on shared_ratings for insert with check (user_id = auth.uid());
 drop policy if exists "update own shared_ratings" on shared_ratings;
