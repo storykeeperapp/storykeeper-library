@@ -10311,73 +10311,186 @@ function SubscriptionPage({ onClose, currentTier = "reluctant", fullAccessEndsAt
   );
 }
 
-function RemoveDuplicatesButton({ th }) {
-  const [result, setResult] = useState(null);
-  const [running, setRunning] = useState(false);
-  const isMobile = useIsMobile();
+// ── Duplicate cleanup (every reader, in Settings) ─────────────────────────────
+// Finds the same book entered more than once in the SAME format: an ebook and an
+// audiobook of one title are two things the reader owns and are never touched.
+// Matching is title + author within a format. Subtitles only match when one entry
+// has none ("Fourth Wing" vs "Fourth Wing: Empyrean Book 1"), so different books in
+// one series ("Wings of Fire: The Lost Heir" / "…: The Dragonet Prophecy") stay apart.
+const DUPE_FORMAT_LABEL = { ebooks: "📱 Ebook", audiobooks: "🎧 Audiobook", physical: "📚 Physical" };
+const dupeFormat = (b) => b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
+const dupeAuthorKey = (a) => {
+  let s = (a || "").trim();
+  const parts = s.split(",");
+  if (parts.length === 2 && parts[1].trim()) s = `${parts[1]} ${parts[0]}`; // "Yarros, Rebecca" → "Rebecca Yarros"
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+};
+const dupeFullTitleKey = (t) => (t || "").toLowerCase()
+  .replace(/[\(\[]\s*(unabridged|abridged|kindle edition|audible audio edition|ebook|e-book|a novel)\s*[\)\]]/g, "")
+  .replace(/:\s*a novel\s*$/, "")
+  .replace(/[^a-z0-9]/g, "");
+const dupeBookKey = (b) => b.isbn || b.title;
 
-  const effectiveType = (b) => b.type || (b.mediaType === "audiobook" ? "audiobooks" : b.mediaType === "physical" ? "physical" : "ebooks");
-  // More filled-in fields = more useful to keep as the survivor
-  const completeness = (b) => [b.isbn, b.description, b.coverUrl, b.author].filter(Boolean).length;
-
-  const handleRemoveDuplicates = () => {
-    setRunning(true);
-    const all = getUserBooksSync();
-    const groups = new Map(); // key -> array of { book, idx }
-    all.forEach((b, idx) => {
-      const titleKey = cleanTitle(b.title || "").toLowerCase().trim();
-      const key = `${effectiveType(b)}::${titleKey}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push({ book: b, idx });
-    });
-
-    const toRemove = new Set();
-    let mergedCount = 0;
-    groups.forEach(entries => {
-      if (entries.length < 2) return;
-      // Pick the most complete entry as the survivor, merge in any fields the others have that it's missing
-      const sorted = [...entries].sort((a, b) => completeness(b.book) - completeness(a.book));
-      const keeper = sorted[0];
-      const dupes = sorted.slice(1);
-      let changed = false;
-      dupes.forEach(({ book: dupe }) => {
-        if (!keeper.book.isbn && dupe.isbn) { keeper.book.isbn = dupe.isbn; changed = true; }
-        if (!keeper.book.description && dupe.description) { keeper.book.description = dupe.description; changed = true; }
-        if (!keeper.book.coverUrl && dupe.coverUrl) { keeper.book.coverUrl = dupe.coverUrl; changed = true; }
-        if (!keeper.book.author && dupe.author) { keeper.book.author = dupe.author; changed = true; }
+function findDuplicateGroups(all) {
+  const byTitle = new Map();
+  all.forEach((book, idx) => {
+    const clean = cleanTitle(book.title || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!clean) return;
+    const k = `${dupeFormat(book)}::${clean}`;
+    if (!byTitle.has(k)) byTitle.set(k, []);
+    byTitle.get(k).push({ book, idx, clean, full: dupeFullTitleKey(book.title), author: dupeAuthorKey(book.author) });
+  });
+  const groups = [];
+  byTitle.forEach(entries => {
+    if (entries.length < 2) return;
+    const authors = [...new Set(entries.map(e => e.author).filter(Boolean))];
+    // A missing author only matches when every other entry agrees on one author.
+    const byAuthor = authors.length === 0 ? [entries]
+      : authors.map(a => entries.filter(e => e.author === a || (!e.author && authors.length === 1)));
+    byAuthor.forEach(list => {
+      if (list.length < 2) return;
+      const variants = [...new Set(list.filter(e => e.full !== e.clean).map(e => e.full))];
+      const buckets = new Map();
+      list.forEach(e => {
+        const bare = e.full === e.clean;
+        const key = bare ? (variants.length === 1 ? variants[0] : e.full) : e.full;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(e);
       });
-      if (changed) mergedCount++;
-      dupes.forEach(({ idx }) => toRemove.add(idx));
+      buckets.forEach(b => { if (b.length >= 2) groups.push(b); });
     });
+  });
+  return groups;
+}
 
-    const deduped = all.filter((_, idx) => !toRemove.has(idx));
-    saveUserBooks(deduped);
-    setRunning(false);
-    setResult({ removed: toRemove.size, mergedCount, total: all.length });
+// Move a duplicate's reading data (status, dates, sessions, ratings, notes, quotes…)
+// onto the copy being kept, wherever the kept copy has none of its own. Lists such as
+// sessions are combined. Shelf-specific keys only move within the same format.
+function transferBookData(fromKey, toKey, format) {
+  if (!fromKey || !toKey || fromKey === toKey) return;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("sk_")) keys.push(k); }
+  keys.forEach(k => {
+    const m = k.match(/_(ebooks|audiobooks|physical)$/);
+    if (m && m[1] !== format) return;
+    let obj;
+    try { obj = JSON.parse(localStorage.getItem(k)); } catch { return; }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj) || !Object.prototype.hasOwnProperty.call(obj, fromKey)) return;
+    const from = obj[fromKey], to = obj[toKey];
+    if (to === undefined || to === null || to === "") obj[toKey] = from;
+    else if (Array.isArray(to) && Array.isArray(from)) {
+      const seen = new Set(to.map(x => JSON.stringify(x)));
+      obj[toKey] = [...to, ...from.filter(x => !seen.has(JSON.stringify(x)))];
+    } else return;
+    try { localStorage.setItem(k, JSON.stringify(obj)); } catch {}
+  });
+}
+
+function DuplicateCleanup({ th }) {
+  const [groups, setGroups] = useState(null); // null = not scanned yet
+  const [skip, setSkip] = useState(() => new Set());
+  const [result, setResult] = useState("");
+
+  const scan = () => { setResult(""); setSkip(new Set()); setGroups(findDuplicateGroups(getUserBooksSync())); };
+
+  const completeness = (b) => {
+    const statuses = safeParseLS(`sk_statuses_${dupeFormat(b)}`, {});
+    return [b.isbn, b.description, b.coverUrl, b.author, b.genre].filter(Boolean).length + (statuses[dupeBookKey(b)] ? 3 : 0);
   };
 
+  const merge = () => {
+    const all = getUserBooksSync();
+    const current = findDuplicateGroups(all); // re-scan so nothing changed since the preview is lost
+    const chosen = current.filter(g => !skip.has(g.map(e => e.idx).sort().join(",")) );
+    const remove = new Set();
+    const mkId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    chosen.forEach(entries => {
+      const sorted = [...entries].sort((a, b) => completeness(b.book) - completeness(a.book));
+      const keeper = { ...sorted[0].book };
+      const format = dupeFormat(keeper);
+      // Reading data is filed under ISBN (or title when there's none). If the kept entry
+      // gains an ISBN from a duplicate, its own data moves to the ISBN key with it.
+      if (!keeper.isbn) {
+        const withIsbn = sorted.slice(1).find(e => e.book.isbn);
+        if (withIsbn) {
+          const oldKey = dupeBookKey(keeper);
+          keeper.isbn = withIsbn.book.isbn;
+          transferBookData(oldKey, dupeBookKey(keeper), format);
+        }
+      }
+      sorted.slice(1).forEach(({ book: dupe, idx }) => {
+        ["description", "coverUrl", "author", "genre", "publisher", "pageCount"].forEach(f => { if (!keeper[f] && dupe[f]) keeper[f] = dupe[f]; });
+        if (format === "physical") {
+          // Two physical entries mean two copies on the shelf: keep both as copies of one book.
+          const copies = [...(keeper.copies || [])];
+          if (copies.length === 0) copies.push({ id: mkId(), status: "owned", format: "Hardcover", isbn: keeper.isbn || "" });
+          if ((dupe.copies || []).length) copies.push(...dupe.copies);
+          else copies.push({ id: mkId(), status: "owned", format: "Hardcover", isbn: dupe.isbn || "" });
+          keeper.copies = copies;
+        }
+        transferBookData(dupeBookKey(dupe), dupeBookKey(keeper), format);
+        remove.add(idx);
+      });
+      all[sorted[0].idx] = keeper;
+    });
+    const kept = all.filter((_, i) => !remove.has(i));
+    saveUserBooks(kept);
+    window.dispatchEvent(new CustomEvent("sk-tracking-changed"));
+    trackEvent("duplicates_merged", { groups: chosen.length, removed: remove.size });
+    setGroups(null);
+    setResult(remove.size === 0 ? "Nothing was merged." : `Merged ${chosen.length} book${chosen.length !== 1 ? "s" : ""}: removed ${remove.size} duplicate entr${remove.size !== 1 ? "ies" : "y"}. Reading history, ratings and notes were kept.`);
+  };
+
+  const btn = (primary) => ({
+    padding: "10px", borderRadius: 8, border: `1px solid ${th.border}`, cursor: "pointer", fontSize: 14,
+    fontFamily: '"Palatino Linotype", Palatino, serif', background: primary ? th.accent : th.bgDeep, color: primary ? th.bg : th.text,
+  });
+  const gKey = (g) => g.map(e => e.idx).sort().join(",");
+  const selected = groups ? groups.filter(g => !skip.has(gKey(g))) : [];
+  const extra = selected.reduce((n, g) => n + g.length - 1, 0);
+
   return (
-    <div style={{ background: th.bgMuted, border: `1px solid ${th.border}`, borderRadius: 10, padding: "18px 24px", marginBottom: 20, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 20 }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 15, fontWeight: 700, color: th.text, marginBottom: 4 }}>
-          🧹 Remove Duplicate Books
-        </div>
-        <div style={{ fontFamily: "Georgia, serif", fontSize: 13, fontStyle: "italic", color: th.textSoft, marginBottom: 6 }}>
-          Finds books with the same title in the same format (ebook/audiobook/physical) and merges them into one, keeping whichever copy has the most complete data.
-        </div>
-        {result && (
-          <div style={{ fontFamily: "Georgia, serif", fontSize: 13, color: "#2d6a2d", marginTop: 4 }}>
-            ✅ Removed {result.removed} duplicate{result.removed !== 1 ? "s" : ""} out of {result.total} books{result.mergedCount > 0 ? ` (merged data from ${result.mergedCount} pair${result.mergedCount !== 1 ? "s" : ""})` : ""}.
-          </div>
-        )}
+    <div>
+      <div style={{ fontSize: 12, color: th.textSoft, fontFamily: "Georgia, serif", lineHeight: 1.5, marginBottom: 10 }}>
+        Finds books entered more than once in the same format. A book you own in several formats (say, Kindle and Audible) is never touched.
       </div>
-      <button
-        onClick={handleRemoveDuplicates}
-        disabled={running}
-        style={{ padding: "10px 22px", background: running ? th.bgDeep : th.accent, color: running ? th.textSoft : th.bg, border: "none", borderRadius: 8, cursor: running ? "default" : "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", alignSelf: isMobile ? "stretch" : "flex-start" }}
-      >
-        {running ? "Scanning…" : "🧹 Remove Duplicates"}
-      </button>
+      {groups === null && <button onClick={scan} style={{ ...btn(false), width: "100%" }}>🧹 Find Duplicate Books</button>}
+      {groups && groups.length === 0 && (
+        <div style={{ fontSize: 13, color: th.textMid, fontFamily: "Georgia, serif" }}>
+          No duplicates found. Your library is tidy. <button onClick={() => setGroups(null)} style={{ background: "none", border: "none", color: th.accent, cursor: "pointer", fontFamily: "Georgia, serif", fontSize: 13, padding: 0 }}>Done</button>
+        </div>
+      )}
+      {groups && groups.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, color: th.text, fontFamily: "Georgia, serif", marginBottom: 8 }}>
+            Found {groups.length} book{groups.length !== 1 ? "s" : ""} entered more than once. Untick any you want to leave as they are.
+          </div>
+          <div style={{ maxHeight: 280, overflowY: "auto", border: `1px solid ${th.border}`, borderRadius: 8, marginBottom: 10 }}>
+            {groups.slice(0, 200).map(g => {
+              const k = gKey(g), b = g[0].book, on = !skip.has(k), fmt = dupeFormat(b);
+              return (
+                <label key={k} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 10px", borderBottom: `1px solid ${th.border}`, cursor: "pointer" }}>
+                  <input type="checkbox" checked={on} onChange={() => setSkip(prev => { const n = new Set(prev); on ? n.add(k) : n.delete(k); return n; })} style={{ marginTop: 3, accentColor: th.accent }} />
+                  <span style={{ fontFamily: "Georgia, serif", fontSize: 13, color: th.text, lineHeight: 1.4 }}>
+                    <strong>{b.title}</strong>{b.author ? ` — ${b.author}` : ""}
+                    <span style={{ display: "block", fontSize: 12, color: th.textSoft }}>
+                      {DUPE_FORMAT_LABEL[fmt]} · {g.length} entries{fmt === "physical" ? ` → kept as ${g.length} copies of one book` : " → merged into 1"}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+            {groups.length > 200 && <div style={{ padding: 8, fontSize: 12, color: th.textSoft, fontFamily: "Georgia, serif" }}>…and {groups.length - 200} more (included unless you scan again after merging).</div>}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setGroups(null)} style={{ ...btn(false), flex: 1 }}>Cancel</button>
+            <button onClick={merge} disabled={selected.length === 0} style={{ ...btn(true), flex: 2, opacity: selected.length ? 1 : 0.5 }}>
+              Merge {selected.length} ({extra} extra entr{extra !== 1 ? "ies" : "y"})
+            </button>
+          </div>
+        </div>
+      )}
+      {result && <div style={{ fontSize: 13, color: "#2d6a2d", fontFamily: "Georgia, serif", marginTop: 8 }}>✅ {result}</div>}
     </div>
   );
 }
@@ -11571,7 +11684,6 @@ function PlatformPage({ onClose, onAddManually, mediaType, th, themeKey, isAdmin
         })()}
 
         {/* Push All Books to Community Cache — admin only */}
-        {isAdmin && <RemoveDuplicatesButton th={th} />}
         {isAdmin && <PushToCacheButton th={th} />}
 
         {/* Re-detect Genres */}
@@ -22057,6 +22169,10 @@ function StoryKeeperApp() {
             </div>
 
             {/* Account */}
+            <div style={{ marginBottom: 24, paddingTop: 20, borderTop: `1px solid ${th.border}` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Library Cleanup</div>
+              <DuplicateCleanup th={th} />
+            </div>
             <div style={{ marginBottom: 24, paddingTop: 20, borderTop: `1px solid ${th.border}` }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: th.textSoft, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Account</div>
               {authUser ? (
