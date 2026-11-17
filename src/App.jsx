@@ -390,16 +390,46 @@ function getSupabase() {
 // throws — a failed insert (offline, RLS issue, etc.) must not block or break
 // the UI flow it's instrumenting. Pass the signed-in user's id when known so
 // funnel drop-off can be tied back to a specific account.
+// Every event also records the OS (ios/android/web), the installed app version and
+// build, and whether it came from a test device, so real readers can be told apart
+// from our own testing and from readers who haven't updated yet.
+let _appInfoPromise = null;
+function getAppInfoOnce() {
+  if (!_appInfoPromise) {
+    _appInfoPromise = Capacitor.isNativePlatform()
+      ? import("@capacitor/app")
+          .then(({ App: CapApp }) => CapApp.getInfo())
+          .then(info => ({ app_version: info.version, app_build: info.build }))
+          .catch(() => ({}))
+      : Promise.resolve({ app_version: "web" });
+  }
+  return _appInfoPromise;
+}
+
+// A test device is one the admin account (or a +alias of it) has ever signed in on,
+// or an Android emulator. The iOS Simulator can't be detected from inside the app,
+// so it only counts once the admin signs in there.
+function isTestDevice() {
+  try { if (localStorage.getItem("sk_test_device") === "1") return true; } catch {}
+  return /sdk_gphone|Android SDK built for|google_sdk|Emulator/i.test(navigator.userAgent || "");
+}
+function markTestDeviceIfAdmin(email) {
+  const base = (email || "").toLowerCase().replace(/\+[^@]*@/, "@");
+  if (base === ADMIN_EMAIL) { try { localStorage.setItem("sk_test_device", "1"); } catch {} }
+}
+
 function trackEvent(eventName, properties = {}, userId = null) {
   // Local development (the Vite dev server) shares the production Supabase project, so
   // skip logging there to keep test clicks out of the real funnel numbers.
   if (import.meta.env.DEV) return;
   try {
-    getSupabase().from("analytics_events").insert({
+    const os = Capacitor.getPlatform();
+    const testDevice = isTestDevice();
+    getAppInfoOnce().then(info => getSupabase().from("analytics_events").insert({
       event_name: eventName,
       user_id: userId || null,
-      properties,
-    }).then(() => {}, () => {});
+      properties: { ...properties, os, ...info, test_device: testDevice },
+    })).then(() => {}, () => {});
   } catch {}
 }
 
@@ -20443,6 +20473,7 @@ function StoryKeeperApp() {
       }
       const user = session?.user ?? null;
       setAuthUser(user);
+      if (user) markTestDeviceIfAdmin(user.email);
       // One "app_opened" per device per day: the baseline for retention and for how many
       // readers reach the paywall at all.
       if (event === "INITIAL_SESSION") {
