@@ -204,6 +204,46 @@ const isSameBook = (a, b) => bookFormat(a) === bookFormat(b) && (
   (a.isbn && b.isbn && a.isbn === b.isbn) ||
   ((a.title || "").toLowerCase().trim() === (b.title || "").toLowerCase().trim() && (a.author || "") === (b.author || "")));
 
+// Moves a book that was put on the wrong shelf (say, a dramatized audiobook filed as
+// physical) to another format. Shelf-specific data (status, dates, sessions, progress,
+// favorites…) moves with it; ratings, notes and quotes aren't per-shelf and stay put.
+const SHELF_LABEL = { ebooks: "eBooks", audiobooks: "Audiobooks", physical: "Physical" };
+function moveBookToShelf(book, toType) {
+  const all = getUserBooksSync();
+  const idx = (typeof book._libIdx === "number" && all[book._libIdx] && all[book._libIdx].title === book.title)
+    ? book._libIdx
+    : all.findIndex(b => bookFormat(b) === bookFormat(book) && ((book.isbn && b.isbn === book.isbn) || b.title === book.title));
+  if (idx === -1) return { error: "Couldn't find this book in your library." };
+  const fromType = bookFormat(all[idx]);
+  if (fromType === toType) return { error: `It's already on your ${SHELF_LABEL[toType]} shelf.` };
+  const moved = { ...all[idx], type: toType, mediaType: toType === "audiobooks" ? "audiobook" : toType === "physical" ? "physical" : "ebook" };
+  if (all.some((b, i) => i !== idx && isSameBook(b, moved))) return { error: `"${moved.title}" is already on your ${SHELF_LABEL[toType]} shelf.` };
+  const key = moved.isbn || moved.title;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("sk_") && k.endsWith(`_${fromType}`)) keys.push(k); }
+  keys.forEach(fromKey => {
+    const toKey = fromKey.slice(0, -fromType.length) + toType;
+    let src, dst;
+    try { src = JSON.parse(localStorage.getItem(fromKey)); dst = JSON.parse(localStorage.getItem(toKey) || "null"); } catch { return; }
+    if (Array.isArray(src) && src.includes(key)) {
+      const target = Array.isArray(dst) ? dst : [];
+      if (!target.includes(key)) target.push(key);
+      localStorage.setItem(toKey, JSON.stringify(target));
+      localStorage.setItem(fromKey, JSON.stringify(src.filter(x => x !== key)));
+    } else if (src && typeof src === "object" && !Array.isArray(src) && Object.prototype.hasOwnProperty.call(src, key)) {
+      const target = dst && typeof dst === "object" && !Array.isArray(dst) ? dst : {};
+      if (target[key] === undefined) target[key] = src[key];
+      delete src[key];
+      localStorage.setItem(toKey, JSON.stringify(target));
+      localStorage.setItem(fromKey, JSON.stringify(src));
+    }
+  });
+  all[idx] = moved;
+  saveUserBooks([...all]);
+  window.dispatchEvent(new CustomEvent("sk-tracking-changed"));
+  return { ok: true };
+}
+
 // Puts any locked books back into the library. Called once the account is on a paid tier.
 async function unlockLockedBooks() {
   const locked = await getLockedBooks();
@@ -2475,6 +2515,8 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
   }, [book.isbn]);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showMove, setShowMove] = useState(false);
+  const [moveError, setMoveError] = useState("");
   const [showAuthorRulePrompt, setShowAuthorRulePrompt] = useState(false);
   const [showProgressPrompt, setShowProgressPrompt] = useState(false);
   const [promptPercent, setPromptPercent] = useState(null);
@@ -4111,9 +4153,47 @@ function BookModal({ book, onClose, favorites, setFavorites, statuses, setStatus
           </div>
         </div>
 
+        {/* Move to another shelf — for a book filed under the wrong format */}
+        {!confirmDelete && showMove && (() => {
+          const from = bookFormat(book);
+          return (
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #D8C3A5" }}>
+              <div style={{ fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, color: modalTheme.text, marginBottom: 8 }}>
+                Move from {SHELF_LABEL[from]} to:
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {["ebooks", "audiobooks", "physical"].filter(t => t !== from).map(t => (
+                  <button key={t} onClick={() => {
+                    const r = moveBookToShelf(book, t);
+                    if (r.error) { setMoveError(r.error); return; }
+                    setShowMove(false); onClose();
+                  }} style={{ padding: "7px 16px", background: modalTheme.accent || "#6B4F3A", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700 }}>
+                    {t === "ebooks" ? "📱" : t === "audiobooks" ? "🎧" : "📚"} {SHELF_LABEL[t]}
+                  </button>
+                ))}
+                <button onClick={() => { setShowMove(false); setMoveError(""); }} style={{ padding: "7px 16px", background: "#E8D9C0", color: modalTheme.text, border: "none", borderRadius: 6, cursor: "pointer", fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13 }}>
+                  Cancel
+                </button>
+              </div>
+              {moveError && <div style={{ marginTop: 8, fontFamily: "Georgia, serif", fontSize: 13, color: "#8B3A3A" }}>{moveError}</div>}
+              <div style={{ marginTop: 8, fontFamily: "Georgia, serif", fontSize: 12, fontStyle: "italic", color: modalTheme.text, opacity: 0.7 }}>
+                Its status, dates, progress and reading sessions move with it.
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Delete from Library — bottom of modal */}
-        {!confirmDelete && (
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #D8C3A5", display: "flex", justifyContent: "flex-end" }}>
+        {!confirmDelete && !showMove && (
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #D8C3A5", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            {getUserBooksSync().some(b => bookFormat(b) === bookFormat(book) && ((book.isbn && b.isbn === book.isbn) || b.title === book.title)) && (
+              <button
+                onClick={() => { setMoveError(""); setShowMove(true); }}
+                style={{ padding: "7px 16px", background: "none", border: `1px solid ${modalTheme.text}`, borderRadius: 6, cursor: "pointer", color: modalTheme.text, fontFamily: '"Palatino Linotype", Palatino, serif', fontSize: 13, fontWeight: 700, opacity: 0.85 }}
+              >
+                ↔ Move to another shelf
+              </button>
+            )}
             <button
               onClick={() => setConfirmDelete(true)}
               style={{
